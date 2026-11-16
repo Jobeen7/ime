@@ -24,10 +24,11 @@ import java.net.URLDecoder
  * 键盘设置页；② clipboard＋phrase → 常用语页；③ dr.a 别名表
  * 17 项；④ 回落 bx0 路由 id／目录页键直配。
  *
- * 已知口径缺口：单子称「6.1 已建剪贴板详情页」，但核实
- * ClipboardScreen 只是设置页（开关／滑杆），无历史列表、
- * 无编辑入口、无 EXTRA_CLIPBOARD_ID——clipboard 的 id 参数
- * 无落点，本实现只导航到剪贴板页、id 丢弃，不硬编详情入口。
+ * clipboard 落点（WO52 4.2 遗留项，已补接收侧）：`clipboard?id=<id>`
+ * 的 id 参数由本路由透传（见 Target.params），MainActivity 接线后
+ * 交 ClipboardActivity（EXTRA_CLIPBOARD_ID），ClipboardScreen
+ * 按 id 打开历史列表并定位到该条（高亮＋滚动）；id 查不到时给
+ * 明确提示、不崩溃；不带 id 只打开剪贴板页。
  * 另 typingPractice／keyboardPreview／appIcon／pro 已定不做，
  * 不导航。
  */

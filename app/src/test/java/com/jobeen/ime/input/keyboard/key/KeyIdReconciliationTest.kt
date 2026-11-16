@@ -2,7 +2,9 @@ package com.jobeen.ime.input.keyboard.key
 
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
+import com.jobeen.ime.input.keyboard.impl.T14Keyboard
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
+import com.jobeen.ime.input.keyboard.impl.T18Keyboard
 import com.jobeen.ime.input.keyboard.impl.T9Keyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import java.io.File
@@ -15,7 +17,7 @@ import org.junit.Test
 
 /**
  * 稳定键 ID 对账（定稿五.1 交付物 / Batch 2 详设 §2.8）：
- * 四布局实际标注的 ID 集合必须与登记表逐项相等、无重复；
+ * 六布局实际标注的 ID 集合必须与登记表逐项相等、无重复；
  * T9 禁用名不得出现；T15 十五键（副标, 发, 面）三元组防错位；
  * Symbol/Emoji 只登记锚点（源码守卫 + 分类表计数）。
  *
@@ -91,6 +93,35 @@ class KeyIdReconciliationTest {
     }
 
     @Test
+    fun t14IdsReconciled() {
+        val expected = setOf(
+            "T14_KEY_1", "T14_KEY_2", "T14_KEY_3", "T14_KEY_4", "T14_KEY_5",
+            "T14_KEY_6", "T14_KEY_7", "T14_KEY_8", "T14_KEY_9", "T14_KEY_10",
+            "T14_KEY_11", "T14_KEY_12", "T14_KEY_13", "T14_KEY_14",
+            "T14_DELETE", "T14_NEWLINE", "T14_ENTER", "T14_LAYOUT_NUMBER",
+            "T14_PERIOD", "T14_SPACE", "T14_SCHEMA",
+        )
+        assertEquals(21, expected.size)
+        assertReconciled("T14", T14Keyboard.buildLayout(Variant.Accent), expected, KeyIds.T14.ALL)
+        assertNull(T14Keyboard.buildLayout(Variant.Accent)[0][0].id)
+    }
+
+    @Test
+    fun t18IdsReconciled() {
+        val expected = setOf(
+            "T18_KEY_1", "T18_KEY_2", "T18_KEY_3", "T18_KEY_4", "T18_KEY_5",
+            "T18_KEY_6", "T18_KEY_7", "T18_KEY_8", "T18_KEY_9", "T18_KEY_10",
+            "T18_KEY_11", "T18_KEY_12", "T18_KEY_13", "T18_KEY_14", "T18_KEY_15",
+            "T18_KEY_16", "T18_KEY_17", "T18_KEY_18",
+            "T18_DELETE", "T18_NEWLINE", "T18_ENTER", "T18_LAYOUT_NUMBER",
+            "T18_PERIOD", "T18_SPACE", "T18_SCHEMA",
+        )
+        assertEquals(25, expected.size)
+        assertReconciled("T18", T18Keyboard.buildLayout(Variant.Accent), expected, KeyIds.T18.ALL)
+        assertNull(T18Keyboard.buildLayout(Variant.Accent)[0][0].id)
+    }
+
+    @Test
     fun t15TriplesMatchTable() {
         // （副标 digit, Press 发 send, 主显 letters）——双拼错位，逐项防回归
         val expected: Map<String, Triple<String, String, String>> = mapOf(
@@ -144,7 +175,8 @@ class KeyIdReconciliationTest {
 
     @Test
     fun registryGovernance() {
-        assertEquals(91, KeyIds.OVERRIDABLE.size)
+        // 33（26 键）＋16（九宫格）＋21（14 键）＋23（15 键）＋25（18 键）＋19（数字）＝137。
+        assertEquals(137, KeyIds.OVERRIDABLE.size)
         assertEquals(18, KeyIds.ANCHORS.size)
         assertTrue(KeyIds.OVERRIDABLE.intersect(KeyIds.ANCHORS).isEmpty())
         assertTrue(KeyIds.DEPRECATED.intersect(KeyIds.OVERRIDABLE + KeyIds.ANCHORS).isEmpty())

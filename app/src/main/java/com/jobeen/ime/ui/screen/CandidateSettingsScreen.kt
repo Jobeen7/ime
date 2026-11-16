@@ -2,7 +2,6 @@ package com.jobeen.ime.ui.screen
 
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -14,7 +13,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.CandidateManager
-import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.SliderRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
@@ -112,17 +110,13 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                     },
                     showDivider = true,
                 )
-                ActionRow(
+                SwitchRow(
                     title = stringResource(R.string.rare_characters_enable),
                     subtitle = stringResource(R.string.rare_characters_enable_desc),
-                    trailing = {
-                        Switch(
-                            checked = rareCharactersEnabled,
-                            onCheckedChange = {
-                                rareCharactersEnabled = it
-                                CandidateManager.setRareCharactersEnabled(context, it)
-                            },
-                        )
+                    checked = rareCharactersEnabled,
+                    onCheckedChange = {
+                        rareCharactersEnabled = it
+                        CandidateManager.setRareCharactersEnabled(context, it)
                     },
                 )
             }
@@ -176,6 +170,7 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                 SliderRow(
                     title = stringResource(R.string.candidate_max_lines),
                     value = maxLines,
+                    defaultValue = 5f,
                     valueLabel = stringResource(R.string.candidate_max_lines_value, maxLines.toInt()),
                     range = 1f..10f,
                     enabled = lineLimitEnabled,
@@ -188,6 +183,7 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                 SliderRow(
                     title = stringResource(R.string.candidate_spacing),
                     value = spacing,
+                    defaultValue = 8f,
                     valueLabel = "${spacing.toInt()} dp",
                     range = CandidateManager.CANDIDATE_SPACING_MIN_DP..
                         CandidateManager.CANDIDATE_SPACING_MAX_DP,
@@ -201,6 +197,7 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                 SliderRow(
                     title = stringResource(R.string.candidate_scale),
                     value = candidateScale,
+                    defaultValue = 1.0f,
                     valueLabel = "${(candidateScale * 100).toInt()}%",
                     range = CandidateManager.CANDIDATE_SCALE_MIN..
                         CandidateManager.CANDIDATE_SCALE_MAX,
@@ -238,17 +235,13 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                     },
                     showDivider = true,
                 )
-                ActionRow(
+                SwitchRow(
                     title = stringResource(R.string.candidate_swipe_paging),
                     subtitle = stringResource(R.string.candidate_swipe_paging_desc),
-                    trailing = {
-                        Switch(
-                            checked = swipePagingEnabled,
-                            onCheckedChange = {
-                                swipePagingEnabled = it
-                                CandidateManager.setSwipePagingEnabled(context, it)
-                            },
-                        )
+                    checked = swipePagingEnabled,
+                    onCheckedChange = {
+                        swipePagingEnabled = it
+                        CandidateManager.setSwipePagingEnabled(context, it)
                     },
                 )
                 SwitchRow(

@@ -20,6 +20,7 @@ import androidx.core.graphics.withSave
 import com.jobeen.ime.base.util.slideUpCollapse
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.CandidateLinePolicy
+import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.CandidateSpacingPolicy
 import com.jobeen.ime.engine.CandidatePagingMode
@@ -1450,7 +1451,19 @@ class CandidateGridView(
         preferredEnabled: Boolean = true,
         revision: Long = 0L,
     ) {
-        if (!revisionGate.tryApply(revision)) return
+        if (!revisionGate.tryApply(revision)) {
+            // 可观测性（.2 诊断）：被门拦的帧不要静默——打 warning
+            // 含代次与表长，下次诊断直接看门值。
+            DiagLog.w(
+                "candidate_grid", "revision_gate_dropped_show",
+                mapOf(
+                    "revision" to revision,
+                    "lastApplied" to revisionGate.lastAppliedRevision,
+                    "size" to list.size,
+                ),
+            )
+            return
+        }
         syncLinePolicy()
         gridCanvas.preferredEnabled = preferredEnabled
         allCandidates = list
@@ -1480,7 +1493,19 @@ class CandidateGridView(
     }
 
     fun updateCandidates(list: List<EngineMessage.Candidate>, revision: Long = 0L) {
-        if (!revisionGate.tryApply(revision)) return
+        if (!revisionGate.tryApply(revision)) {
+            // 可观测性（.2 诊断）：被门拦的帧不要静默——打 warning
+            // 含代次与表长，下次诊断直接看门值。
+            DiagLog.w(
+                "candidate_grid", "revision_gate_dropped_update",
+                mapOf(
+                    "revision" to revision,
+                    "lastApplied" to revisionGate.lastAppliedRevision,
+                    "size" to list.size,
+                ),
+            )
+            return
+        }
         syncLinePolicy()
         allCandidates = list
         // 列表已替换：拖拽中整表更新时旧下标可能越界，先就地复位拖拽
@@ -1489,6 +1514,27 @@ class CandidateGridView(
         gridCanvas.resetPressIfOutOfBounds()
         // 列表已更新（新批次或追加页到达）：允许再次在滚到底时请求下一页
         needMoreRequested = false
+        gridCanvas.recomputeLayout()
+        gridCanvas.clampScroll()
+        gridCanvas.invalidate()
+    }
+
+    /**
+     * 复位代次门（浮动窗解散时调）：下一组字会话的首帧不再被旧会话
+     * 顶高的代次拦住（.2 诊断机制 A）。只用于浮动窗常驻网格实例；
+     * 面板展开网格不用（hide() 不复位口径不变）。
+     */
+    fun resetRevisionGate() {
+        revisionGate.reset()
+    }
+
+    /**
+     * 无门重算行布局（浮动窗 measureHeight 离线排后调）：重算的是窗
+     * 自身已存的最新表（allCandidates），不是新帧，不走代次门——
+     * 首次 setCandidates 时宽度为 0 导致行数算空，离线 layout 给了
+     * 真实宽度后重算必须落地（.2 诊断机制 B）。
+     */
+    fun refreshLayout() {
         gridCanvas.recomputeLayout()
         gridCanvas.clampScroll()
         gridCanvas.invalidate()

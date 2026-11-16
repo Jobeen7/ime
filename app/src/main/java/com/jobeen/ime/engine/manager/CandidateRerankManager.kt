@@ -1,12 +1,14 @@
 package com.jobeen.ime.engine.manager
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import com.jobeen.ime.base.ngram.GramDb
 import com.jobeen.ime.base.priority.CandidateFeature
 import com.jobeen.ime.base.priority.PriorityCalculator
 import com.jobeen.ime.base.priority.WeightConfig
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
 import com.jobeen.ime.engine.rime.core.isKeycapSequence
+import java.util.Collections
 
 class CandidateRerankManager(context: Context) {
     private val calculator = PriorityCalculator()
@@ -14,7 +16,40 @@ class CandidateRerankManager(context: Context) {
     private companion object {
         /** 键帽序列候选的固定沉底分：必低于 calculate 的任何产出（恒 ≥ 0）。 */
         const val KEYCAP_SUNK_SCORE = -1.0
+
+        /**
+         * 重排窗口上限（2026-11-16 性能 ②）：只重排首屏可见数——
+         * 下标 0 固定，1..11 进窗；窗口外保持引擎原始序。旧值 25
+         * 时每批对 24 个候选各做一次 gram 查询＋偏好查表。
+         */
+        const val RERANK_WINDOW_END = 11
+
+        /** gram 分缓存上限（条）。 */
+        const val GRAM_CACHE_MAX = 512
     }
+
+    /**
+     * gram 分缓存（2026-11-16 性能 ②）：同一组字会话内按（上下文，
+     * 词）缓存 gram 分——query 是 (preparedCtx, 词, gramDb 文件) 的
+     * 纯函数（trie 只读、prepareContext 只随上下文变），同一上下文
+     * 重复查同一词必得同一分；命中后不再走 trie。上限 512 条 LRU；
+     * 两路 restore job 可并发调 rerank（循环内无挂起点、但 job 可
+     * 重叠），故用 synchronizedMap。gramDb 实例变化时整表清掉
+     * （文件运行期不变，引用比对只是兜底；落点时再校验一次引用，
+     * 防“清表后旧实例的查询结果又写回”的交错）。
+     */
+    private val gramScoreCache: MutableMap<Pair<String, String>, Double> =
+        Collections.synchronizedMap(
+            object : LinkedHashMap<Pair<String, String>, Double>(16, 0.75f, true) {
+                override fun removeEldestEntry(
+                    eldest: MutableMap.MutableEntry<Pair<String, String>, Double>?,
+                ): Boolean = size > GRAM_CACHE_MAX
+            },
+        )
+    private var cachedGramDb: GramDb? = null
+
+    @VisibleForTesting
+    internal fun gramCacheSize(): Int = gramScoreCache.size
 
     suspend fun rerank(
         candidates: List<Candidate>, inputContext: String, gramDb: GramDb?,
@@ -23,7 +58,7 @@ class CandidateRerankManager(context: Context) {
         if (candidates.size <= 1) return candidates
 
         val restoreStart = 1
-        val restoreEnd = minOf(25, candidates.size)
+        val restoreEnd = minOf(RERANK_WINDOW_END, candidates.size)
         if (restoreEnd <= restoreStart) return candidates
 
         // 偏好快照由调用方传入：已加载时是内存直读；未加载时调用
@@ -39,10 +74,30 @@ class CandidateRerankManager(context: Context) {
         } else {
             null
         }
+        // gramDb 实例变化时清掉旧文件的分（见 gramScoreCache 说明）。
+        if (gramDb != null && preparedCtx != null) {
+            synchronized(gramScoreCache) {
+                if (gramDb !== cachedGramDb) {
+                    gramScoreCache.clear()
+                    cachedGramDb = gramDb
+                }
+            }
+        }
 
         for (index in restoreStart until restoreEnd) {
             val it = candidates[index]
-            val gramScore = preparedCtx?.let { ctx -> gramDb?.query(ctx, it.text) } ?: 0.0
+            val gramScore = if (preparedCtx != null && gramDb != null) {
+                val key = inputContext to it.text
+                gramScoreCache[key] ?: run {
+                    val score = gramDb.query(preparedCtx, it.text)
+                    synchronized(gramScoreCache) {
+                        if (gramDb === cachedGramDb) gramScoreCache[key] = score
+                    }
+                    score
+                }
+            } else {
+                0.0
+            }
 
             val preferCount = prefers[it.text] ?: 0
             val textLen = it.text.codePointCount(0, it.text.length)

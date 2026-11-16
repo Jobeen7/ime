@@ -39,6 +39,7 @@ import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
 import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.skin.layout.CompactLayoutGenerator
 import com.jobeen.ime.skin.symbolbar.AppSymbolBarTypeStore
 import com.jobeen.ime.skin.symbolbar.SymbolBarConfig
 import com.jobeen.ime.skin.symbolbar.SymbolBarConfigLoader
@@ -119,7 +120,9 @@ import com.jobeen.ime.engine.rime.util.OptionsApplier
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.jobeen.ime.input.keyboard.impl.T14Keyboard
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
+import com.jobeen.ime.input.keyboard.impl.T18Keyboard
 import com.jobeen.ime.input.panel.PanelListener
 import kotlin.math.roundToInt
 
@@ -970,6 +973,8 @@ class KeyboardWindowView(
                 // 走 buildCustomKeyboard 的回退链，绝不静默变 Qwerty 而不留痕
                 name.startsWith(CustomLayoutRuntime.PREFIX) -> buildCustomKeyboard(name)
                 else -> when (name) {
+                    T14Keyboard.NAME -> T14Keyboard(context, cachedColors)
+                    T18Keyboard.NAME -> T18Keyboard(context, cachedColors)
                     T15Keyboard.NAME -> T15Keyboard(context, cachedColors)
                     T9Keyboard.NAME -> T9Keyboard(context, cachedColors)
                     SymbolKeyboard.NAME -> SymbolKeyboard(context, cachedColors)
@@ -1068,8 +1073,24 @@ class KeyboardWindowView(
 
     private val keyboardFactory: (String) -> IKeyboard = { name -> createKeyboard(name) }
 
+    /**
+     * 紧凑键盘分组推送（14/18 键侧栏拼音路由）：引擎本身不知道键盘，
+     * 切键盘时把当前分组推给引擎；T14/T18 按出厂分组（与键盘自身
+     * buildLayout 用的 groupingFor 同值），其他键盘推 null 清除
+     * （T9 走 native 表、26 键走全拼，都不走紧凑展开）。
+     */
+    private fun pushCompactGrouping(keyboard: IKeyboard) {
+        val grouping = when (keyboard.name()) {
+            T14Keyboard.NAME -> CompactLayoutGenerator.groupingFor(14)
+            T18Keyboard.NAME -> CompactLayoutGenerator.groupingFor(18)
+            else -> null
+        }
+        (context as? ImeInputMethodService)?.engine?.setCompactGrouping(grouping)
+    }
+
     fun onShowKeyboard(keyboard: IKeyboard) {
         currentKeyboard = keyboard
+        pushCompactGrouping(keyboard)
         pushDynamicTexts()
         addKeyboardView(keyboard)
         feedSchemeAndReturnKeyEvents()
@@ -1085,6 +1106,7 @@ class KeyboardWindowView(
 
     fun onKeyboardChanged(keyboard: IKeyboard) {
         currentKeyboard = keyboard
+        pushCompactGrouping(keyboard)
         pushDynamicTexts()
         addKeyboardView(keyboard)
         feedSchemeAndReturnKeyEvents()

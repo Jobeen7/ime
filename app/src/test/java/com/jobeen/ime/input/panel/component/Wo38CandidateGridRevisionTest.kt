@@ -75,4 +75,27 @@ class Wo38CandidateGridRevisionTest {
         assertFalse(gate.tryApply(2L))
         assertEquals(3L, gate.lastAppliedRevision)
     }
+
+    @Test
+    fun reset_allowsOlderRevisionAgain_dot2() {
+        // .2：浮动窗解散即会话边界——旧会话顶高的代次不得拦新会话
+        // 的首帧（引擎重建后 requestId 从头计）。
+        val gate = CandidateGridRevisionGate()
+        assertTrue(gate.tryApply(5L))
+        gate.reset()
+        assertEquals(0L, gate.lastAppliedRevision)
+        assertTrue(gate.tryApply(1L))
+        assertEquals(1L, gate.lastAppliedRevision)
+    }
+
+    @Test
+    fun reset_doesNotAffectUnversionedFrames() {
+        val gate = CandidateGridRevisionGate()
+        assertTrue(gate.tryApply(5L))
+        gate.reset()
+        assertTrue(gate.tryApply(0L))
+        assertEquals(0L, gate.lastAppliedRevision)
+        assertTrue(gate.tryApply(1L))
+        assertEquals(1L, gate.lastAppliedRevision)
+    }
 }

@@ -5,14 +5,9 @@ package com.jobeen.ime.ui.screen
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitHorizontalDragOrCancellation
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,19 +47,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.disabled
-import androidx.compose.ui.semantics.progressBarRangeInfo
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -95,6 +80,7 @@ import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.SingleChoiceDialog
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
+import com.jobeen.ime.ui.screen.ScreenComponent.SliderRow
 import com.jobeen.ime.ui.screen.SettingsPageScaffold
 import com.jobeen.ime.ui.screen.SettingsSectionTitle
 import com.jobeen.ime.ui.theme.AppAppearanceMode
@@ -854,6 +840,7 @@ private fun GlobalStyleDialog(
                                 DottedSliderRow(
                                     title = stringResource(R.string.top_corner),
                                     value = state.draft.keyboardTopCornerDp ?: 16f,
+                                    defaultValue = 16f,
                                     valueLabel = "%.1f dp".format(
                                         state.draft.keyboardTopCornerDp ?: 16f,
                                     ),
@@ -900,6 +887,7 @@ private fun GlobalStyleDialog(
                             DottedSliderRow(
                                 title = stringResource(R.string.key_border_width),
                                 value = state.draft.key.borderWidthDp ?: 1f,
+                                defaultValue = 1f,
                                 valueLabel = "%.1f dp".format(state.draft.key.borderWidthDp ?: 1f),
                                 range = 0f..4f,
                                 steps = 7,
@@ -938,6 +926,7 @@ private fun GlobalStyleDialog(
                             DottedSliderRow(
                                 title = stringResource(R.string.key_radius),
                                 value = state.draft.key.cornerRadiusDp ?: 12f,
+                                defaultValue = 12f,
                                 valueLabel = "%.1f dp".format(state.draft.key.cornerRadiusDp ?: 12f),
                                 range = 0f..32f,
                                 steps = 31,
@@ -1043,6 +1032,7 @@ private fun GlobalStyleDialog(
                                         DottedSliderRow(
                                             title = stringResource(R.string.toolbar_border_width),
                                             value = state.draft.toolbar.borderWidthDp ?: 1f,
+                                            defaultValue = 1f,
                                             valueLabel = "%.1f dp".format(
                                                 state.draft.toolbar.borderWidthDp ?: 1f,
                                             ),
@@ -1093,6 +1083,7 @@ private fun GlobalStyleDialog(
                                         DottedSliderRow(
                                             title = stringResource(R.string.global_toolbar_radius),
                                             value = state.draft.toolbar.cornerRadiusDp ?: 12f,
+                                            defaultValue = 12f,
                                             valueLabel = "%.1f dp".format(
                                                 state.draft.toolbar.cornerRadiusDp ?: 12f,
                                             ),
@@ -1166,6 +1157,7 @@ private fun GlobalStyleDialog(
                             DottedSliderRow(
                                 title = stringResource(R.string.blur_radius),
                                 value = state.draft.backgroundBlur.radiusDp ?: 16f,
+                                defaultValue = 16f,
                                 valueLabel = "%.1f dp".format(
                                     state.draft.backgroundBlur.radiusDp ?: 16f,
                                 ),
@@ -1183,6 +1175,7 @@ private fun GlobalStyleDialog(
                             DottedSliderRow(
                                 title = stringResource(R.string.frost_overlay),
                                 value = state.draft.frostOverlayAlpha ?: 0.25f,
+                                defaultValue = 0.25f,
                                 valueLabel = "%.1f%%".format(
                                     (state.draft.frostOverlayAlpha ?: 0.25f) * 100,
                                 ),
@@ -1345,7 +1338,7 @@ private fun GlobalStyleSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(MaterialTheme.colorScheme.surface),
     ) {
         Row(
@@ -1497,12 +1490,12 @@ private fun DenseSwitchRow(
 }
 
 /**
- * 行内圆点滑杆（2026-11-07 按视频定稿重设计）：
- * 标签在上（「标题 · 值」单行）；圆点轨道＋已填段＋竖线旋钮；
- * 点按跳值、横向拖动改值；步进与 M3 Slider 的 steps 口径一致；
- * enabled＝false 时置灰不可调（值保留）。
+ * 行内圆点滑杆已改为弹窗形态（2026-11-16 定：滑块一律改弹窗）：
+ * 本函数只保留调用点签名，转调共享 SliderRow（行内标题＋当前值＋›，
+ * 点行弹 Dialog）；圆点轨道＋点按跳值＋拖动改值的行内实现随之废除。
+ * sliderLabel／sliderFraction／sliderValueAtFraction 三个 internal
+ * 辅助函数由 GlobalStyleDialogTest 直接测，保留不动。
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DottedSliderRow(
     title: String,
@@ -1512,113 +1505,18 @@ private fun DottedSliderRow(
     onValueChange: (Float) -> Unit,
     steps: Int = 0,
     enabled: Boolean = true,
+    defaultValue: Float? = null,
 ) {
-    val scheme = MaterialTheme.colorScheme
-    val label = sliderLabel(title, valueLabel)
-    val fraction = sliderFraction(value, range)
-    val labelColor = if (enabled) scheme.onSurface else scheme.onSurface.copy(alpha = 0.38f)
-    val fillColor = if (enabled) scheme.primary else scheme.onSurface.copy(alpha = 0.38f)
-    val dotColor = if (enabled) {
-        scheme.onSurfaceVariant
-    } else {
-        scheme.onSurfaceVariant.copy(alpha = 0.38f)
-    }
-    var trackWidthPx by remember { mutableStateOf(0) }
-    val density = LocalDensity.current
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-    ) {
-        Text(
-            text = label,
-            fontSize = 14.sp,
-            lineHeight = 20.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            color = labelColor,
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .onSizeChanged { trackWidthPx = it.width }
-                .semantics {
-                    progressBarRangeInfo = ProgressBarRangeInfo(value, range, steps)
-                    contentDescription = label
-                    if (!enabled) disabled()
-                }
-                .pointerInput(enabled, trackWidthPx) {
-                    if (!enabled) return@pointerInput
-                    awaitEachGesture {
-                        val down = awaitFirstDown()
-                        if (trackWidthPx > 0) {
-                            onValueChange(
-                                sliderValueAtFraction(
-                                    down.position.x / trackWidthPx,
-                                    range,
-                                    steps,
-                                ),
-                            )
-                        }
-                        var drag = awaitHorizontalDragOrCancellation(down.id)
-                        while (drag != null) {
-                            drag.consume()
-                            if (trackWidthPx > 0) {
-                                onValueChange(
-                                    sliderValueAtFraction(
-                                        drag.position.x / trackWidthPx,
-                                        range,
-                                        steps,
-                                    ),
-                                )
-                            }
-                            drag = awaitHorizontalDragOrCancellation(down.id)
-                        }
-                    }
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(28.dp),
-            ) {
-                val w = size.width
-                val h = size.height
-                val cy = h / 2f
-                val spacingPx = with(density) { 20.dp.toPx() }
-                val dotRadius = with(density) { 3.dp.toPx() }
-                val barHalf = with(density) { 4.dp.toPx() }
-                val knobHalf = with(density) { 2.dp.toPx() }
-                // 圆点轨道：每 20dp 一点（先画，已填段盖住左侧的点）。
-                var x = 0f
-                while (x <= w) {
-                    drawCircle(color = dotColor, radius = dotRadius, center = Offset(x, cy))
-                    x += spacingPx
-                }
-                // 已填段：起点到旋钮。
-                val knobX = fraction * w
-                if (knobX > 0f) {
-                    drawRoundRect(
-                        color = fillColor,
-                        topLeft = Offset(0f, cy - barHalf),
-                        size = Size(knobX, barHalf * 2f),
-                        cornerRadius = CornerRadius(barHalf),
-                    )
-                }
-                // 竖线旋钮。
-                val knobLeft = (knobX - knobHalf).coerceIn(0f, (w - knobHalf * 2f).coerceAtLeast(0f))
-                drawRoundRect(
-                    color = fillColor,
-                    topLeft = Offset(knobLeft, 0f),
-                    size = Size(knobHalf * 2f, h),
-                    cornerRadius = CornerRadius(knobHalf),
-                )
-            }
-        }
-    }
+    SliderRow(
+        title = title,
+        value = value,
+        valueLabel = valueLabel,
+        range = range,
+        onValueChange = onValueChange,
+        enabled = enabled,
+        steps = steps,
+        defaultValue = defaultValue,
+    )
 }
 
 /**

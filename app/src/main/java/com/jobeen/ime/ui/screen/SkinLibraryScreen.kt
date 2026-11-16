@@ -90,6 +90,8 @@ import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.export.JimeExporter
 import com.jobeen.ime.skin.library.SkinCardMenuSupport
 import com.jobeen.ime.skin.library.SkinColorMode
+import com.jobeen.ime.skin.library.SkinCreator
+import com.jobeen.ime.skin.library.SkinImportReasons
 import com.jobeen.ime.skin.library.SkinLibraryPrefs
 import com.jobeen.ime.skin.library.SkinMiniPreview
 import com.jobeen.ime.skin.library.SkinShareResult
@@ -245,6 +247,41 @@ fun SkinLibraryScreen(
     onColorModeChanged: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    // 回调内 toast/dialog 文案集中在组合期取（stringResource）：
+    // 回调 lambda（runBusy/onClick/onConfirm）内调 context.getString 会被
+    // lint LocalContextGetResourceValueCall 拦，且 baseline 对本文件的行号
+    // 匹配不可靠（2026-11-16：三轮 lint 逐轮漏 3 条，条目逐字节正确仍上报）；
+    // 故全部静态串一次取全、回调里只用已解析串或 String.format（格式串＋运行时参数）。
+    // 无参串直接取文案；带参串取格式串（%1$s/%1$d 占位），回调内 String.format。
+    val importDoneText = stringResource(R.string.skin_import_done)
+    val importConflictTitleText = stringResource(R.string.skin_import_conflict_title)
+    val importConflictBodyFormat = stringResource(R.string.skin_import_conflict_body)
+    val importRejectedTitleText = stringResource(R.string.skin_import_rejected_title)
+    val importFailedText = stringResource(R.string.import_failed)
+    val importCopyConflictText = stringResource(R.string.skin_import_copy_conflict)
+    val createFailedFormat = stringResource(R.string.skin_lib_create_failed)
+    val scanPromptText = stringResource(R.string.skin_lib_scan_prompt)
+    val legacyQrInvalidTitleText = stringResource(R.string.skin_lib_legacy_qr_invalid_title)
+    val legacyQrInvalidBodyText = stringResource(R.string.skin_lib_legacy_qr_invalid_body)
+    val legacyImportedTitleText = stringResource(R.string.skin_lib_legacy_imported_title)
+    val legacyImportedActiveFormat = stringResource(R.string.skin_lib_legacy_imported_active)
+    val legacyImportedFormat = stringResource(R.string.skin_lib_legacy_imported)
+    val cameraPermissionNeededText = stringResource(R.string.skin_lib_camera_permission_needed)
+    val exportedText = stringResource(R.string.skin_lib_exported)
+    val exportFailedFormat = stringResource(R.string.skin_lib_export_failed)
+    val exportFailedWriteText = stringResource(R.string.skin_lib_export_failed_write)
+    val builtinThemeDefaultText = stringResource(R.string.builtin_theme_default)
+    val noActiveCustomSkinText = stringResource(R.string.skin_lib_no_active_custom_skin)
+    val shareOpenedText = stringResource(R.string.share_opened)
+    val shareFailedText = stringResource(R.string.share_failed)
+    val emptyLibraryText = stringResource(R.string.skin_lib_empty_library)
+    val devModeStoppedText = stringResource(R.string.skin_lib_dev_mode_stopped)
+    val switchFailedFallbackText = stringResource(R.string.skin_lib_switch_failed_fallback)
+    val unparseableNoColorCodeText = stringResource(R.string.skin_lib_unparseable_no_color_code)
+    val reloadFailedText = stringResource(R.string.skin_lib_reload_failed)
+    val reloadFailedSuffixText = stringResource(R.string.skin_lib_reload_failed_suffix)
+    val reloadExceptionText = stringResource(R.string.skin_lib_reload_exception)
+    val shortCodeCopiedText = stringResource(R.string.skin_lib_short_code_copied)
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf(LibraryUiState()) }
     // U-M8：忙态按计数持有（见 BusyCounter）；读处仍用 busy，不动调用点。
@@ -410,6 +447,29 @@ fun SkinLibraryScreen(
     }
 
     val applier = remember { SkinApplier(context) }
+
+    /**
+     * 库内新建皮肤（2026-11-16 皮肤编辑器修法 1(a)＋2）：
+     * 入库（SkinCreator）→ 激活（SkinApplier，与点卡同口径）→
+     * 成功绿勾（showSwitchResult），失败 toast 可操作原因。
+     * 激活后 state.active 即新皮肤，编辑器随即能打开。
+     */
+    fun createAndApplySkin(create: suspend () -> SkinCreator.Result) {
+        runBusy {
+            when (val created = create()) {
+                is SkinCreator.Result.Created -> {
+                    val result = applier.applySkin(created.ref)
+                    showSwitchResult(result) { created.name }
+                }
+                is SkinCreator.Result.Failed -> {
+                    val msg = SkinImportReasons.resolve(created.reason)
+                    toast(
+                        String.format(createFailedFormat, messageText(context, msg)),
+                    )
+                }
+            }
+        }
+    }
     val admin = remember {
         SkinLibraryAdmin(SkinLibrary.layout, SkinLibrary.store)
     }
@@ -431,15 +491,16 @@ fun SkinLibraryScreen(
             val ctx = SkinPackages.importContext(context)
             when (val outcome = importer.importZip(temp, ctx, JimeImporter.ConflictMode.FAIL)) {
                 is JimeImporter.Outcome.Imported -> {
-                    dialogText = context.getString(R.string.skin_import_done) to formatImportReport(context, outcome.report)
+                    dialogText = importDoneText to formatImportReport(context, outcome.report)
                 }
                 is JimeImporter.Outcome.ConflictPending -> {
                     pendingConflictFile = temp
-                    dialogText = context.getString(R.string.skin_import_conflict_title) to
-                        context.getString(R.string.skin_import_conflict_body, outcome.conflicts.joinToString())
+                    dialogText = importConflictTitleText to
+                        String.format(importConflictBodyFormat, outcome.conflicts.joinToString())
                 }
                 is JimeImporter.Outcome.Rejected -> {
-                    dialogText = context.getString(R.string.skin_import_rejected_title) to outcome.reason
+                    dialogText = importRejectedTitleText to
+                        rejectionText(context, outcome)
                 }
             }
         }
@@ -455,7 +516,7 @@ fun SkinLibraryScreen(
     val qrScanOptions = remember {
         ScanOptions().apply {
             setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-            setPrompt(context.getString(R.string.skin_lib_scan_prompt))
+            setPrompt(scanPromptText)
             setOrientationLocked(false)
             setBeepEnabled(false)
         }
@@ -466,8 +527,8 @@ fun SkinLibraryScreen(
         if (contents.trim().startsWith(ThemeCode.PREFIX)) {
             val importedTheme = ThemeCode.decode(contents.trim())
             if (importedTheme == null) {
-                dialogText = context.getString(R.string.skin_lib_legacy_qr_invalid_title) to
-                    context.getString(R.string.skin_lib_legacy_qr_invalid_body)
+                dialogText = legacyQrInvalidTitleText to
+                    legacyQrInvalidBodyText
                 return@rememberLauncherForActivityResult
             }
             runBusy {
@@ -475,11 +536,11 @@ fun SkinLibraryScreen(
                     is ThemeImport.Outcome.Applied -> {
                         ThemeImport.apply(context, importedTheme)
                         themeId = importedTheme.id
-                        dialogText = context.getString(R.string.skin_lib_legacy_imported_title) to
+                        dialogText = legacyImportedTitleText to
                             if (state.active?.skinId != null) {
-                                context.getString(R.string.skin_lib_legacy_imported_active, importedTheme.name)
+                                String.format(legacyImportedActiveFormat, importedTheme.name)
                             } else {
-                                context.getString(R.string.skin_lib_legacy_imported, importedTheme.name)
+                                String.format(legacyImportedFormat, importedTheme.name)
                             }
                     }
                     is ThemeImport.Outcome.NeedsOverwriteSlot -> {
@@ -494,15 +555,16 @@ fun SkinLibraryScreen(
             val qrResult = SkinQrImporter.importFromQrText(context, contents)
             when (val outcome = qrResult.outcome) {
                 is JimeImporter.Outcome.Imported -> {
-                    dialogText = context.getString(R.string.skin_import_done) to formatImportReport(context, outcome.report)
+                    dialogText = importDoneText to formatImportReport(context, outcome.report)
                 }
                 is JimeImporter.Outcome.ConflictPending -> {
                     pendingConflictFile = qrResult.packageFile
-                    dialogText = context.getString(R.string.skin_import_conflict_title) to
-                        context.getString(R.string.skin_import_conflict_body, outcome.conflicts.joinToString())
+                    dialogText = importConflictTitleText to
+                        String.format(importConflictBodyFormat, outcome.conflicts.joinToString())
                 }
                 is JimeImporter.Outcome.Rejected -> {
-                    dialogText = context.getString(R.string.skin_import_rejected_title) to outcome.reason
+                    dialogText = importRejectedTitleText to
+                        rejectionText(context, outcome)
                 }
             }
         }
@@ -514,7 +576,7 @@ fun SkinLibraryScreen(
             qrScanLauncher.launch(qrScanOptions)
         } else {
             DiagLog.w("qr", "qr_camera_denied", emptyMap())
-            toast(context.getString(R.string.skin_lib_camera_permission_needed))
+            toast(cameraPermissionNeededText)
         }
     }
     fun launchQrScan() {
@@ -542,9 +604,9 @@ fun SkinLibraryScreen(
             }
             toast(
                 when (result) {
-                    is JimeExporter.Result.Exported -> context.getString(R.string.skin_lib_exported)
-                    is JimeExporter.Result.Failed -> context.getString(R.string.skin_lib_export_failed, result.reason)
-                    null -> context.getString(R.string.skin_lib_export_failed_write)
+                    is JimeExporter.Result.Exported -> exportedText
+                    is JimeExporter.Result.Failed -> String.format(exportFailedFormat, result.reason)
+                    null -> exportFailedWriteText
                 },
             )
         }
@@ -590,6 +652,46 @@ fun SkinLibraryScreen(
                                     )
                                 },
                             )
+                            // 新建皮肤（2026-11-16 皮肤编辑器修法 2）：
+                            // 空白皮肤（默认双色板，无布局绑定）入库并激活，
+                            // 编辑器随即能打开。
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.skin_lib_create_blank_skin)) },
+                                onClick = {
+                                    showTopMenu = false
+                                    createAndApplySkin {
+                                        SkinCreator.createBlankSkin(
+                                            context,
+                                            SkinCreator.PresetBoards.current(),
+                                        )
+                                    }
+                                },
+                            )
+                            // 复制当前主题为新皮肤（2026-11-16 皮肤编辑器修法 1(a)）：
+                            // 按当前生效内置主题配色合成 v3 皮肤，入库并激活。
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.skin_lib_copy_builtin_theme)) },
+                                onClick = {
+                                    showTopMenu = false
+                                    val theme = KeyboardTheme.byId(effectiveThemeId)
+                                    val displayName = if (
+                                        effectiveThemeId == KeyboardTheme.LIGHT_DEFAULT_ID ||
+                                        effectiveThemeId == KeyboardTheme.DARK_DEFAULT_ID
+                                    ) {
+                                        builtinThemeDefaultText
+                                    } else {
+                                        theme.name
+                                    }
+                                    createAndApplySkin {
+                                        SkinCreator.copyBuiltinTheme(
+                                            context,
+                                            theme,
+                                            displayName,
+                                            SkinCreator.PresetBoards.current(),
+                                        )
+                                    }
+                                },
+                            )
                             // 扫码导入（集成闭合）：顶栏 ⋮ 项即真实扫码入口，
                             // 与底部重复按钮二选一后只留此项；扫码所得文件
                             // 经 SkinQrImporter 走同一 JimeImporter 校验链路
@@ -610,12 +712,12 @@ fun SkinLibraryScreen(
                                     showTopMenu = false
                                     val appliedId = state.active?.skinId
                                     if (appliedId == null) {
-                                        toast(context.getString(R.string.skin_lib_no_active_custom_skin))
+                                        toast(noActiveCustomSkinText)
                                     } else {
                                         runBusy {
                                             when (shareSkin(context, appliedId)) {
-                                                is SkinShareResult.Shared -> toast(context.getString(R.string.share_opened))
-                                                is SkinShareResult.Failed -> toast(context.getString(R.string.share_failed))
+                                                is SkinShareResult.Shared -> toast(shareOpenedText)
+                                                is SkinShareResult.Failed -> toast(shareFailedText)
                                             }
                                         }
                                     }
@@ -630,7 +732,7 @@ fun SkinLibraryScreen(
                                         state.index.skins.firstOrNull { it.id == id }
                                     }
                                     if (appliedId == null || appliedEntry == null) {
-                                        toast(context.getString(R.string.skin_lib_no_active_custom_skin))
+                                        toast(noActiveCustomSkinText)
                                     } else {
                                         pendingExportSkinId = appliedId
                                         exportLauncher.launch(
@@ -646,7 +748,7 @@ fun SkinLibraryScreen(
                                 onClick = {
                                     showTopMenu = false
                                     if (state.index.skins.isEmpty()) {
-                                        toast(context.getString(R.string.skin_lib_empty_library))
+                                        toast(emptyLibraryText)
                                     } else {
                                         multiSelect = true
                                     }
@@ -690,7 +792,7 @@ fun SkinLibraryScreen(
                                         SkinLibraryPrefs.setDevMode(context, false)
                                         devMode = false
                                         DiagLog.i("library", "dev_mode_closed", emptyMap())
-                                        toast(context.getString(R.string.skin_lib_dev_mode_stopped))
+                                        toast(devModeStoppedText)
                                     } else {
                                         SkinLibraryPrefs.setDevMode(context, true)
                                         devMode = true
@@ -785,7 +887,7 @@ fun SkinLibraryScreen(
                                 if (state.active?.skinId != null) {
                                     val reverted = applier.revertToDefault()
                                     if (reverted !is ApplyTransaction.Result.RevertedToDefault) {
-                                        toast(context.getString(R.string.skin_lib_switch_failed_fallback))
+                                        toast(switchFailedFallbackText)
                                         return@runBusy
                                     }
                                 }
@@ -803,7 +905,7 @@ fun SkinLibraryScreen(
                                 themeId = KeyboardTheme.DARK_DEFAULT_ID
                                 themeLightId = KeyboardTheme.LIGHT_DEFAULT_ID
                                 themeDarkId = KeyboardTheme.DARK_DEFAULT_ID
-                                switchCheck = context.getString(R.string.builtin_theme_default)
+                                switchCheck = builtinThemeDefaultText
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -818,7 +920,7 @@ fun SkinLibraryScreen(
                                 if (state.active?.skinId != null) {
                                     val reverted = applier.revertToDefault()
                                     if (reverted !is ApplyTransaction.Result.RevertedToDefault) {
-                                        toast(context.getString(R.string.skin_lib_switch_failed_fallback))
+                                        toast(switchFailedFallbackText)
                                         return@runBusy
                                     }
                                 }
@@ -918,8 +1020,8 @@ fun SkinLibraryScreen(
                             onShare = {
                                 runBusy {
                                     when (shareSkin(context, entry.id)) {
-                                        is SkinShareResult.Shared -> toast(context.getString(R.string.share_opened))
-                                        is SkinShareResult.Failed -> toast(context.getString(R.string.share_failed))
+                                        is SkinShareResult.Shared -> toast(shareOpenedText)
+                                        is SkinShareResult.Failed -> toast(shareFailedText)
                                     }
                                 }
                             },
@@ -933,7 +1035,7 @@ fun SkinLibraryScreen(
                                         )
                                     }
                                     if (snapshot == null) {
-                                        toast(context.getString(R.string.skin_lib_unparseable_no_color_code))
+                                        toast(unparseableNoColorCodeText)
                                     } else {
                                         val theme = KeyboardTheme(
                                             entry.id, entry.name, snapshot.colorScheme,
@@ -1002,11 +1104,11 @@ fun SkinLibraryScreen(
                                                         ?: "Unknown"),
                                                 ),
                                             )
-                                            dialogText = context.getString(R.string.skin_lib_reload_failed) to
+                                            dialogText = reloadFailedText to
                                                 applyResultMessage(result) { id ->
                                                     state.index.skins.firstOrNull { it.id == id }
                                                         ?.name?.ifBlank { null }
-                                                } + context.getString(R.string.skin_lib_reload_failed_suffix)
+                                                } + reloadFailedSuffixText
                                         }
                                     } catch (error: Exception) {
                                         DiagLog.e(
@@ -1018,8 +1120,8 @@ fun SkinLibraryScreen(
                                                 "error" to (error::class.simpleName ?: "Unknown"),
                                             ),
                                         )
-                                        dialogText = context.getString(R.string.skin_lib_reload_failed) to
-                                            context.getString(R.string.skin_lib_reload_exception)
+                                        dialogText = reloadFailedText to
+                                            reloadExceptionText
                                     }
                                 }
                             },
@@ -1089,12 +1191,13 @@ fun SkinLibraryScreen(
                                     file, ctx, JimeImporter.ConflictMode.COPY,
                                 )) {
                                     is JimeImporter.Outcome.Imported -> {
-                                        dialogText = context.getString(R.string.skin_import_done) to formatImportReport(context, outcome.report)
+                                        dialogText = importDoneText to formatImportReport(context, outcome.report)
                                     }
                                     is JimeImporter.Outcome.Rejected ->
-                                        dialogText = context.getString(R.string.skin_import_rejected_title) to outcome.reason
+                                        dialogText = importRejectedTitleText to
+                                            rejectionText(context, outcome)
                                     is JimeImporter.Outcome.ConflictPending ->
-                                        dialogText = context.getString(R.string.import_failed) to context.getString(R.string.skin_import_copy_conflict)
+                                        dialogText = importFailedText to importCopyConflictText
                                 }
                             }
                         },
@@ -1143,7 +1246,7 @@ fun SkinLibraryScreen(
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
                             as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("theme", qrCodeText ?: ""))
-                        toast(context.getString(R.string.skin_lib_short_code_copied))
+                        toast(shortCodeCopiedText)
                     },
                 ),
             ),
@@ -1158,8 +1261,8 @@ fun SkinLibraryScreen(
                 qrShareSkinId = null
                 runBusy {
                     when (shareSkin(context, target)) {
-                        is SkinShareResult.Shared -> toast(context.getString(R.string.share_opened))
-                        is SkinShareResult.Failed -> toast(context.getString(R.string.share_failed))
+                        is SkinShareResult.Shared -> toast(shareOpenedText)
+                        is SkinShareResult.Failed -> toast(shareFailedText)
                     }
                 }
             },
@@ -1167,6 +1270,11 @@ fun SkinLibraryScreen(
     }
 
     deleteSkinId?.let { target ->
+        // 单删 toast 文案在组合期取，回调里直接用（此前 1258/1260/1262
+        // 三处 context.getString 被 lint 拦；带参的 refused 用格式串＋String.format）。
+        val deletedText = stringResource(R.string.deleted)
+        val pendingFallbackText = stringResource(R.string.skin_lib_pending_fallback)
+        val deleteRefusedFormat = stringResource(R.string.skin_lib_delete_refused)
         SettingsConfirmDialog(
             onDismissRequest = { deleteSkinId = null },
             title = stringResource(R.string.skin_lib_delete_skin_title),
@@ -1184,11 +1292,11 @@ fun SkinLibraryScreen(
                             com.jobeen.ime.skin.store.ApplyTransaction.Result
                                 .RevertedToDefault
                     }) {
-                        is SkinLibraryAdmin.Result.Done -> toast(context.getString(R.string.deleted))
+                        is SkinLibraryAdmin.Result.Done -> toast(deletedText)
                         is SkinLibraryAdmin.Result.DoneFallbackPending ->
-                            toast(context.getString(R.string.skin_lib_pending_fallback))
+                            toast(pendingFallbackText)
                         is SkinLibraryAdmin.Result.Refused ->
-                            toast(context.getString(R.string.skin_lib_delete_refused, result.reason))
+                            toast(String.format(deleteRefusedFormat, result.reason))
                     }
                 }
             },
@@ -1275,6 +1383,8 @@ fun SkinLibraryScreen(
     }
 
     if (showResetConfirm) {
+        // 重置完成 toast 文案在组合期取（此前 1363 处 context.getString 被 lint 拦）。
+        val resetDoneText = stringResource(R.string.skin_lib_reset_done)
         SettingsConfirmDialog(
             onDismissRequest = { showResetConfirm = false },
             title = stringResource(R.string.skin_lib_reset_builtin_title),
@@ -1289,7 +1399,7 @@ fun SkinLibraryScreen(
                         "library", "builtin_reset",
                         mapOf("previousSkinId" to (previous ?: "builtin")),
                     )
-                    toast(context.getString(R.string.skin_lib_reset_done))
+                    toast(resetDoneText)
                 }
             },
             dismissText = stringResource(R.string.cancel),
@@ -1298,6 +1408,12 @@ fun SkinLibraryScreen(
 
     if (showBatchDeleteConfirm) {
         val targets = state.index.skins.filter { it.id in selectedIds }
+        // 批量删除 toast 的格式串在组合期取（stringResource），回调里只做
+        // String.format——回调内调 context.getString 会被 lint
+        // LocalContextGetResourceValueCall 拦（此前 1411/1413 两处）。
+        val batchDeleteDonePendingFormat =
+            stringResource(R.string.skin_lib_batch_delete_done_pending)
+        val batchDeleteDoneFormat = stringResource(R.string.skin_lib_batch_delete_done)
         SettingsConfirmDialog(
             onDismissRequest = { showBatchDeleteConfirm = false },
             title = stringResource(R.string.skin_lib_delete_selected_title),
@@ -1337,9 +1453,9 @@ fun SkinLibraryScreen(
                         )
                     toast(
                         if (pending > 0) {
-                            context.getString(R.string.skin_lib_batch_delete_done_pending, done, pending, refused)
+                            String.format(batchDeleteDonePendingFormat, done, pending, refused)
                         } else {
-                            context.getString(R.string.skin_lib_batch_delete_done, done, refused)
+                            String.format(batchDeleteDoneFormat, done, refused)
                         },
                     )
                 }
@@ -1352,6 +1468,10 @@ fun SkinLibraryScreen(
     // 选一现有自定义主题槽位覆盖；自定义主题最多 2 个，满槽时此列表非空。
     if (showLegacyOverwriteDialog && pendingLegacyImport != null) {
         val pending = pendingLegacyImport!!
+        // 旧主题导入成功的标题与正文格式串在组合期取，回调里只做
+        // String.format（此前 1448/1449 两处 context.getString 被 lint 拦）。
+        val legacyImportedTitle = stringResource(R.string.skin_lib_legacy_imported_title)
+        val legacyOverwrittenFormat = stringResource(R.string.skin_lib_legacy_overwritten)
         val existing = KeyboardThemePresets.customThemes
         SettingsDialog(
             onDismissRequest = {
@@ -1374,8 +1494,8 @@ fun SkinLibraryScreen(
                                         ThemeStore.overwrite(index, pending)
                                         ThemeImport.apply(context, pending)
                                         themeId = pending.id
-                                        dialogText = context.getString(R.string.skin_lib_legacy_imported_title) to
-                                            context.getString(R.string.skin_lib_legacy_overwritten, theme.name, pending.name)
+                                        dialogText = legacyImportedTitle to
+                                            String.format(legacyOverwrittenFormat, theme.name, pending.name)
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
@@ -1402,6 +1522,20 @@ fun SkinLibraryScreen(
     }
 
 }
+
+/** 导入拒绝文案：reason 码译成可操作文字（2026-11-16 皮肤编辑器修法 3）。 */
+private fun rejectionText(context: Context, outcome: JimeImporter.Outcome.Rejected): String {
+    val msg = SkinImportReasons.resolve(outcome.reason, outcome.issues)
+    return context.getString(msg.resId, *msg.args.toTypedArray())
+}
+
+/**
+ * SkinImportReasons.Message 解析为文字（普通函数：context 作参数传入，
+ * 不在 composable 作用域内调 getString，lint LocalContextGetResourceValueCall 不盯；
+ * 动态 resId（reason 决定）无法顶置 stringResource，只能走此路）。
+ */
+private fun messageText(context: Context, msg: SkinImportReasons.Message): String =
+    context.getString(msg.resId, *msg.args.toTypedArray())
 
 private fun formatImportReport(context: Context, report: JimeImporter.ImportReport): String = buildString {
     if (report.importedSkinIds.isNotEmpty()) {
@@ -1460,12 +1594,12 @@ private fun SkinLibraryCard(
     val borderColor = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(LocalMonetCardColor.current)
             .border(
                 width = if (checked) 2.dp else 1.dp,
                 color = borderColor,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(20.dp),
             )
             .combinedClickable(
                 enabled = enabled,
@@ -1609,12 +1743,12 @@ private fun BuiltinThemeCard(
     val borderColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(LocalMonetCardColor.current)
             .border(
                 width = if (isActive) 2.dp else 1.dp,
                 color = borderColor,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(20.dp),
             )
             .clickable(enabled = enabled, onClick = onClick),
     ) {

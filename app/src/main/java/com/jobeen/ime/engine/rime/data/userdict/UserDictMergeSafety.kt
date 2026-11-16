@@ -1,0 +1,941 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package com.jobeen.ime.engine.rime.data.userdict
+
+import java.io.BufferedReader
+import java.io.File
+import java.io.FileInputStream
+import java.io.InputStreamReader
+import java.nio.charset.CodingErrorAction
+import java.text.Normalizer
+
+/**
+ * 词库备份/合并安全流程（松烟思路自研重写，不搬松烟代码）。
+ *
+ * 只学“合并前备份、可恢复、整批校验、只增不减”的做法，具体实现按
+ * Jime 现有链路与 librime 行为从头写：
+ *
+ * - 导入格式（实测本仓 vendored librime，TableDb::format.parser，
+ *   `rime/dict/table_db.cc`）：每行 `词⇥码[⇥权重]`，权重是十进制
+ *   整数；第 3 列不是整数时 native 的 stoi 静默失败、权重变 0；
+ *   权重为负时 `UserDbImporter::Put`（`rime/dict/user_db.cc`）把
+ *   该词条标记为删除——这就是“较小权重覆盖/删除已有词”的唯一
+ *   入口：正权重时 native 本就取较大提交次数与较大 dee，
+ *   `o.commits = max(o.commits, v.commits)`，
+ *   `o.dee = max(o.dee, v.dee)`。
+ * - 所以本文件做的三件事是：① 整批先校验，负权重/非法权重/
+ *   坏行/列序可疑（疑似码在前的 `.userdb.txt` 快照）整批拒绝，
+ *   一行不写；② 合并前把当前词库导出成 `before-merge.json`
+ *   安全副本；③ 批内同词条去重取最大权重后再导入，绝不把
+ *   负权重行喂给导入器。
+ * - 恢复：native 的 Import/Restore 两条路都只取最大值、没有
+ *   “替换回旧值”的入口，所以恢复用已有的导入器本身完成：
+ *   合并后新增的词条写一条 `-1` 删除标记行，被抬高的词条先
+ *   删标记、再按备份权重重写一条——删除标记行只允许这条用户
+ *   确认的恢复流程内部产生，合并流程永远不产生。
+ *
+ * 本文件只含纯函数与文件 IO，不直接碰引擎：导出/导入由调用方
+ * 以 lambda 传入（沿用 [UserDictManager.importUserDictInChunks]
+ * 的注入口径），调用方负责在引擎线程串行执行。
+ * 单元测试见 `UserDictMergeSafetyTest`。
+ */
+object UserDictMergeSafety {
+
+    /** 安全副本的目录名（filesDir 下）与文件名：每本词典一份。 */
+    const val BACKUP_DIR_NAME = "userdict_backups"
+    const val BACKUP_FILE_NAME = "before-merge.json"
+    const val BACKUP_FORMAT_VERSION = 1
+
+    /** 词/码的长度上限：正常词条远小于此值，超限基本是选错文件或坏行。 */
+    const val MAX_PHRASE_CHARS = 128
+    const val MAX_CODE_CHARS = 64
+
+    /** 校验失败时最多向用户列出的行问题数（其余只计总数）。 */
+    const val MAX_ISSUES = 20
+
+    /** 校验问题码：供单测与调用方分支，[Issue.detail] 是给用户看的中文说明。 */
+    object IssueCode {
+        const val FILE_NOT_UTF8 = "file_not_utf8"
+        const val EMPTY_BATCH = "empty_batch"
+        const val DICT_NAME = "dict_name"
+        const val BAD_COLUMNS = "bad_columns"
+        const val EMPTY_PHRASE = "empty_phrase"
+        const val BAD_PHRASE = "bad_phrase"
+        const val EMPTY_CODE = "empty_code"
+        const val BAD_CODE = "bad_code"
+        const val BAD_WEIGHT = "bad_weight"
+        const val NEGATIVE_WEIGHT = "negative_weight"
+        const val COLUMN_ORDER = "column_order"
+    }
+
+    /** 一条词条：phrase⇥code，commits 为 null 表示该行无权重列。 */
+    data class Entry(val phrase: String, val code: String, val commits: Int?)
+
+    /** （词，码）键：同一词条在不同权重下只保留最大者。 */
+    data class DictKey(val phrase: String, val code: String)
+
+    /** 一条校验问题：lineNumber 为 0 表示整批/文件级问题。 */
+    data class Issue(val lineNumber: Int, val code: String, val detail: String)
+
+    sealed interface BatchValidation {
+        /** 校验通过：可直接进入“备份→去重→导入”。 */
+        data class Valid(
+            val entryCount: Int,
+            val distinctKeys: Int,
+            val maxCommits: Int?,
+            /** 来源文件名声明的词典（如 `wanxiang.userdict.txt` 中的 wanxiang），无声明为 null。 */
+            val sourceDict: String?,
+            /** 来源词典与目标词典不同：跨词典并入（现有功能，允许，仅告知）。 */
+            val crossDict: Boolean,
+        ) : BatchValidation
+
+        /** 校验不通过：整批拒绝，一行不写。 */
+        data class Invalid(
+            val batchLabel: String,
+            val issues: List<Issue>,
+            /** 有问题的行数（只计行，不计问题条数）。 */
+            val badRows: Int,
+            /** 检查过的数据行数（不含空行与注释行）。 */
+            val checkedRows: Int,
+        ) : BatchValidation {
+            /** 给用户看的整批不合格说明：哪一批、共多少行、为什么。 */
+            fun userMessage(): String = buildString {
+                append("“$batchLabel”这一批不合格，已整批拒绝，未写入任何词条。")
+                if (checkedRows > 0) {
+                    append("共检查 $checkedRows 行，发现 $badRows 行问题：")
+                } else {
+                    append("原因：")
+                }
+                for (issue in issues) {
+                    append("\n")
+                    if (issue.lineNumber > 0) append("第 ${issue.lineNumber} 行：") else append("整批：")
+                    append(issue.detail)
+                }
+                if (badRows > issues.size) {
+                    append("\n……另有 ${badRows - issues.size} 行同类问题未列出")
+                }
+            }
+        }
+    }
+
+    /** 合并被中止时抛出的异常：message 已是给用户看的中文说明，调用方直接展示。 */
+    class UserDictMergeException(message: String) : IllegalStateException(message)
+
+    // ---- 校验 ----
+
+    /**
+     * 整批校验 [file]：格式、词典归属、与当前 librime 版本的兼容性。
+     *
+     * 规则（均从本仓 vendored librime 的导入解析器推导，见文件头注释）：
+     * - 文件必须是合法 UTF-8；不是则整批拒绝（native 会按字节读出乱码词条）。
+     * - 每行（空行与 `#` 注释行除外）必须是 `词⇥码` 或 `词⇥码⇥权重`，
+     *   列数不对整批拒绝。
+     * - 词非空、≤128 字、无控制字符；码非空、≤64 字、无控制字符、
+     *   只能是小写字母/数字/空格（去声调后的拼音编码形态）、无连续空格。
+     * - 权重列若有：必须是十进制整数且能装进 Int；负数是 librime 的
+     *   删除标记，整批拒绝；`c=5 d=… t=…` 这类快照值不是整数，同样拒绝。
+     * - 全批投票：多数特征行呈“码在前”（第 1 列像拼音且第 2 列含汉字）
+     *   时，疑似拿 `.userdb.txt` 原生快照当 `.userdict.txt` 导入，
+     *   整批拒绝（列序错位会把码当词、词当码全量写坏）。
+     * - 词典归属：目标词典名须过 [WebDavSync.isSafeDictName]；来源文件
+     *   名若声明了另一本词典（如 `wanxiang.userdict.txt`），只记录为
+     *   跨词典并入、不拒绝——跨词典并入是现有功能，用户在界面上
+     *   选文件/远端文件时已定归属；行内没有词典列，归属只能查到这一层。
+     */
+    fun validateBatch(file: File, batchLabel: String, dictName: String): BatchValidation {
+        if (!WebDavSync.isSafeDictName(dictName)) {
+            return BatchValidation.Invalid(
+                batchLabel = batchLabel,
+                issues = listOf(
+                    Issue(0, IssueCode.DICT_NAME, "目标词典名“$dictName”非法，拒绝合并"),
+                ),
+                badRows = 1,
+                checkedRows = 0,
+            )
+        }
+        val issues = ArrayList<Issue>()
+        var badRows = 0
+        var checkedRows = 0
+        var codeFirstVotes = 0
+        var phraseFirstVotes = 0
+        val keys = HashSet<DictKey>()
+        var maxCommits: Int? = null
+        try {
+            strictUtf8Reader(file).useLines { lines ->
+                var lineNumber = 0
+                for (raw in lines) {
+                    lineNumber++
+                    var line = raw
+                    // 首行 BOM：Windows 记事本存的 UTF-8 自带 BOM，首词会被
+                    // 粘上 \uFEFF 而永远查不到；校验时容忍，归一化时去掉。
+                    if (lineNumber == 1 && line.startsWith("\uFEFF")) {
+                        line = line.substring(1)
+                    }
+                    if (line.isBlank() || line.startsWith("#")) continue
+                    checkedRows++
+                    val cols = line.split('\t')
+                    // 列序投票：先于逐行校验——码在前的行逐行校验必报
+                    // BAD_CODE（第 2 列是汉字），若等校验通过再投票，
+                    // 码在前多数永远投不出来（COLUMN_ORDER 成死码）。
+                    // 与 WebDavSync.decideUserDbColumnOrder 同口径（第 1 列
+                    // 像拼音且第 2 列含汉字→码在前，反之→词在前）；不足
+                    // 2 列的行不投票。
+                    if (cols.size >= 2) {
+                        val a = cols[0].trim()
+                        val b = cols[1].trim()
+                        if (isPinyinLike(a) && containsCjk(b)) codeFirstVotes++
+                        else if (containsCjk(a) && isPinyinLike(b)) phraseFirstVotes++
+                    }
+                    val issue = validateRow(line, lineNumber)
+                    if (issue != null) {
+                        badRows++
+                        if (issues.size < MAX_ISSUES) issues += issue
+                        continue
+                    }
+                    val phrase = cols[0]
+                    val code = cols[1].trim()
+                    val commits = cols.getOrNull(2)?.trim()
+                        ?.takeIf { it.isNotEmpty() }?.toIntOrNull()
+                    keys += DictKey(phrase, code)
+                    if (commits != null) maxCommits = maxOf(maxCommits ?: commits, commits)
+                }
+            }
+        } catch (e: java.nio.charset.CharacterCodingException) {
+            return BatchValidation.Invalid(
+                batchLabel = batchLabel,
+                issues = listOf(
+                    Issue(0, IssueCode.FILE_NOT_UTF8, "文件不是合法的 UTF-8 文本，无法按行校验"),
+                ),
+                badRows = 1,
+                checkedRows = checkedRows,
+            )
+        }
+        if (checkedRows == 0) {
+            return BatchValidation.Invalid(
+                batchLabel = batchLabel,
+                issues = listOf(
+                    Issue(0, IssueCode.EMPTY_BATCH, "文件里没有任何词条（只有空行或注释行）"),
+                ),
+                badRows = 1,
+                checkedRows = 0,
+            )
+        }
+        if (codeFirstVotes > phraseFirstVotes && codeFirstVotes > 0) {
+            // 整批级问题：放在首位，用户先看到最严重的定性结论。
+            issues.add(
+                0,
+                Issue(
+                    0,
+                    IssueCode.COLUMN_ORDER,
+                    "多数行是“码在前、词在后”，疑似 Rime 原生快照（.userdb.txt），" +
+                        "不是导入要的“词⇥码⇥权重”格式；直接导入会把码当词全量写坏，" +
+                        "请用 WebDAV 下载 .userdb.txt（会自动转置）或改成词在前的格式再导入",
+                ),
+            )
+            badRows++
+        }
+        if (issues.isNotEmpty()) {
+            return BatchValidation.Invalid(batchLabel, issues, badRows, checkedRows)
+        }
+        val sourceDict = sourceDictFromLabel(batchLabel)
+        return BatchValidation.Valid(
+            entryCount = checkedRows,
+            distinctKeys = keys.size,
+            maxCommits = maxCommits,
+            sourceDict = sourceDict,
+            crossDict = sourceDict != null && sourceDict != dictName,
+        )
+    }
+
+    /** 校验单行（已排除空行与注释行）：有问题返回第一条问题，否则 null。 */
+    private fun validateRow(line: String, lineNumber: Int): Issue? {
+        val cols = line.split('\t')
+        if (cols.size < 2 || cols.size > 3) {
+            return Issue(
+                lineNumber,
+                IssueCode.BAD_COLUMNS,
+                "应为“词⇥码”或“词⇥码⇥权重”（2 或 3 列），实际 ${cols.size} 列",
+            )
+        }
+        val phrase = cols[0]
+        if (phrase.isBlank()) {
+            return Issue(lineNumber, IssueCode.EMPTY_PHRASE, "词为空")
+        }
+        if (phrase.length > MAX_PHRASE_CHARS || phrase.any { it.code < 0x20 || it.code == 0x7F }) {
+            return Issue(
+                lineNumber,
+                IssueCode.BAD_PHRASE,
+                "词过长（超过 $MAX_PHRASE_CHARS 字）或含控制字符",
+            )
+        }
+        val code = cols[1].trim()
+        if (code.isEmpty()) {
+            return Issue(lineNumber, IssueCode.EMPTY_CODE, "码为空")
+        }
+        if (code.length > MAX_CODE_CHARS ||
+            code.any { it.code < 0x20 || it.code == 0x7F } ||
+            !code.all { it in 'a'..'z' || it in '0'..'9' || it == ' ' } ||
+            code.contains("  ")
+        ) {
+            return Issue(
+                lineNumber,
+                IssueCode.BAD_CODE,
+                "码“$code”不是小写字母/数字/空格组成的拼音编码" +
+                    "（含大写、声调符号、控制字符或连续空格的码导入后永远查不到）",
+            )
+        }
+        val weight = cols.getOrNull(2)?.trim().orEmpty()
+        if (weight.isNotEmpty()) {
+            val parsed = weight.toIntOrNull()
+            if (parsed == null) {
+                return Issue(
+                    lineNumber,
+                    IssueCode.BAD_WEIGHT,
+                    "权重“$weight”不是整数（当前 librime 会把它静默当成 0，" +
+                        "这行等于没导入）；快照值如 c=5 d=… t=… 请走 .userdb.txt 转置导入",
+                )
+            }
+            if (parsed < 0) {
+                return Issue(
+                    lineNumber,
+                    IssueCode.NEGATIVE_WEIGHT,
+                    "权重 $parsed 为负：负权重在 librime 里是删除标记，" +
+                        "会删掉本地已有的同词条，整批已拒绝",
+                )
+            }
+        }
+        return null
+    }
+
+    /** 从批次名（如 `wanxiang.userdict.txt`）取来源词典名，无声明返回 null。 */
+    private fun sourceDictFromLabel(batchLabel: String): String? {
+        val name = batchLabel.substringAfterLast('/').substringAfterLast('\\')
+        for (suffix in listOf(".userdict.txt", ".userdb.txt")) {
+            if (name.endsWith(suffix, ignoreCase = true)) {
+                return name.dropLast(suffix.length).takeIf { it.isNotEmpty() }
+            }
+        }
+        return null
+    }
+
+    /** 是否像拼音编码：去声调后仅含小写字母和空格（与 WebDavSync 同口径）。 */
+    private fun isPinyinLike(s: String): Boolean {
+        val norm = stripTones(s)
+        return norm.isNotEmpty() && norm.all { it in 'a'..'z' || it == ' ' }
+    }
+
+    /** 是否包含 CJK 汉字（基本区 + 扩展 A 区，与 WebDavSync 同口径）。 */
+    private fun containsCjk(s: String): Boolean =
+        s.any { it in '㐀'..'䶿' || it in '一'..'鿿' }
+
+    /** 去掉拼音里的声调符号：`yào` → `yao`，ü 按 Rime 习惯转为 v。 */
+    private fun stripTones(s: String): String {
+        if (s.isEmpty()) return s
+        val pre = s.replace('ü', 'v').replace('Ü', 'V')
+            .replace('ǖ', 'v').replace('ǘ', 'v').replace('ǚ', 'v').replace('ǜ', 'v')
+        val decomposed = Normalizer.normalize(pre, Normalizer.Form.NFD)
+        val sb = StringBuilder(decomposed.length)
+        for (ch in decomposed) {
+            if (ch !in '̀'..'ͯ') sb.append(ch)
+        }
+        return sb.toString()
+    }
+
+    private fun strictUtf8Reader(file: File): BufferedReader {
+        val decoder = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+        return BufferedReader(InputStreamReader(FileInputStream(file), decoder))
+    }
+
+    // ---- 批内去重：同词条保留较大权重 ----
+
+    /**
+     * 批内去重：同一（词，码）只留一行，权重取批内最大值；无权重行与
+     * 有权重行并存时取有权重的那行；注释行与空行原样保留；首行 BOM 去掉。
+     *
+     * native 导入器本身也会逐行取大，但先归一可保证：切块边界、重复行
+     * 不会让“较小权重后写”这种时序问题有任何可乘之机，且导入文件
+     * 本身就是“较大权重”的定稿。
+     * 无重复行且无 BOM 时直接返回 [input]（不重写）；否则写新文件并返回它，
+     * 调用方负责删除返回的文件（与入参不同时）。
+     */
+    fun normalizeBatchFile(input: File, workDir: File): File {
+        val merged = LinkedHashMap<DictKey, Entry>()
+        var hasDuplicate = false
+        var hasBom = false
+        strictUtf8Reader(input).useLines { lines ->
+            var lineNumber = 0
+            for (raw in lines) {
+                lineNumber++
+                var line = raw
+                if (lineNumber == 1 && line.startsWith("\uFEFF")) {
+                    line = line.substring(1)
+                    hasBom = true
+                }
+                if (line.isBlank() || line.startsWith("#")) continue
+                val cols = line.split('\t')
+                if (cols.size < 2 || cols.size > 3) continue
+                val key = DictKey(cols[0], cols[1].trim())
+                val commits = cols.getOrNull(2)?.trim()
+                    ?.takeIf { it.isNotEmpty() }?.toIntOrNull()
+                val prev = merged[key]
+                if (prev != null) {
+                    hasDuplicate = true
+                    val best = when {
+                        prev.commits == null -> commits
+                        commits == null -> prev.commits
+                        else -> maxOf(prev.commits, commits)
+                    }
+                    merged[key] = Entry(key.phrase, key.code, best)
+                } else {
+                    merged[key] = Entry(key.phrase, key.code, commits)
+                }
+            }
+        }
+        if (!hasDuplicate && !hasBom) return input
+        val out = File(workDir, "${input.name}.normalized-${System.nanoTime()}")
+        val seen = HashSet<DictKey>()
+        out.bufferedWriter(Charsets.UTF_8).use { writer ->
+            strictUtf8Reader(input).useLines { lines ->
+                var lineNumber = 0
+                for (raw in lines) {
+                    lineNumber++
+                    var line = raw
+                    if (lineNumber == 1 && line.startsWith("\uFEFF")) {
+                        line = line.substring(1)
+                    }
+                    if (line.isBlank() || line.startsWith("#")) {
+                        writer.write(line)
+                        writer.newLine()
+                        continue
+                    }
+                    val cols = line.split('\t')
+                    if (cols.size < 2 || cols.size > 3) continue
+                    val key = DictKey(cols[0], cols[1].trim())
+                    if (!seen.add(key)) continue
+                    val entry = merged.getValue(key)
+                    writer.write(entry.phrase)
+                    writer.write("\t")
+                    writer.write(entry.code)
+                    if (entry.commits != null) {
+                        writer.write("\t")
+                        writer.write(entry.commits.toString())
+                    }
+                    writer.newLine()
+                }
+            }
+        }
+        return out
+    }
+
+    // ---- 合并前安全副本 before-merge.json ----
+
+    /** 合并前备份快照：当前词库的全部词条 + 批次来源（可恢复的依据）。 */
+    data class BackupSnapshot(
+        val dictName: String,
+        val sourceLabel: String,
+        val createdAtMs: Long,
+        val entries: List<Entry>,
+    )
+
+    /** 该词典的安全副本路径：`<baseDir>/userdict_backups/<词典>/before-merge.json`。 */
+    fun backupFileFor(baseDir: File, dictName: String): File {
+        require(WebDavSync.isSafeDictName(dictName)) { "词典名非法，拒绝备份" }
+        return File(File(baseDir, BACKUP_DIR_NAME), "$dictName/$BACKUP_FILE_NAME")
+    }
+
+    /** 是否已有合并前备份（恢复入口有无可恢复内容的依据）。 */
+    fun hasBeforeMergeBackup(baseDir: File, dictName: String): Boolean =
+        runCatching { backupFileFor(baseDir, dictName).isFile }.getOrDefault(false)
+
+    /** 读备份元数据（时间/条数/来源，供界面展示；无备份返回 null）。 */
+    fun readBackupMeta(baseDir: File, dictName: String): BackupSnapshot? {
+        val file = runCatching { backupFileFor(baseDir, dictName) }.getOrNull() ?: return null
+        if (!file.isFile) return null
+        return runCatching { readBeforeMergeBackup(file) }.getOrNull()
+    }
+
+    /**
+     * 解析引擎导出的词典文本（`词⇥码⇥权重`，TableDb 导出格式）：
+     * 注释行与空行跳过；权重列必须存在且为 ≥0 的整数，否则抛错——
+     * 引擎自己导出的文件本应全是干净行，脏行说明导出已坏，备份
+     * 不能建立在脏数据上。
+     */
+    fun parseExportFile(file: File): List<Entry> {
+        val entries = ArrayList<Entry>()
+        strictUtf8Reader(file).useLines { lines ->
+            var lineNumber = 0
+            for (raw in lines) {
+                lineNumber++
+                var line = raw
+                if (lineNumber == 1 && line.startsWith("\uFEFF")) {
+                    line = line.substring(1)
+                }
+                if (line.isBlank() || line.startsWith("#")) continue
+                val cols = line.split('\t')
+                if (cols.size != 3) {
+                    throw IllegalStateException("导出文件第 $lineNumber 行不是“词⇥码⇥权重”")
+                }
+                val commits = cols[2].trim().toIntOrNull()
+                    ?: throw IllegalStateException("导出文件第 $lineNumber 行权重不是整数")
+                if (commits < 0) {
+                    throw IllegalStateException("导出文件第 $lineNumber 行权重为负")
+                }
+                entries += Entry(cols[0], cols[1].trim(), commits)
+            }
+        }
+        return entries
+    }
+
+    /**
+     * 把 [exportFile]（当前词库的导出文本）写成安全副本。
+     * 先写临时文件再改名换位：写一半崩了也不会留半截备份冒充完整备份。
+     */
+    fun writeBeforeMergeBackup(
+        baseDir: File,
+        dictName: String,
+        sourceLabel: String,
+        exportFile: File,
+        nowMs: Long = System.currentTimeMillis(),
+    ): BackupSnapshot {
+        val snapshot = BackupSnapshot(dictName, sourceLabel, nowMs, parseExportFile(exportFile))
+        val target = backupFileFor(baseDir, dictName)
+        target.parentFile?.mkdirs()
+        val tmp = File(target.parentFile, "$BACKUP_FILE_NAME.tmp-${System.nanoTime()}")
+        try {
+            tmp.writeText(buildBackupJson(snapshot), Charsets.UTF_8)
+            if (!tmp.renameTo(target)) {
+                // 同目录改名失败多半是旧备份占位：删旧再改名，仍失败才报错。
+                target.delete()
+                if (!tmp.renameTo(target)) {
+                    throw IllegalStateException("合并前备份换位失败")
+                }
+            }
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
+        }
+        return snapshot
+    }
+
+    /** 读安全副本：格式不对（版本/字段/类型）一律抛错，不读半截数据。 */
+    fun readBeforeMergeBackup(file: File): BackupSnapshot {
+        val root = JsonParser(file.readText(Charsets.UTF_8)).parse()
+            as? Map<*, *> ?: throw IllegalStateException("备份文件损坏：顶层不是对象")
+        val version = (root["version"] as? Number)?.toLong()
+            ?: throw IllegalStateException("备份文件损坏：缺少 version")
+        if (version != BACKUP_FORMAT_VERSION.toLong()) {
+            throw IllegalStateException("备份文件版本 $version 不受支持")
+        }
+        val dictName = root["dict"] as? String
+            ?: throw IllegalStateException("备份文件损坏：缺少 dict")
+        val sourceLabel = root["source"] as? String
+            ?: throw IllegalStateException("备份文件损坏：缺少 source")
+        val createdAtMs = (root["createdAtMs"] as? Number)?.toLong()
+            ?: throw IllegalStateException("备份文件损坏：缺少 createdAtMs")
+        val rawEntries = root["entries"] as? List<*>
+            ?: throw IllegalStateException("备份文件损坏：缺少 entries")
+        val entries = rawEntries.map { raw ->
+            val obj = raw as? Map<*, *>
+                ?: throw IllegalStateException("备份文件损坏：词条不是对象")
+            val phrase = obj["p"] as? String
+                ?: throw IllegalStateException("备份文件损坏：词条缺少 p")
+            val code = obj["c"] as? String
+                ?: throw IllegalStateException("备份文件损坏：词条缺少 c")
+            val commits = (obj["w"] as? Number)?.toInt()
+            Entry(phrase, code, commits)
+        }
+        return BackupSnapshot(dictName, sourceLabel, createdAtMs, entries)
+    }
+
+    private fun buildBackupJson(snapshot: BackupSnapshot): String = buildString {
+        append("{\"version\":").append(BACKUP_FORMAT_VERSION)
+        append(",\"dict\":").append(jsonString(snapshot.dictName))
+        append(",\"source\":").append(jsonString(snapshot.sourceLabel))
+        append(",\"createdAtMs\":").append(snapshot.createdAtMs)
+        append(",\"entries\":[")
+        snapshot.entries.forEachIndexed { index, entry ->
+            if (index > 0) append(',')
+            append("{\"p\":").append(jsonString(entry.phrase))
+            append(",\"c\":").append(jsonString(entry.code))
+            if (entry.commits != null) append(",\"w\":").append(entry.commits)
+            append('}')
+        }
+        append("]}")
+    }
+
+    private fun jsonString(s: String): String = "\"${jsonEscape(s)}\""
+
+    internal fun jsonEscape(s: String): String = buildString {
+        for (ch in s) {
+            when (ch) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                '\b' -> append("\\b")
+                '\u000C' -> append("\\f")
+                else -> if (ch.code < 0x20) append("\\u%04x".format(ch.code)) else append(ch)
+            }
+        }
+    }
+
+    /** 只够读本文件写出的 JSON 的最小解析器（不引入新依赖；平台 org.json 在单测里不可用）。 */
+    internal class JsonParser(private val text: String) {
+        private var pos = 0
+
+        fun parse(): Any? {
+            val value = parseValue()
+            skipWs()
+            if (pos != text.length) throw IllegalStateException("备份文件损坏：尾部多余内容")
+            return value
+        }
+
+        private fun parseValue(): Any? {
+            skipWs()
+            if (pos >= text.length) throw IllegalStateException("备份文件损坏：意外结束")
+            return when (text[pos]) {
+                '{' -> parseObject()
+                '[' -> parseArray()
+                '"' -> parseString()
+                't' -> expectLiteral("true").let { true }
+                'f' -> expectLiteral("false").let { false }
+                'n' -> expectLiteral("null").let { null }
+                else -> parseNumber()
+            }
+        }
+
+        private fun parseObject(): Map<String, Any?> {
+            expect('{')
+            val map = LinkedHashMap<String, Any?>()
+            skipWs()
+            if (peek() == '}') {
+                pos++
+                return map
+            }
+            while (true) {
+                skipWs()
+                val key = parseString()
+                skipWs()
+                expect(':')
+                map[key] = parseValue()
+                skipWs()
+                when (peek()) {
+                    ',' -> pos++
+                    '}' -> {
+                        pos++
+                        return map
+                    }
+                    else -> throw IllegalStateException("备份文件损坏：对象缺少 , 或 }")
+                }
+            }
+        }
+
+        private fun parseArray(): List<Any?> {
+            expect('[')
+            val list = ArrayList<Any?>()
+            skipWs()
+            if (peek() == ']') {
+                pos++
+                return list
+            }
+            while (true) {
+                list += parseValue()
+                skipWs()
+                when (peek()) {
+                    ',' -> pos++
+                    ']' -> {
+                        pos++
+                        return list
+                    }
+                    else -> throw IllegalStateException("备份文件损坏：数组缺少 , 或 ]")
+                }
+            }
+        }
+
+        private fun parseString(): String {
+            expect('"')
+            val sb = StringBuilder()
+            while (pos < text.length) {
+                val ch = text[pos++]
+                when (ch) {
+                    '"' -> return sb.toString()
+                    '\\' -> {
+                        if (pos >= text.length) break
+                        when (val esc = text[pos++]) {
+                            '"' -> sb.append('"')
+                            '\\' -> sb.append('\\')
+                            '/' -> sb.append('/')
+                            'n' -> sb.append('\n')
+                            'r' -> sb.append('\r')
+                            't' -> sb.append('\t')
+                            'b' -> sb.append('\b')
+                            'f' -> sb.append('\u000C')
+                            'u' -> {
+                                if (pos + 4 > text.length) {
+                                    throw IllegalStateException("备份文件损坏：\\u 转义不完整")
+                                }
+                                val code = text.substring(pos, pos + 4).toIntOrNull(16)
+                                    ?: throw IllegalStateException("备份文件损坏：\\u 转义非法")
+                                pos += 4
+                                sb.append(code.toChar())
+                            }
+                            else -> throw IllegalStateException("备份文件损坏：未知转义 \\$esc")
+                        }
+                    }
+                    else -> sb.append(ch)
+                }
+            }
+            throw IllegalStateException("备份文件损坏：字符串未闭合")
+        }
+
+        private fun parseNumber(): Long {
+            val start = pos
+            if (peek() == '-') pos++
+            while (pos < text.length && text[pos] in '0'..'9') pos++
+            if (start == pos || (start + 1 == pos && text[start] == '-')) {
+                throw IllegalStateException("备份文件损坏：数字非法")
+            }
+            return text.substring(start, pos).toLongOrNull()
+                ?: throw IllegalStateException("备份文件损坏：数字越界")
+        }
+
+        private fun expectLiteral(literal: String) {
+            if (!text.startsWith(literal, pos)) {
+                throw IllegalStateException("备份文件损坏：期望 $literal")
+            }
+            pos += literal.length
+        }
+
+        private fun skipWs() {
+            while (pos < text.length && text[pos] in " \t\n\r") pos++
+        }
+
+        private fun peek(): Char =
+            if (pos < text.length) text[pos] else throw IllegalStateException("备份文件损坏：意外结束")
+
+        private fun expect(ch: Char) {
+            skipWs()
+            if (peek() != ch) throw IllegalStateException("备份文件损坏：期望 $ch")
+            pos++
+        }
+    }
+
+    // ---- 恢复：按备份把合并抹掉 ----
+
+    /** 恢复计划：先删标记、再按备份重写（恢复文件里的行顺序即此顺序）。 */
+    data class RestorePlan(
+        /** 要删的词条：合并后新增的 + 权重被抬高的（写 -1 删除标记行）。 */
+        val toDelete: List<Entry>,
+        /** 要按备份权重重写的词条（删除标记行之后写）。 */
+        val toReadd: List<Entry>,
+        val unchanged: Int,
+        /** 合并后新增、将被删掉的词条数。 */
+        val removed: Int,
+        /** 权重被恢复（或失而复得）的词条数。 */
+        val restored: Int,
+    ) {
+        val totalRows: Int get() = toDelete.size + toReadd.size
+    }
+
+    data class RestoreReport(
+        val removed: Int,
+        val restored: Int,
+        val unchanged: Int,
+        val importedRows: Int,
+    )
+
+    /**
+     * 按备份算恢复计划（纯函数）。
+     *
+     * - 当前有、备份没有 → 合并后新增的：删掉。
+     * - 当前权重 > 备份权重 → 合并抬高的：先删标记、再按备份权重重写。
+     * - 当前权重 ≤ 备份权重 → 不动（native 只取大，合并没动过它）。
+     * - 备份有、当前没有（正常合并不会发生，防御）→ 按备份补回。
+     *
+     * 局限（native 导入器只取大的固有限制，恢复流程如实遵守）：
+     * dee（词频衰减值）恢复时取新旧较大者，不保证逐字节回到备份值；
+     * 提交次数与词条集合可精确恢复。
+     */
+    fun planRestore(backup: List<Entry>, current: List<Entry>): RestorePlan {
+        val backupMap = backup.associateBy { DictKey(it.phrase, it.code) }
+        val currentMap = current.associateBy { DictKey(it.phrase, it.code) }
+        val toDelete = ArrayList<Entry>()
+        val toReadd = ArrayList<Entry>()
+        var unchanged = 0
+        var removed = 0
+        var restored = 0
+        for ((key, cur) in currentMap) {
+            val old = backupMap[key]
+            when {
+                old == null -> {
+                    toDelete += Entry(cur.phrase, cur.code, -1)
+                    removed++
+                }
+                (cur.commits ?: 0) > (old.commits ?: 0) -> {
+                    toDelete += Entry(cur.phrase, cur.code, -1)
+                    toReadd += old
+                    restored++
+                }
+                else -> unchanged++
+            }
+        }
+        for ((key, old) in backupMap) {
+            if (key !in currentMap) {
+                toReadd += old
+                restored++
+            }
+        }
+        return RestorePlan(toDelete, toReadd, unchanged, removed, restored)
+    }
+
+    /** 把恢复计划写成可导入的临时文件：删除标记行在前、重写行在后。 */
+    fun writeRestoreFile(plan: RestorePlan, dest: File): Int {
+        dest.bufferedWriter(Charsets.UTF_8).use { writer ->
+            for (entry in plan.toDelete) {
+                writer.write(entry.phrase)
+                writer.write("\t")
+                writer.write(entry.code)
+                writer.write("\t-1")
+                writer.newLine()
+            }
+            for (entry in plan.toReadd) {
+                writer.write(entry.phrase)
+                writer.write("\t")
+                writer.write(entry.code)
+                if (entry.commits != null) {
+                    writer.write("\t")
+                    writer.write(entry.commits.toString())
+                }
+                writer.newLine()
+            }
+        }
+        return plan.totalRows
+    }
+
+    // ---- 一站式安全合并：校验 → 备份 → 去重 → 导入 ----
+
+    /**
+     * 安全合并一批词条（手动导入与同步合并共用此入口）。
+     *
+     * 顺序：① 整批校验，不合格抛 [UserDictMergeException]（一行不写）；
+     * ② 导出当前词库、写 `before-merge.json` 安全副本，导出或写备份
+     * 失败同样抛错中止（没备份就不合并）；③ 批内去重取最大权重；
+     * ④ 经调用方传入的 [importFile] 导入（调用方负责在引擎线程串行执行，
+     * 通常是 `importUserDictInChunks` + `importUserDictLive`）。
+     *
+     * [exportCurrent]/[importFile] 收到的是调用方准备好的临时文件路径，
+     * 返回引擎的条数（<0 为失败）。临时文件由本函数负责清理；
+     * [batchFile] 仍归调用方（暂存/下载的临时文件按原有 finally 删除）。
+     */
+    suspend fun mergeValidatedBatch(
+        dictName: String,
+        batchFile: File,
+        batchLabel: String,
+        filesDir: File,
+        cacheDir: File,
+        exportCurrent: suspend (File) -> Int,
+        importFile: suspend (File) -> Int,
+    ): Int {
+        when (val validation = validateBatch(batchFile, batchLabel, dictName)) {
+            is BatchValidation.Invalid -> throw UserDictMergeException(validation.userMessage())
+            is BatchValidation.Valid -> Unit
+        }
+        val exportTmp = File(cacheDir, "before-merge-export-$dictName-${System.nanoTime()}.txt")
+        try {
+            val exported = exportCurrent(exportTmp)
+            if (exported < 0) {
+                throw UserDictMergeException("导出当前用户词典失败，合并已中止，未写入任何词条")
+            }
+            try {
+                writeBeforeMergeBackup(filesDir, dictName, batchLabel, exportTmp)
+            } catch (e: Exception) {
+                throw UserDictMergeException("合并前备份失败，合并已中止，未写入任何词条（${e.message}）")
+            }
+        } finally {
+            exportTmp.delete()
+        }
+        val normalized = normalizeBatchFile(batchFile, cacheDir)
+        try {
+            val count = importFile(normalized)
+            if (count < 0) {
+                throw UserDictMergeException("导入用户词典失败")
+            }
+            return count
+        } finally {
+            if (normalized != batchFile) normalized.delete()
+        }
+    }
+
+    /**
+     * 从 `before-merge.json` 恢复：把合并后新增的词删掉、被抬高的权重
+     * 恢复到备份值。删除标记行（-1）只允许在这条用户确认的恢复流程
+     * 内部产生，合并流程（[mergeValidatedBatch]）永远不产生。
+     *
+     * 无备份、备份损坏、导出失败、导入失败都返回 failure，不动词库；
+     * 当前已与备份一致时成功返回 importedRows=0 的报告（无需恢复）。
+     */
+    suspend fun restoreBeforeMerge(
+        dictName: String,
+        filesDir: File,
+        cacheDir: File,
+        exportCurrent: suspend (File) -> Int,
+        importFile: suspend (File) -> Int,
+    ): Result<RestoreReport> {
+        val backupFile = try {
+            backupFileFor(filesDir, dictName)
+        } catch (e: IllegalArgumentException) {
+            return Result.failure(e)
+        }
+        if (!backupFile.isFile) {
+            return Result.failure(IllegalStateException("没有“$dictName”的合并前备份，无法恢复"))
+        }
+        val backup = try {
+            readBeforeMergeBackup(backupFile)
+        } catch (e: Exception) {
+            return Result.failure(IllegalStateException("合并前备份已损坏，无法恢复（${e.message}）"))
+        }
+        val exportTmp = File(cacheDir, "restore-current-$dictName-${System.nanoTime()}.txt")
+        val restoreTmp = File(cacheDir, "restore-plan-$dictName-${System.nanoTime()}.txt")
+        try {
+            val exported = exportCurrent(exportTmp)
+            if (exported < 0) {
+                return Result.failure(IllegalStateException("导出当前用户词典失败，恢复已中止"))
+            }
+            val current = try {
+                parseExportFile(exportTmp)
+            } catch (e: Exception) {
+                return Result.failure(IllegalStateException("当前词库导出内容异常，恢复已中止（${e.message}）"))
+            }
+            val plan = planRestore(backup.entries, current)
+            if (plan.totalRows == 0) {
+                return Result.success(
+                    RestoreReport(
+                        removed = 0,
+                        restored = 0,
+                        unchanged = plan.unchanged,
+                        importedRows = 0,
+                    ),
+                )
+            }
+            writeRestoreFile(plan, restoreTmp)
+            val imported = importFile(restoreTmp)
+            if (imported < 0) {
+                return Result.failure(IllegalStateException("恢复导入失败，词库可能处于中间状态，请重试恢复"))
+            }
+            return Result.success(
+                RestoreReport(
+                    removed = plan.removed,
+                    restored = plan.restored,
+                    unchanged = plan.unchanged,
+                    importedRows = imported,
+                ),
+            )
+        } finally {
+            exportTmp.delete()
+            restoreTmp.delete()
+        }
+    }
+}

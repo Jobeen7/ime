@@ -63,7 +63,8 @@ class MainActivity : ImeActivity() {
     /**
      * jime:// 路由（WO52 4.2）：onCreate 与 onNewIntent 均走此处。
      * phrase 带 id 时直接起 PhraseActivity（EXTRA_PHRASE_ID）；
-     * 其余页键交 MainScreen 的 rowClicks（与点按同一回调）。
+     * clipboard 带 id 时直接起 ClipboardActivity（EXTRA_CLIPBOARD_ID，
+     * 落点到指定条目）；其余页键交 MainScreen 的 rowClicks（与点按同一回调）。
      */
     private fun handleDeepLink(intent: Intent?) {
         val target = DeepLinkRouter.resolve(intent?.action, intent?.dataString) ?: return
@@ -73,6 +74,14 @@ class MainActivity : ImeActivity() {
                 phraseIntent.putExtra(PhraseActivity.EXTRA_PHRASE_ID, id)
             }
             startActivity(phraseIntent)
+            return
+        }
+        if (target.pageKey == "clipboard") {
+            val clipboardIntent = Intent(this, ClipboardActivity::class.java)
+            target.params["id"]?.toLongOrNull()?.let { id ->
+                clipboardIntent.putExtra(ClipboardActivity.EXTRA_CLIPBOARD_ID, id)
+            }
+            startActivity(clipboardIntent)
             return
         }
         pendingDeepLinkPageKey.value = target.pageKey

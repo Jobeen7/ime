@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,11 +39,15 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -88,7 +94,7 @@ object ScreenComponent {
                 // 与去定高后的 Button 同高（自然高、字号再大也不裁）：
                 // 最小 40dp（Material Button 自然高），内容更高时随内容长。
                 .defaultMinSize(minHeight = 40.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(20.dp))
                 .background(containerColor)
                 // 进度条按比例绘制，不参与布局：此前内层 Box 用 fillMaxHeight，
                 // 在 wrap-content 父容器里取到最大约束，把整行撑到满屏高。
@@ -259,7 +265,9 @@ object ScreenComponent {
     }
 
     /**
-     * 开关行：标题 16sp，纵向 12dp；须放在卡片内，横向留白由卡片提供。
+     * 开关行：标题 16sp＋一行说明（14sp 灰色，有则显示）＋右侧 M3 Switch；
+     * 须放在卡片内，横向留白由卡片提供。整行可点即切换（点 Switch 本身亦然，
+     * 内层点按优先消费，不会双重切换）；enabled＝false 时整行置灰不可点。
      * showDivider 保留参数以兼容调用点，按对齐要求不再绘制分隔线。
      */
     @Composable
@@ -269,21 +277,39 @@ object ScreenComponent {
         onCheckedChange: (Boolean) -> Unit,
         showDivider: Boolean = false,
         enabled: Boolean = true,
+        subtitle: String? = null,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .rowAnchor(title)
+                .then(
+                    if (enabled) {
+                        Modifier.clickable(role = Role.Switch) { onCheckedChange(!checked) }
+                    } else {
+                        Modifier
+                    },
+                )
                 .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.weight(1f),
-                color = if (enabled) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                )
+                if (subtitle != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
             Switch(
                 checked = checked,
                 onCheckedChange = onCheckedChange,
@@ -331,11 +357,12 @@ object ScreenComponent {
     }
 
     /**
-     * 滑杆行：标题 16sp、值标签 14sp，纵向 12dp；须放在卡片内。
-     * 横向留白全部由页边距＋卡片内边距提供，本行不再自带内缩：
-     * 2026-10-29 批量轮的 inset 只是贴在三行上的补丁，页级与卡片级
-     * 仍无留白才是贴边裁切的根因；补丁随统一装饰系统废除。
-     * 滑块不再用 offset 补偿，拇指位置由滑块自身几何决定，落在卡内。
+     * 滑块行（弹窗形态，2026-11-16 定）：行内只显示标题 16sp＋当前值 14sp 灰色＋›，
+     * 点行弹 Dialog 调值（当前值大字＋一条滑块，三钮 默认值／取消／确定）。
+     * 拖动即写回 onValueChange（与旧行内滑块一致，行内值实时刷新）；
+     * 取消把打开时的原值写回，确定才调 onValueChangeFinished 落盘
+     * （如剪贴板上限：拖动只改本地显示，确定才按新上限裁剪历史）。
+     * defaultValue＝null 时不显示「默认值」钮（默认值未核实的项不猜）。
      * showDivider 保留参数以兼容调用点，按对齐要求不再绘制分隔线。
      */
     @OptIn(ExperimentalMaterial3Api::class)
@@ -352,40 +379,123 @@ object ScreenComponent {
         // 滑块调用都传了 stepSize（0.5 / 1 / 0.1），轨道上因此有一排刻度点。
         // Compose 里对应 steps = (max-min)/step - 1；steps = 0 时只有两端 stop 点、没有刻度点。
         steps: Int = 0,
+        defaultValue: Float? = null,
     ) {
-        Column(
+        var showDialog by remember { mutableStateOf(false) }
+        var dialogDraft by remember { mutableStateOf(value) }
+        var dialogOriginal by remember { mutableStateOf(value) }
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .rowAnchor(title)
+                .then(
+                    if (enabled) {
+                        Modifier.clickable {
+                            dialogDraft = value
+                            dialogOriginal = value
+                            showDialog = true
+                        }
+                    } else {
+                        Modifier
+                    },
+                )
                 .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 滑块标签：标签是一行 14sp 的「标题 · 值+单位」，
-            // 不是「标题靠左、数值靠右」两栏；标签上方 12dp、下方紧接滑块。
             Text(
-                text = "$title · $valueLabel",
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                text = title,
+                fontSize = 16.sp,
+                lineHeight = 21.sp,
                 color = if (enabled) MaterialTheme.colorScheme.onSurface
                 else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            // 滑块就是原生 Slider，
-            // 不设 style、不设 thumb、不设 track —— 外观全部由 Material 库默认提供。
-            // material3 1.4.0 的默认轨道（ActiveTrackHeight 16dp、
-            // HandleShape=CornerFull 的 4×44 竖条把手、把手与轨道间 6dp 间隙、两端 stop 点），
-            // 唯一需要显式给的是 steps —— 没有它就只有两端 stop 点，不会出现刻度点。
-            Slider(
-                value = value,
-                onValueChange = onValueChange,
-                onValueChangeFinished = onValueChangeFinished,
-                valueRange = range,
-                steps = steps,
-                enabled = enabled,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
+            Text(
+                text = valueLabel,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        if (showDialog) {
+            SettingsDialog(
+                onDismissRequest = {
+                    showDialog = false
+                    onValueChange(dialogOriginal)
+                },
+                title = title,
+                body = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            text = valueLabel,
+                            fontSize = 28.sp,
+                            lineHeight = 36.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        // 弹窗内的滑块不接 onValueChangeFinished：
+                        // 松手落盘只在点「确定」时做一次，否则取消恢复不了已落盘的中间值。
+                        Slider(
+                            value = dialogDraft,
+                            onValueChange = {
+                                dialogDraft = it
+                                onValueChange(it)
+                            },
+                            valueRange = range,
+                            steps = steps,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp),
+                        )
+                    }
+                },
+                actions = buildList {
+                    if (defaultValue != null) {
+                        add(
+                            SettingsDialogAction(
+                                text = stringResource(R.string.settings_slider_default),
+                                onClick = {
+                                    dialogDraft = defaultValue
+                                    onValueChange(defaultValue)
+                                },
+                            ),
+                        )
+                    }
+                    add(
+                        SettingsDialogAction(
+                            text = stringResource(R.string.cancel),
+                            onClick = {
+                                showDialog = false
+                                onValueChange(dialogOriginal)
+                            },
+                        ),
+                    )
+                    add(
+                        SettingsDialogAction(
+                            text = stringResource(R.string.settings_slider_confirm),
+                            onClick = {
+                                showDialog = false
+                                onValueChange(dialogDraft)
+                                onValueChangeFinished?.invoke()
+                            },
+                        ),
+                    )
+                },
             )
         }
     }

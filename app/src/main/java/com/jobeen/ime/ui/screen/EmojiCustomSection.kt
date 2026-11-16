@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -108,6 +109,7 @@ fun EmojiCustomSection() {
         modifier = Modifier.fillMaxWidth(),
     ) {
         OutlinedTextField(
+            shape = RoundedCornerShape(12.dp),
             value = newGroupName,
             onValueChange = { newGroupName = it },
             singleLine = true,
@@ -170,6 +172,7 @@ private fun EmojiCustomGroupEditor(
             modifier = Modifier.fillMaxWidth(),
         ) {
             OutlinedTextField(
+                shape = RoundedCornerShape(12.dp),
                 value = draft,
                 onValueChange = { draft = it },
                 singleLine = true,
@@ -219,6 +222,7 @@ private fun EmojiCustomGroupEditor(
             modifier = Modifier.fillMaxWidth(),
         ) {
             OutlinedTextField(
+                shape = RoundedCornerShape(12.dp),
                 value = draft,
                 onValueChange = { draft = it },
                 singleLine = true,

@@ -1,5 +1,6 @@
 package com.jobeen.ime.skin.runtime
 
+import androidx.annotation.VisibleForTesting
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.event.KeyModifier
 import com.jobeen.ime.engine.event.KeyModifiers
@@ -19,6 +20,7 @@ import com.jobeen.ime.skin.model.SkinAction
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SoundBindings
 import com.jobeen.ime.skin.model.WhitelistAction
+import java.util.Collections
 
 /**
  * 覆写装配器（详设 §4.2 + G1 单键模型）：键盘构建期把快照中的
@@ -51,6 +53,22 @@ import com.jobeen.ime.skin.model.WhitelistAction
  *   整层丢弃并记 WARN；层序 = 数组序，后层压前层。
  */
 object KeyOverrideApplier {
+
+    /**
+     * t9Symbols 集合键（Bin 皮肤左竖栏 tall 键，源包 .cskin 的
+     * t9Symbols 类型节点）：转换器只产一个空键（label ""、tap none、
+     * rowSpan 3），集合内容是宿主定义、对端包里没有符号表。
+     * 本键的符号取 demo（Bin v1.9）所示的宿主默认 `,.?!`，纵向排布、
+     * 抬手按 Y 分区提交（Rime 按标点模式自行转全角，与九宫格逗号键同口径）。
+     * 皮肤若自带前景层（覆写写了 foregroundLayers）则以皮肤为准，不合成。
+     */
+    const val T9_SYMBOLS_COLLECTION_STABLE_ID = "t9SymbolsCollection"
+    val T9_SYMBOLS_COLLECTION_DEFAULT = listOf(",", ".", "?", "!")
+
+    /** 逻辑 ID 的 stableId 是否为 t9Symbols 集合键。 */
+    fun isT9SymbolsCollectionKey(def: KeyDef): Boolean =
+        com.jobeen.ime.skin.layout.LayoutModel.parseLogicalId(def.id ?: "")
+            ?.second == T9_SYMBOLS_COLLECTION_STABLE_ID
 
     /**
      * 动态文字刷新取值（纯函数）：动态值非空取动态值，否则回退
@@ -103,12 +121,6 @@ object KeyOverrideApplier {
         data object Muted : SoundPlan
     }
 
-    /** 下滑 Tab 提示字形（U+21E5；对端按 swipeDownAction "tab" 派生同款）。 */
-    private const val TAB_HINT_GLYPH = "⇥"
-
-    /** Tab 键码（KeyEvent.KEYCODE_TAB；与 [toRuntime] 的 TAB 映射同值）。 */
-    private const val TAB_KEY_CODE = 61
-
     /**
      * 副文字槽口径（与 copyWith 同口径）：AltText，或非 ImageText 的 Text。
      */
@@ -117,27 +129,169 @@ object KeyOverrideApplier {
             (appearance is KeyDef.Appearance.Text &&
                 appearance !is KeyDef.Appearance.ImageText)
 
+    //region apply 结果缓存（2026-11-16 性能 ③）
     /**
-     * 副文字槽空闲：槽可用，且现有副显为空（有副显的键不被提示覆盖）。
+     * apply 结果缓存：键盘每次重建都全量跑一遍装配（逐键样式解析／
+     * 几何／动效／前景色），输入不变时纯属重复工作；缓存按全部
+     * 输出影响输入键化，命中直接复用。容量 16 条 LRU，synchronizedMap
+     * 护住（apply 多在主线程调，但求稳）。
+     *
+     * 键的取舍：
+     * - 快照取整个 SkinSnapshot（data class，结构相等），不只取 ref——
+     *   生产上 ref 与内容一一对应，但单测里同 ref 可配不同内容（固定
+     *   ref 的 snapshot() helper）；只按 ref 键会误命中。
+     * - 工厂布局取内容指纹 [KeyPrint]：KeyDef 全系是 open/plain
+     *   class、无结构相等（引用相等），不能直接进键；且生产上工厂
+     *   布局每次重建都是新实例（T9 的 buildLayout 每调每建），引用
+     *   键永不命中。指纹按 apply 读到的输入字段逐项折叠。
+     * - 方案取生效板（scheme ?: snapshot.colorScheme），不是传入的
+     *   scheme 参数——null 与显式同值板输出一致，应同键。
+     * - 外观的 skin* 输出槽不入指纹：它们是 apply 自身的产物，出厂
+     *   输入恒为 null/false；调用方恒传工厂布局，不传已装配过的布局。
+     *
+     * 共享安全：早退路径本来就原样返回输入 factoryLayout 实例，故返
+     * 回共享的缓存实例是本函数的既有口径；调用方只读消费（键盘构造
+     * → 视图构建），不得原地改写 KeyDef 的 var 字段。
+     *
+     * 可观测性：命中时不跑逐键解析，故 resolveKeyStyle 的逐键 WARN
+     * 与末尾两条 DiagLog.d（override_applied_to_keyboard /
+     * hint_layers_suppressed）只在未命中时触发——诊断日志里同批只
+     * 出现一次是缓存命中，不是装配丢失。
      */
-    private fun hasFreeSubLabelSlot(def: KeyDef): Boolean {
-        if (!supportsSubLabel(def.appearance)) return false
-        val alt = (def.appearance as? KeyDef.Appearance.AltText)?.altText
-        return alt.isNullOrBlank()
-    }
+    private const val APPLY_CACHE_MAX = 16
+
+    private data class ApplyCacheKey(
+        val layoutName: String,
+        val layout: List<List<KeyPrint>>,
+        val snapshot: SkinSnapshot,
+        val scheme: KeyboardColors.ColorScheme,
+        val placeholders: Map<String, String>,
+        val dynamicTexts: Map<DynamicTextSource, String>,
+        val notifications: Map<String, com.jobeen.ime.skin.notify.SkinNotification>,
+        val gatedStyleNames: Set<String>,
+        val activeStyleNames: Set<String>,
+        val mnemonicEnabled: Boolean,
+        val decorationEnabled: Boolean,
+    )
 
     /**
-     * 本键是否需派生 TAB 下滑提示：副文字槽空闲，且出厂下滑动作为 Tab。
-     * （仅装配触发判定用：逐键覆写／锁定通知另行改下滑时，覆写非空
-     * 本就触发装配，无需在此预判。）
+     * 工厂键的内容指纹：apply 读到的输入字段（id、外观构造字段、
+     * 行为、弹窗、样式引用、音效槽）；外观的 skin* 输出槽不入。
+     * 行为／弹窗本身是 plain class，用结构化描述串折叠（动作类全是
+     * data class/data object，toString 即结构值）。
      */
-    private fun needsTabHint(def: KeyDef): Boolean {
-        if (!hasFreeSubLabelSlot(def)) return false
-        val down = def.behaviors
-            .filterIsInstance<KeyDef.Behavior.Swipe>()
-            .firstOrNull()?.downAction
-        return down is KeyboardAction.AppKeyEventAction && down.keyCode == TAB_KEY_CODE
+    private data class KeyPrint(
+        val id: String?,
+        val appearanceKind: String,
+        val percentWidth: Float,
+        val variant: KeyDef.Appearance.Variant,
+        val border: KeyDef.Appearance.Border,
+        val margin: Boolean,
+        val viewId: Int,
+        val visibility: Int,
+        val rowSpan: Int,
+        val alignSpanEnd: Boolean,
+        val spanCol: Int?,
+        val spanColEnd: Int?,
+        val displayText: String?,
+        val textSize: Float?,
+        val textStyle: Int?,
+        val altText: String?,
+        val altTextTranslationY: Int?,
+        val mainTextTranslationY: Int?,
+        val altTextSize: Float?,
+        val visableRow: Int?,
+        val src: Int?,
+        val iconSizeDp: Float?,
+        val behaviors: List<String>,
+        val popups: List<String>?,
+        val skinStyleRef: String?,
+        val skinStyleOverrides: Map<String, String>?,
+        val skinSoundAssetId: String?,
+        val skinSoundMuted: Boolean,
+    )
+
+    private fun fingerprintLayout(layout: List<List<KeyDef>>): List<List<KeyPrint>> =
+        layout.map { row -> row.map { fingerprintKey(it) } }
+
+    private fun fingerprintKey(def: KeyDef): KeyPrint {
+        val a = def.appearance
+        val text = a as? KeyDef.Appearance.Text
+        val alt = a as? KeyDef.Appearance.AltText
+        val side = a as? KeyDef.Appearance.SidePannel
+        val image = a as? KeyDef.Appearance.Image
+        val imageText = a as? KeyDef.Appearance.ImageText
+        return KeyPrint(
+            id = def.id,
+            appearanceKind = a.javaClass.simpleName,
+            percentWidth = a.percentWidth,
+            variant = a.variant,
+            border = a.border,
+            margin = a.margin,
+            viewId = a.viewId,
+            visibility = a.visibility,
+            rowSpan = a.rowSpan,
+            alignSpanEnd = a.alignSpanEnd,
+            spanCol = a.spanCol,
+            spanColEnd = a.spanColEnd,
+            displayText = text?.displayText,
+            textSize = text?.textSize,
+            textStyle = text?.textStyle,
+            altText = alt?.altText,
+            altTextTranslationY = alt?.altTextTranslationY,
+            mainTextTranslationY = alt?.mainTextTranslationY,
+            altTextSize = alt?.altTextSize,
+            visableRow = side?.visableRow,
+            src = image?.src ?: imageText?.src,
+            iconSizeDp = image?.iconSizeDp,
+            behaviors = def.behaviors.map { behaviorPrint(it) }.sorted(),
+            popups = def.popups?.map { popupPrint(it) },
+            skinStyleRef = def.skinStyleRef,
+            skinStyleOverrides = def.skinStyleOverrides,
+            skinSoundAssetId = def.skinSoundAssetId,
+            skinSoundMuted = def.skinSoundMuted,
+        )
     }
+
+    private fun behaviorPrint(b: KeyDef.Behavior): String = when (b) {
+        is KeyDef.Behavior.Press ->
+            "Press(${b.action},${b.preeditAction},${b.uppercasedAction})"
+        is KeyDef.Behavior.LongPress -> "LongPress(${b.action})"
+        is KeyDef.Behavior.Repeat -> "Repeat(${b.action})"
+        is KeyDef.Behavior.Swipe ->
+            "Swipe(${b.upAction},${b.downAction},${b.leftAction},${b.rightAction}," +
+                "${b.preeditUpAction},${b.preeditDownAction},${b.preeditLeftAction},${b.preeditRightAction})"
+        KeyDef.Behavior.SwipeMoveCursor -> "SwipeMoveCursor"
+        is KeyDef.Behavior.DoubleTap -> "DoubleTap(${b.action})"
+    }
+
+    private fun popupPrint(p: KeyDef.Popup): String = when (p) {
+        // AltPreview 是 Preview 的子类，先判子类。
+        is KeyDef.Popup.AltPreview -> "AltPreview(${p.content},${p.alternative})"
+        is KeyDef.Popup.Keyboard ->
+            "Keyboard(${p.label},${p.keys},${p.initialSelectedIndex})"
+        is KeyDef.Popup.Menu ->
+            "Menu(${p.items.joinToString(",") { "${it.label},${it.icon},${it.action}" }})"
+        is KeyDef.Popup.Preview -> "Preview(${p.content})"
+    }
+
+    private val applyCache: MutableMap<ApplyCacheKey, List<List<KeyDef>>> =
+        Collections.synchronizedMap(
+            object : LinkedHashMap<ApplyCacheKey, List<List<KeyDef>>>(16, 0.75f, true) {
+                override fun removeEldestEntry(
+                    eldest: MutableMap.MutableEntry<ApplyCacheKey, List<List<KeyDef>>>?,
+                ): Boolean = size > APPLY_CACHE_MAX
+            },
+        )
+
+    @VisibleForTesting
+    internal fun clearApplyCache() {
+        synchronized(applyCache) { applyCache.clear() }
+    }
+
+    @VisibleForTesting
+    internal fun applyCacheSize(): Int = applyCache.size
+    //endregion
 
     /**
      * @param layoutName 布局 NAME（仅用于诊断日志）。
@@ -197,10 +351,6 @@ object KeyOverrideApplier {
         // G1：皮肤级分档字号非空时同样全局走装配（逐键字号替换）。
         // 接线轮 R1：通知表非空时同样走装配（锁定可能命中样式引用键）。
         // 动效规格非空时同样走装配（全部键须写动效规格）。
-        // TAB 下滑提示派生本身也是装配触发项（否则无其他触发项的
-        // 皮肤会整布局原样返回，提示派生不到）。
-        val needsTabHintPass = mnemonicEnabled &&
-            factoryLayout.any { row -> row.any { needsTabHint(it) } }
         // 布局键自带的逐键样式（2026-11-12 审计 K-S6）：入口守卫只查
         // 快照级触发项时，只写了逐键样式、无任何快照级触发项的布局
         // 会被整布局原样返回，resolveKeyStyle 里的内联覆写解析永不
@@ -209,16 +359,37 @@ object KeyOverrideApplier {
         val hasInlineKeyStyle = factoryLayout.any { row ->
             row.any { it.skinStyleRef != null || !it.skinStyleOverrides.isNullOrEmpty() }
         }
+        // t9Symbols 集合键（Bin 皮肤左竖栏 tall 键）：无任何快照级
+        // 触发项时也须进装配（合成四符号层＋分区标记），否则整布局
+        // 原样返回、集合键永为空键。
+        val hasT9SymbolsCollection = factoryLayout.any { row ->
+            row.any { isT9SymbolsCollectionKey(it) }
+        }
         if (overrides.isEmpty() && !hasGlobalSound && snapshot.keyStyles.isEmpty() &&
             snapshot.keyGeometries.isEmpty() && snapshot.textSizes.isEmpty() &&
             notifications.isEmpty() &&
-            keyAnim == null && spaceAnim == null && !needsTabHintPass &&
-            !hasInlineKeyStyle
+            keyAnim == null && spaceAnim == null &&
+            !hasInlineKeyStyle && !hasT9SymbolsCollection
         ) {
             return factoryLayout
         }
 
         val effectiveScheme = scheme ?: snapshot.colorScheme
+        // apply 缓存（性能 ③）：守卫已过（有触发项才到这里），命中直接复用。
+        val cacheKey = ApplyCacheKey(
+            layoutName = layoutName,
+            layout = fingerprintLayout(factoryLayout),
+            snapshot = snapshot,
+            scheme = effectiveScheme,
+            placeholders = placeholders,
+            dynamicTexts = dynamicTexts,
+            notifications = notifications,
+            gatedStyleNames = gatedStyleNames,
+            activeStyleNames = activeStyleNames,
+            mnemonicEnabled = mnemonicEnabled,
+            decorationEnabled = decorationEnabled,
+        )
+        applyCache[cacheKey]?.let { return it }
         var applied = 0
         var mnemonicSuppressed = 0
         var decorationSuppressed = 0
@@ -274,32 +445,12 @@ object KeyOverrideApplier {
                 // 或覆写 styleRef；无样式引用键不命中）。
                 val styleRef = override?.styleRef ?: def.skinStyleRef
                 val latched = styleRef?.let { notifications[it] }
-                // TAB 下滑提示（施工单 5 第 10 项）：下滑 tab 的键在无显式
-                // subLabel 时补 "⇥" 副显——对端按 swipeDownAction 派生，
-                // 转换器不写 subLabel、布局行模型无此字段，故装配期派生。
-                // 生效下滑动作取锁定通知 > 逐键覆写 > 出厂（占位符 = 未写，
-                // 回落下一级）；助记关不派生（与显式 subLabel 压制同口径）。
-                if (mnemonicEnabled && override?.subLabel == null &&
-                    hasFreeSubLabelSlot(def)
-                ) {
-                    val latchedDown = latched?.swipeDownAction
-                        ?.takeIf { it != SkinAction.SequencePlaceholder }
-                    val overrideDown = override?.swipeDown
-                        ?.takeIf { it != SkinAction.SequencePlaceholder }
-                    val effectiveDownAction = when {
-                        latchedDown != null -> toRuntime(latchedDown)
-                        overrideDown != null -> toRuntime(overrideDown)
-                        else -> def.behaviors
-                            .filterIsInstance<KeyDef.Behavior.Swipe>()
-                            .firstOrNull()?.downAction
-                    }
-                    if (effectiveDownAction is KeyboardAction.AppKeyEventAction &&
-                        effectiveDownAction.keyCode == TAB_KEY_CODE
-                    ) {
-                        override = override?.copy(subLabel = TAB_HINT_GLYPH)
-                            ?: KeyOverride(subLabel = TAB_HINT_GLYPH)
-                    }
-                }
+                // TAB 下滑提示已删（2026-11-16，Bin 皮肤错位修复）：
+                // 施工单 5 第 10 项曾为下滑 tab 的键派生 "⇥" 副显，但源包
+                // .cskin 里 qButton 无此提示样式、元书也不渲染它（下滑
+                // "1" 同样不渲染），派生出的 ⇥ 是 Jime 独有标记；且它把
+                // 键转成 AltText、主字形上移约 7px，与邻键不对齐。
+                // 下滑 tab 动作本身不受影响（仍由 behaviors 执行）。
                 // 行宽归一化改变了本键宽度时也必须复制，否则归一化结果
                 // 会随未命中键的原样返回而丢失（行宽和不再守恒）。
                 val widthChanged = widths[index] != def.appearance.percentWidth
@@ -311,7 +462,7 @@ object KeyOverrideApplier {
                 val needsCopy = override != null || sound != SoundPlan.Inherit ||
                     style != null || geometry != null || animations != null ||
                     widthChanged || latched != null ||
-                    animForKey != null ||
+                    animForKey != null || isT9SymbolsCollectionKey(def) ||
                     (snapshot.textSizes.isNotEmpty() &&
                         def.appearance is KeyDef.Appearance.Text)
                 if (!needsCopy) {
@@ -354,6 +505,9 @@ object KeyOverrideApplier {
                 ),
             )
         }
+        // 只在真正装配过（applied > 0）时入缓存：applied == 0 时返回
+        // 值就是输入 factoryLayout 本身，无物可存（早退路径同理）。
+        applyCache[cacheKey] = result
         return result
     }
 
@@ -762,9 +916,31 @@ object KeyOverrideApplier {
             }
         }
 
+        // ---- t9Symbols 集合键：皮肤未给前景层时按 demo 合成四符号层 ----
+        // 层数 4 恰为 KeyForegroundLayer.MAX_LAYERS；颜色/字号不写，
+        // 走 resolveForeground 的默认回落（副文字色／SUB 档位）；
+        // biasY 四等分居中（0.125/0.375/0.625/0.875），与抬手分区同口。
+        // 装饰开关不压制此处合成——四符号是本键的功能内容，不是装饰。
+        val collectionSymbols = if (isT9SymbolsCollectionKey(def) &&
+            override?.foregroundLayers.isNullOrEmpty()
+        ) {
+            T9_SYMBOLS_COLLECTION_DEFAULT
+        } else {
+            null
+        }
+        val collectionLayers = collectionSymbols?.mapIndexed { index, symbol ->
+            KeyForegroundLayer(
+                type = "text",
+                text = symbol,
+                biasX = 0.5f,
+                biasY = (index + 0.5f) / collectionSymbols.size,
+            )
+        }
+
         // ---- 前景层：颜色解析、image 层接纳判定（未接纳整层丢弃） ----
         val foreground = resolveForeground(
-            override?.foregroundLayers, tiers, override?.textSizes, imageAssets, scheme,
+            override?.foregroundLayers?.takeIf { it.isNotEmpty() } ?: collectionLayers,
+            tiers, override?.textSizes, imageAssets, scheme,
             layoutName, def.id, placeholders, dynamicTexts,
         )
 
@@ -795,6 +971,11 @@ object KeyOverrideApplier {
             }
         // 精灵图引用槽（工具项 8）：渲染期按 sheet+子图裁剪，见 KeyView 面层。
         appearance.skinFaceSpriteRef = imageSpriteRef
+
+        // t9Symbols 集合键分区标记：渲染层按抬手 Y 落区提交符号。
+        if (collectionSymbols != null) {
+            appearance.symbolZoneSymbols = collectionSymbols
+        }
 
         // Wave-4 状态前景色：样式名已在装配期解析为 TEXT 角色色；
         // null 槽（未指定或未知样式）保持出厂/样式色不动。
@@ -1353,6 +1534,25 @@ object KeyOverrideApplier {
         rebuilt.skinBottomInsetDp = geometry?.bottomInsetDp ?: styleGeometry?.bottomInsetDp
         rebuilt.skinHeightFactor = geometry?.heightFactor
         rebuilt.skinForegroundLayers = foreground
+        // 双行避让（Bin 皮肤方案切换键）：主标签居中时与偏下前景
+        // 文字层重叠——源包里主标签在上（y 0.39）、前景层在下
+        // （y 0.67），转换时主标签的 0.39 随布局标签丢了，只剩
+        // 前景层 0.67。皮肤未指定内容中心、前景文字层全在下半时，
+        // 主标签镜像到上半（1 - 最下层 biasY），复用 TextKeyView
+        // 已有的 skinContentBiasY 偏置机制；只有上半层时不动
+        // （数字提示键 biasY 0.22 与居中主标签不重叠）。
+        if (rebuilt is KeyDef.Appearance.Text &&
+            rebuilt.skinContentBiasY == null &&
+            !foreground.isNullOrEmpty()
+        ) {
+            val textLayers = foreground.filter { it.type == "text" }
+            val bottomBias = textLayers.map { it.biasY }
+                .filter { it > 0.5f }.maxOrNull()
+            val hasTopLayer = textLayers.any { it.biasY <= 0.5f }
+            if (bottomBias != null && !hasTopLayer) {
+                rebuilt.skinContentBiasY = 1f - bottomBias
+            }
+        }
         rebuilt.skinIconSymbol = appearance.skinIconSymbol
         // S1：图标字形字号取样式，缺省 24 由渲染层回落。
         rebuilt.skinIconSizeDp = styleGeometry?.iconSizeDp

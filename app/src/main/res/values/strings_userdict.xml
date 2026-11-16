@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 词库备份/合并安全流程（UserDictMergeSafety）的新增字符串。
+     用户词典页的其余字符串仍在 strings.xml，本文件只放本次新增的。 -->
+<resources>
+    <!-- 整批校验不合格：手动导入失败时对话框的标题，正文是校验器给出的整批说明 -->
+    <string name="user_dict_merge_invalid_title">这一批不合格，未导入</string>
+
+    <!-- 合并前备份恢复入口（用户词典页“高级”分组） -->
+    <string name="user_dict_backup_title">恢复合并前备份</string>
+    <string name="user_dict_backup_none">暂无合并前备份</string>
+    <string name="user_dict_backup_info">上次合并前备份：%1$s，共 %2$d 条，来源：%3$s</string>
+    <string name="user_dict_restore_confirm_title">恢复到合并前备份？</string>
+    <string name="user_dict_restore_confirm_msg">将删除这次合并后新增的词，并把被抬高的权重恢复到合并前的数值。合并前已有的词不会丢失。</string>
+    <string name="user_dict_restore_confirm_ok">恢复</string>
+    <string name="user_dict_restoring_backup">正在恢复合并前备份…</string>
+    <string name="user_dict_restore_done">已恢复：删除 %1$d 个新增词，恢复 %2$d 个词的权重</string>
+    <string name="user_dict_restore_noop">当前词库与合并前备份一致，无需恢复</string>
+    <string name="user_dict_restore_failed">恢复失败</string>
+</resources>

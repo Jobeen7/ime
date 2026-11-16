@@ -365,7 +365,12 @@ class SkinLibraryAdminTest {
             }
         }
         assertEquals(SkinLibraryAdmin.Result.DoneFallbackPending("s1"), result)
-        assertEquals("s1", f.layout.readPendingFallbackSkinId())
+        // 不在此处同步断言标记为 "s1"：延迟 0 的调度重试可能在
+        // deleteSkin 返回、断言执行之间就已跑完并清掉标记（全量
+        // 套件高负载下曾因此抖动失败一次，单跑 27/27 全绿）。
+        // 标记落盘由手工重试的兄弟测试同步断言；此处终态断言
+        // （标记 null＋calls==3）仍能覆盖两种失效：调度没跑
+        // （标记留 "s1"、calls 停 2）与删除没写标记（calls 停 2）。
         val deadline = System.currentTimeMillis() + 10_000
         while (System.currentTimeMillis() < deadline &&
             f.layout.readPendingFallbackSkinId() != null

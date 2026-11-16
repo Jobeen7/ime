@@ -10,7 +10,7 @@ package com.jobeen.ime.skin.layout
  * 一律按本皮肤的内置覆盖处理（见 JimeImporter 内置分流）。
  */
 object BuiltinLayouts {
-    val IDS: Set<String> = setOf("T9", "Qwerty", "T15", "Number")
+    val IDS: Set<String> = setOf("T9", "Qwerty", "T15", "T14", "T18", "Number")
 
     fun isBuiltin(id: String): Boolean = id in IDS
 }

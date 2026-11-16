@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -169,6 +170,7 @@ stringResource(R.string.skin_qr_needs_url),
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedTextField(
+                            shape = RoundedCornerShape(12.dp),
                             value = urlInput,
                             onValueChange = { urlInput = it; urlError = null; urlBitmap = null },
                             label = { Text(stringResource(R.string.skin_qr_url_label)) },

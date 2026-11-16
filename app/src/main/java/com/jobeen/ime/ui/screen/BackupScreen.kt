@@ -69,7 +69,7 @@ fun BackupScreen(
             state.interruptedRestore?.let { info ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
                     ),
@@ -141,7 +141,7 @@ fun BackupScreen(
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = LocalMonetCardColor.current,
                 ),
@@ -199,6 +199,7 @@ fun BackupScreen(
             body = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
+                        shape = RoundedCornerShape(12.dp),
                         value = pw,
                         onValueChange = { pw = it; error = null },
                         label = { Text(stringResource(R.string.backup_password)) },
@@ -208,6 +209,7 @@ fun BackupScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
+                        shape = RoundedCornerShape(12.dp),
                         value = pw2,
                         onValueChange = { pw2 = it; error = null },
                         label = { Text(stringResource(R.string.backup_password_confirm)) },
@@ -249,6 +251,7 @@ fun BackupScreen(
             title = stringResource(R.string.backup_restore_from_file),
             body = {
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = pw,
                     onValueChange = { pw = it },
                     label = { Text(stringResource(R.string.backup_password)) },

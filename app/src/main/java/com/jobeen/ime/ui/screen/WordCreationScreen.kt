@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,6 +53,7 @@ fun WordCreationScreen(
     ) {
             GroupCard {
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = state.word,
                     onValueChange = { state.word = it },
                     label = { Text(stringResource(R.string.word_creation_word)) },
@@ -61,6 +63,7 @@ fun WordCreationScreen(
                         .padding(vertical = 8.dp),
                 )
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = state.code,
                     onValueChange = { state.code = it },
                     label = { Text(stringResource(R.string.word_creation_code)) },

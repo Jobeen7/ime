@@ -10,6 +10,22 @@ sealed class EngineMessage {
     data class Commit(val text: String, val direct: Boolean = false) : EngineMessage()
 
     data class Composition(val preedit: String, val cursorPos: Int) : EngineMessage()
+
+    /**
+     * 候选批次所属的组字快照（性能第 1 条）：随候选消息下发，供
+     * restoreCandidates 直接取组字码／音节／方案 id，不再经 awaitJob
+     * 回 jobs 取——按键不再排在上一批候选后处理后面。由转换器在同批
+     * 组字／方案消息转换时暂存（见 CandidateCompositionState），
+     * 与 KeycapFilterState 同口径；缺省 = 空组字（与旧 awaitJob
+     * 的超时缺省同值），首批候选之前无组字消息时不阻塞落地。
+     */
+    data class CompositionSnapshot(
+        val preedit: String = "",
+        val spellings: List<String> = emptyList(),
+        val firstRawInput: String = "",
+        val schemaId: String = "",
+    )
+
     data class Candidates(
         val list: List<Candidate>,
         val highlighted: Int,
@@ -32,6 +48,8 @@ sealed class EngineMessage {
         val isLastPage: Boolean = false,
         /** 方案 page_size（快照 context.menu.pageSize）：native 分页末页判定与下标重映射用；0 = 未知 */
         val pageSize: Int = 0,
+        /** 本批候选所属的组字快照（性能第 1 条）：只供 restoreCandidates 读，UI 侧忽略 */
+        val composition: CompositionSnapshot = CompositionSnapshot(),
     ) : EngineMessage() {}
 
     data class Status(val isComposing: Boolean = false) : EngineMessage()

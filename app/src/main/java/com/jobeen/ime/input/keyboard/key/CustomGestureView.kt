@@ -150,6 +150,12 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     var onTouchMoveListener: ((pointerId: Int, rawX: Float, rawY: Float) -> Unit)? = null
     var onTouchDownListener: ((View) -> Unit)? = null
     var onTouchUpListener: ((View) -> Unit)? = null
+    /**
+     * 抬手坐标钩子：与 [onTouchUpListener] 同批触发，另给抬手点坐标
+     * （视图内 x/y）。分区键（t9Symbols 集合键）按抬手 Y 落区提交，
+     * onTouchUpListener 只给 View、拿不到坐标，故另开一槽。
+     */
+    var onReleasePointListener: ((view: View, x: Float, y: Float) -> Unit)? = null
     var onDoubleTapListener: ((View) -> Unit)? = null
     var onRepeatListener: ((View) -> Unit)? = null
     var onGestureListener: OnGestureListener? = null
@@ -346,6 +352,7 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
         // 松开振动：仅按键面参与；CANCEL 不走此处（系统打断不算抬起）
         if (releaseFeedbackEnabled) InputFeedbacks.hapticFeedbackRelease(this)
         onTouchUpListener?.invoke(this)
+        onReleasePointListener?.invoke(this, x, y)
         dispatchGestureEvent(GestureType.Up, x, y)
         val shouldPerformClick =
             !(touchMovedOutside || longPressTriggered || repeatStarted || swipeRepeatTriggered || gestureConsumed)

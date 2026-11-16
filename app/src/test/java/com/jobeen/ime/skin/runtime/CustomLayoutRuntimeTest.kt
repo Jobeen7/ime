@@ -83,13 +83,13 @@ class CustomLayoutRuntimeTest {
     @Test
     fun mainSlotNamesRedirectToCustomWhenResolved() {
         val snap = snapshot(resolvedA)
-        // 类别匹配（2026-11-02）：单键旧布局属非 26 键，只替换 T9/T15；
+        // 类别匹配（2026-11-02）：单键旧布局属非 26 键，只替换 T9/T14/T15/T18；
         // Qwerty 类别不匹配 → 走原厂。
         assertEquals(
             "Qwerty",
             CustomLayoutRuntime.resolveSwitchTarget(snap, "Qwerty", "Qwerty"),
         )
-        for (main in listOf("T9", "T15")) {
+        for (main in listOf("T9", "T14", "T15", "T18")) {
             assertEquals(
                 "custom:lay-a",
                 CustomLayoutRuntime.resolveSwitchTarget(snap, main, "Qwerty"),

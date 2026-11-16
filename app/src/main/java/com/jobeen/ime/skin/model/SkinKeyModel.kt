@@ -243,8 +243,8 @@ enum class WhitelistAction(
                 else -> entries.firstOrNull { it.formatName == name }
             }
 
-        /** switch_layout 的合法目标 = 出厂六布局 NAME（详设 §3.2）。 */
-        val LAYOUT_TARGETS: Set<String> = setOf("Qwerty", "T9", "T15", "Number", "Symbol", "Emoji")
+        /** switch_layout 的合法目标 = 出厂八布局 NAME（详设 §3.2）。 */
+        val LAYOUT_TARGETS: Set<String> = setOf("Qwerty", "T9", "T14", "T15", "T18", "Number", "Symbol", "Emoji")
 
         /** 自创布局运行时名前缀（B3 §3.3）：switch_layout 目标 `custom:<layoutId>`。 */
         const val CUSTOM_LAYOUT_PREFIX = "custom:"

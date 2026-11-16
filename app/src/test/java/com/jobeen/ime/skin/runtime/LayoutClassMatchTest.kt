@@ -115,4 +115,17 @@ class LayoutClassMatchTest {
         val skinT9 = snapshot(t9Layout("t9skin"))
         assertEquals("custom:t9skin", CustomLayoutRuntime.resolveTypeTarget(skinT9, "pinyin", "T15"))
     }
+
+    @Test
+    fun t14AndT18SchemesFollowSameClassRule() {
+        // 14/18 键与 T15 同类（非 26 键拼音布局）：26 键皮肤不劫持，
+        // 九宫格皮肤改指自创布局。
+        for (main in listOf("T14", "T18")) {
+            val skin26 = snapshot(lettersLayout("pinyin26"))
+            assertEquals(main, CustomLayoutRuntime.resolveTypeTarget(skin26, "pinyin", main))
+            assertEquals(main, CustomLayoutRuntime.resolveSwitchTarget(skin26, main, main))
+            val skinT9 = snapshot(t9Layout("t9skin"))
+            assertEquals("custom:t9skin", CustomLayoutRuntime.resolveTypeTarget(skinT9, "pinyin", main))
+        }
+    }
 }

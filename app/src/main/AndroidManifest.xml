@@ -107,6 +107,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.T9QuickSymbolsSettingsActivity"
+            android:exported="false"
+            android:label="@string/t9_quick_symbols_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.KeySymbolSettingsActivity"
             android:exported="false"
             android:label="@string/key_symbol_title"
@@ -368,6 +375,14 @@
             android:name=".base.speech.SpeechRecognitionService"
             android:exported="false"
             android:process=":speech" />
+
+        <!-- 脚本隔离执行：QuickJS 只在该零权限隔离进程内跑（无 INTERNET
+             权限、读不到应用私有文件）；源码与入参经 Binder 传进，执行
+             结果经 Binder 返回；联网只走主进程里的 @connect 白名单代理。 -->
+        <service
+            android:name=".script.ScriptIsolationService"
+            android:exported="false"
+            android:isolatedProcess="true" />
 
         <service
             android:name=".engine.rime.service.RimeMaintenanceService"

@@ -25,6 +25,7 @@ import com.jobeen.ime.skin.runtime.KeyOverrideApplier
 import com.jobeen.ime.skin.runtime.PlaceholderValues
 import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
+import com.jobeen.ime.input.keyboard.ShuangpinHint
 import com.jobeen.ime.input.keyboard.key.alphabetKey
 import com.jobeen.ime.input.keyboard.key.backspaceKey
 import com.jobeen.ime.input.keyboard.key.capsLockKey
@@ -71,7 +72,13 @@ class QwertyKeyboard(
          */
         fun effectiveLayout(context: Context, returnVariant: Variant): List<List<KeyDef>> {
             val snapshot = SkinSnapshotProvider.current(context)
-            val raw = buildLayout(returnVariant)
+            // 双拼韵母提示（开关在 KeyboardManager.Keyboard.Display）：
+            // 开时字母键副标换韵母（只显示、不改动作）；用户自定义角标
+            // 与皮肤显式 subLabel 在后套用，仍优先于提示。
+            val raw = buildLayout(
+                returnVariant,
+                shuangpinHint = com.jobeen.ime.data.manager.KeyboardManager.Keyboard.Display.isShuangpinHintEnabled(context),
+            )
             // 内置布局覆盖（2026-10-28）：皮肤含本键盘的内置布局文件时
             // 按文件重排（出厂键本体 + 文件排版/动作槽），再走既有覆写
             // 装配（样式/图片/字号等）；无覆盖/排空时恒用出厂布局。
@@ -162,41 +169,56 @@ class QwertyKeyboard(
         /**
          * 出厂 26 键布局（.19 原样，施工单 4：默认分支恢复此口径）：
          * 小写字母＋副标、?123／!?#／方案名空格、实心图标。
+         *
+         * @param shuangpinHint 为 true 时字母键副标显示小鹤双拼韵母
+         *   （只显示、不改动作；长按提交仍是标点）；默认 false，
+         *   出厂布局与 KeySymbolOps.DEFAULT_SYMBOLS 逐字一致。
          */
-        fun buildLayout(returnVariant: Variant): List<List<KeyDef>> {
+        fun buildLayout(returnVariant: Variant, shuangpinHint: Boolean = false): List<List<KeyDef>> {
+            // 字母键统一入口：提示开时副标换韵母，其余一字不动。
+            fun letter(
+                character: String,
+                punctuation: String,
+                altTextTranslationY: Int = 2,
+                mainTextTranslationY: Int = -2,
+                id: String? = null,
+            ) = alphabetKey(
+                character, punctuation, altTextTranslationY, mainTextTranslationY, id,
+                hintText = if (shuangpinHint) ShuangpinHint.hintFor(character[0]) else null,
+            )
             return listOf(
                 listOf(
-                    alphabetKey("q", "1", id = KeyIds.Qwerty.KEY_Q),
-                    alphabetKey("w", "2", id = KeyIds.Qwerty.KEY_W),
-                    alphabetKey("e", "3", id = KeyIds.Qwerty.KEY_E),
-                    alphabetKey("r", "4", id = KeyIds.Qwerty.KEY_R),
-                    alphabetKey("t", "5", id = KeyIds.Qwerty.KEY_T),
-                    alphabetKey("y", "6", id = KeyIds.Qwerty.KEY_Y),
-                    alphabetKey("u", "7", id = KeyIds.Qwerty.KEY_U),
-                    alphabetKey("i", "8", id = KeyIds.Qwerty.KEY_I),
-                    alphabetKey("o", "9", id = KeyIds.Qwerty.KEY_O),
-                    alphabetKey("p", "0", id = KeyIds.Qwerty.KEY_P),
+                    letter("q", "1", id = KeyIds.Qwerty.KEY_Q),
+                    letter("w", "2", id = KeyIds.Qwerty.KEY_W),
+                    letter("e", "3", id = KeyIds.Qwerty.KEY_E),
+                    letter("r", "4", id = KeyIds.Qwerty.KEY_R),
+                    letter("t", "5", id = KeyIds.Qwerty.KEY_T),
+                    letter("y", "6", id = KeyIds.Qwerty.KEY_Y),
+                    letter("u", "7", id = KeyIds.Qwerty.KEY_U),
+                    letter("i", "8", id = KeyIds.Qwerty.KEY_I),
+                    letter("o", "9", id = KeyIds.Qwerty.KEY_O),
+                    letter("p", "0", id = KeyIds.Qwerty.KEY_P),
                 ),
                 listOf(
-                    alphabetKey("a", "~", id = KeyIds.Qwerty.KEY_A),
-                    alphabetKey("s", "!", id = KeyIds.Qwerty.KEY_S),
-                    alphabetKey("d", "@", id = KeyIds.Qwerty.KEY_D),
-                    alphabetKey("f", "#", id = KeyIds.Qwerty.KEY_F),
-                    alphabetKey("g", "$", id = KeyIds.Qwerty.KEY_G, mainTextTranslationY = -2),
-                    alphabetKey("h", "%", id = KeyIds.Qwerty.KEY_H),
-                    alphabetKey("j", "^", id = KeyIds.Qwerty.KEY_J, altTextTranslationY = 4),
-                    alphabetKey("k", "&", id = KeyIds.Qwerty.KEY_K),
-                    alphabetKey("l", "*", id = KeyIds.Qwerty.KEY_L, altTextTranslationY = 4),
+                    letter("a", "~", id = KeyIds.Qwerty.KEY_A),
+                    letter("s", "!", id = KeyIds.Qwerty.KEY_S),
+                    letter("d", "@", id = KeyIds.Qwerty.KEY_D),
+                    letter("f", "#", id = KeyIds.Qwerty.KEY_F),
+                    letter("g", "$", id = KeyIds.Qwerty.KEY_G, mainTextTranslationY = -2),
+                    letter("h", "%", id = KeyIds.Qwerty.KEY_H),
+                    letter("j", "^", id = KeyIds.Qwerty.KEY_J, altTextTranslationY = 4),
+                    letter("k", "&", id = KeyIds.Qwerty.KEY_K),
+                    letter("l", "*", id = KeyIds.Qwerty.KEY_L, altTextTranslationY = 4),
                 ),
                 listOf(
                     capsLockKey(id = KeyIds.Qwerty.KEY_CAPS),
-                    alphabetKey("z", "(", id = KeyIds.Qwerty.KEY_Z),
-                    alphabetKey("x", ")", id = KeyIds.Qwerty.KEY_X),
-                    alphabetKey("c", ":", id = KeyIds.Qwerty.KEY_C),
-                    alphabetKey("v", ";", id = KeyIds.Qwerty.KEY_V),
-                    alphabetKey("b", ",", id = KeyIds.Qwerty.KEY_B),
-                    alphabetKey("n", "?", id = KeyIds.Qwerty.KEY_N),
-                    alphabetKey("m", "/", id = KeyIds.Qwerty.KEY_M),
+                    letter("z", "(", id = KeyIds.Qwerty.KEY_Z),
+                    letter("x", ")", id = KeyIds.Qwerty.KEY_X),
+                    letter("c", ":", id = KeyIds.Qwerty.KEY_C),
+                    letter("v", ";", id = KeyIds.Qwerty.KEY_V),
+                    letter("b", ",", id = KeyIds.Qwerty.KEY_B),
+                    letter("n", "?", id = KeyIds.Qwerty.KEY_N),
+                    letter("m", "/", id = KeyIds.Qwerty.KEY_M),
                     backspaceKey(id = KeyIds.Qwerty.KEY_DELETE),
                 ),
                 listOf(

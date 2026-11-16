@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    脚本隔离执行（QuickJS 跑在 android:isolatedProcess 的 Service 里）
+    与 $key 变量注入的新增字符串。不要改 strings.xml，新增只放这里。
+-->
+<resources>
+    <!-- 隔离进程绑定失败／Binder 断开／进程死亡时，试跑报的错 -->
+    <string name="script_isolated_unavailable">脚本隔离进程不可用，请重试</string>
+    <!-- 源码超 Binder 事务上限时，试跑报的错 -->
+    <string name="script_too_large">脚本过大，无法发送到隔离进程</string>
+    <!-- $http 的域名未在脚本头部 @connect 声明时，给脚本的 rejected 完成文本（%1$s 为 host） -->
+    <string name="script_http_not_allowed">该域名未在 @connect 中声明：%1$s</string>
+    <!-- 变量管理区补充说明：变量以 $key 全局注入脚本，敏感变量不注入 -->
+    <string name="script_variables_injected_hint">变量以 $key 全局注入脚本；敏感变量不注入</string>
+</resources>

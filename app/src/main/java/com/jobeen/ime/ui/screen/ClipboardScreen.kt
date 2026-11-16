@@ -1,11 +1,16 @@
 package com.jobeen.ime.ui.screen
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -14,8 +19,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
+import com.jobeen.ime.data.manager.ClipboardEntryLocator
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
@@ -25,8 +32,19 @@ import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ClipboardScreen(onBack: () -> Unit) {
+fun ClipboardScreen(onBack: () -> Unit, initialClipboardId: Long = -1L) {
     val context = LocalContext.current
+
+    // clipboard?id= 落点（WO52 4.2 遗留项，镜像 phrase?id=）：
+    // 只带 id 进页时才读历史并定位；不带 id 时本页与原来完全一致。
+    var deepLinkEntries by remember { mutableStateOf<List<ClipboardManager.Entry>?>(null) }
+    val targetIndex = deepLinkEntries
+        ?.let { ClipboardEntryLocator.indexOf(it, initialClipboardId) } ?: -1
+    LaunchedEffect(initialClipboardId) {
+        if (initialClipboardId > 0) {
+            deepLinkEntries = ClipboardManager.getEntriesOrNull(context)
+        }
+    }
 
     var maxEntries by remember { mutableFloatStateOf(ClipboardManager.getMaxEntries(context).toFloat()) }
     var retentionDays by remember { mutableFloatStateOf(ClipboardManager.getRetentionDays(context).toFloat()) }
@@ -53,6 +71,8 @@ fun ClipboardScreen(onBack: () -> Unit) {
     SettingsPageScaffold(
         title = stringResource(R.string.clipboard_manager),
         onBack = onBack,
+        // 目标行经 rowAnchor 注册同名锚点，脚手架等锚点出现后滚到该条。
+        focusTitle = if (targetIndex >= 0) "clipboard_entry_$initialClipboardId" else null,
     ) {
         SettingsGroup(title = stringResource(R.string.clipboard_listening)) {
                 Spacer(Modifier.height(4.dp))
@@ -94,6 +114,7 @@ fun ClipboardScreen(onBack: () -> Unit) {
                 SliderRow(
                     title = stringResource(R.string.clipboard_max_entries),
                     value = maxEntries,
+                    defaultValue = 100f,
                     valueLabel = stringResource(R.string.clipboard_max_entries_value, maxEntries.toInt()),
                     range = 20f..100f,
                     // 拖动只更新本地显示：setMaxEntries 会立即按新上限裁剪历史，
@@ -107,6 +128,7 @@ fun ClipboardScreen(onBack: () -> Unit) {
                 SliderRow(
                     title = stringResource(R.string.clipboard_retention_days),
                     value = retentionDays,
+                    defaultValue = 30f,
                     valueLabel = stringResource(R.string.clipboard_retention_days_value, retentionDays.toInt()),
                     range = 1f..365f,
                     onValueChange = {
@@ -188,6 +210,50 @@ fun ClipboardScreen(onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            // clipboard?id= 落点：只带 id 进页时出现。列表顺序与键盘
+            // 面板同一来源（getEntriesOrNull）；目标行高亮＋滚到该条；
+            // 读完仍无该 id 时给明确提示、不崩溃；读库失败（null）
+            // 与“真无此条”不区分——两者都不是可定位的条目。
+            if (initialClipboardId > 0) {
+                val entries = deepLinkEntries
+                if (entries != null) {
+                    SettingsGroup(title = stringResource(R.string.clipboard_history)) {
+                        Spacer(Modifier.height(4.dp))
+                        if (targetIndex < 0) {
+                            Text(
+                                text = stringResource(R.string.clipboard_entry_not_found),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            entries.forEachIndexed { index, entry ->
+                                val isTarget = index == targetIndex
+                                Text(
+                                    text = entry.text,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = if (isTarget) {
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .rowAnchor("clipboard_entry_$initialClipboardId")
+                                            .background(
+                                                MaterialTheme.colorScheme.primaryContainer,
+                                                RoundedCornerShape(12.dp),
+                                            )
+                                            .padding(12.dp)
+                                    } else {
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 4.dp, vertical = 6.dp)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
             }
     }
 

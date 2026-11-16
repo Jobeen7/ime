@@ -168,7 +168,9 @@ object FloatingCandidatePositioning {
         gapPx: Int,
     ): Placement {
         val xRange = 0..(screenWidth - windowWidth).coerceAtLeast(0)
-        val yRange = 0..(screenHeight - windowHeight).coerceAtLeast(0)
+        // .2：夹取亦不得让窗底越过键盘顶（光标 stale 时 CURSOR 档的 y
+        // 会落到键盘下方）；窗高出键盘上方空间时贴屏顶（y=0）。
+        val maxY = (keyboardTop - gapPx - windowHeight).coerceAtLeast(0)
         return when (fallback) {
             FloatingCandidatePosition.CURSOR -> {
                 val y = if (cursor != null) {
@@ -177,17 +179,17 @@ object FloatingCandidatePositioning {
                     keyboardTop - gapPx - windowHeight
                 }
                 val x = (cursor?.left ?: keyboardLeft).coerceIn(xRange)
-                Placement(x, y.coerceIn(yRange), aboveCursor = cursor != null, usedFallback = true)
+                Placement(x, y.coerceIn(0, maxY), aboveCursor = cursor != null, usedFallback = true)
             }
             FloatingCandidatePosition.BOTTOM_LEFT -> Placement(
                 keyboardLeft.coerceIn(xRange),
-                (keyboardTop - gapPx - windowHeight).coerceIn(yRange),
+                (keyboardTop - gapPx - windowHeight).coerceIn(0, maxY),
                 aboveCursor = false,
                 usedFallback = true,
             )
             FloatingCandidatePosition.BOTTOM_RIGHT -> Placement(
                 (keyboardRight - windowWidth).coerceIn(xRange),
-                (keyboardTop - gapPx - windowHeight).coerceIn(yRange),
+                (keyboardTop - gapPx - windowHeight).coerceIn(0, maxY),
                 aboveCursor = false,
                 usedFallback = true,
             )

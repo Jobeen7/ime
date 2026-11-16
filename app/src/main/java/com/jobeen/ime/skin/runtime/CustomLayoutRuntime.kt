@@ -7,7 +7,9 @@ import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.impl.ReturnPathKeyboard
 import com.jobeen.ime.input.keyboard.impl.SymbolKeyboard
+import com.jobeen.ime.input.keyboard.impl.T14Keyboard
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
+import com.jobeen.ime.input.keyboard.impl.T18Keyboard
 import com.jobeen.ime.input.keyboard.impl.T9Keyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.skin.diag.DiagLog
@@ -29,9 +31,9 @@ object CustomLayoutRuntime {
     /** 自创布局运行时名前缀：`custom:<layoutId>`。 */
     const val PREFIX: String = WhitelistAction.CUSTOM_LAYOUT_PREFIX
 
-    /** 主键盘位布局名全集（待核 2 定死：方案默认键盘只会是这三者）。 */
+    /** 主键盘位布局名全集（待核 2 定死：方案默认键盘只会是这五者）。 */
     val MAIN_LAYOUT_NAMES: Set<String> = setOf(
-        QwertyKeyboard.NAME, T9Keyboard.NAME, T15Keyboard.NAME,
+        QwertyKeyboard.NAME, T9Keyboard.NAME, T14Keyboard.NAME, T15Keyboard.NAME, T18Keyboard.NAME,
     )
 
     fun nameFor(layoutId: String): String = PREFIX + layoutId
@@ -137,7 +139,7 @@ object CustomLayoutRuntime {
      * 2. `custom:<id>` 只在 id 恰为当前方向已解析布局时成立：
      *    竖屏认竖屏绑定，横屏另认横屏绑定；指向其他/已失效
      *    布局时先回退方案默认名，再按第 3 条归一；
-     * 3. 主键盘名（Qwerty/T9/T15）在有已解析布局时改指自创
+     * 3. 主键盘名（Qwerty/T9/T14/T15/T18）在有已解析布局时改指自创
      *    布局——竖屏有竖屏绑定时指竖屏绑定；竖屏绑定不存在
      *    但横屏绑定存在且当前为横屏时指横屏绑定（内置布局
      *    竖屏 + 横屏专属布局）；自创布局占据主键盘位，方案
@@ -188,14 +190,14 @@ object CustomLayoutRuntime {
                 snapshot?.resolvedLayout
             }
             // 类别匹配（2026-11-02 修：26 键皮肤布局劫持 T9）：
-            // 方案布局是 Qwerty 时只接受 26 键皮肤布局，是 T9/T15 时只接受
-            // 非 26 键皮肤布局；不匹配时不回落旧绑定，走原厂布局（样式仍走
-            // 皮肤）。方案布局不在三者内时维持旧行为（不改未知路径）。
+// 方案布局是 Qwerty 时只接受 26 键皮肤布局，是 T9/T14/T15/T18
+// 时只接受非 26 键皮肤布局；不匹配时不回落旧绑定，走原厂布局
+// （样式仍走皮肤）。方案布局不在五者内时维持旧行为（不改未知路径）。
             // 与 ALPHABETIC 分支对称：英文只接受 26 键皮肤布局。
             if (legacy != null) {
                 val requestedIs26 = when (schemaDefault) {
                     QwertyKeyboard.NAME -> true
-                    T9Keyboard.NAME, T15Keyboard.NAME -> false
+                    T9Keyboard.NAME, T14Keyboard.NAME, T15Keyboard.NAME, T18Keyboard.NAME -> false
                     else -> null
                 }
                 if (requestedIs26 == null || is26KeyLayout(legacy, landscape) == requestedIs26) {
@@ -374,7 +376,7 @@ object CustomLayoutRuntime {
      * - 旧顶层绑定（竖屏／横屏）id 命中 → pinyin（旧绑定即
      *   pinyin 主槽回落，与 resolveTypeTarget 第 2 步同口径）；
      * - 内置名：Qwerty → alphabetic（全键盘即英文键盘），
-     *   T9/T15 → pinyin（中文布局），Symbol → symbolic，
+     *   T9/T14/T15/T18 → pinyin（中文布局），Symbol → symbolic，
      *   Emoji → emojis，Number → numeric（numberPad 为场景
      *   键盘，不由皮肤切换键寻址）；
      * - 其余（未声明自创 id、未知名）→ null，调用方沿用旧按
@@ -410,7 +412,7 @@ object CustomLayoutRuntime {
         }
         return when (name) {
             QwertyKeyboard.NAME -> KeyboardTypes.ALPHABETIC
-            T9Keyboard.NAME, T15Keyboard.NAME -> KeyboardTypes.PINYIN
+            T9Keyboard.NAME, T14Keyboard.NAME, T15Keyboard.NAME, T18Keyboard.NAME -> KeyboardTypes.PINYIN
             SymbolKeyboard.NAME -> KeyboardTypes.SYMBOLIC
             EmojiKeyboard.NAME -> KeyboardTypes.EMOJIS
             NumberKeyboard.NAME -> KeyboardTypes.NUMERIC
@@ -438,7 +440,7 @@ object CustomLayoutRuntime {
         if (target in MAIN_LAYOUT_NAMES) {
             // 类别匹配（2026-11-02 修，与 resolveTypeTarget 同口径）：
             // 皮肤旧布局只替换同类主布局——Qwerty 只接受 26 键皮肤布局，
-            // T9/T15 只接受非 26 键皮肤布局；不匹配时保留原厂目标名。
+            // T9/T14/T15/T18 只接受非 26 键皮肤布局；不匹配时保留原厂目标名。
             val requestedIs26 = target == QwertyKeyboard.NAME
             if (resolved != null) {
                 if (is26KeyLayout(resolved, landscape) == requestedIs26) {

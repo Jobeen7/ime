@@ -844,6 +844,25 @@ abstract class BaseKeyboard(
                     }
                 }
             }
+            // t9Symbols 集合键分区提交（Bin 皮肤左竖栏 tall 键）：
+            // 前景层四符号纵向排布，抬手按 Y 落区提交对应符号；
+            // 滑出键界抬手不提交（与长按面板“出界取消”同口径）。
+            // 链式追加在既有抬手坐标钩子之后，不盖面板/上档接线；
+            // 不消费触摸（按压动效与音效走正常按键路径，tap none 本身无动作）。
+            val zoneSymbols = def.appearance.symbolZoneSymbols
+            if (!zoneSymbols.isNullOrEmpty()) {
+                val prevRelease = onReleasePointListener
+                onReleasePointListener = { v, x, y ->
+                    prevRelease?.invoke(v, x, y)
+                    if (x in 0f..v.width.toFloat() && y in 0f..v.height.toFloat()) {
+                        val zone = ((y / v.height.toFloat()) * zoneSymbols.size)
+                            .toInt().coerceIn(0, zoneSymbols.size - 1)
+                        zoneSymbols.getOrNull(zone)?.let { symbol ->
+                            onAction(KeyboardAction.KeySequenceAction(symbol))
+                        }
+                    }
+                }
+            }
             // 单槽位监听合成安装（审计 I-M1）：循环里只收集、到此才
             // 装一个合成监听，弹窗／长按、滑动／移光标不再互相覆盖。
             // 面板挂载（mountGridPanel／旧版单行）只在无工厂长按时

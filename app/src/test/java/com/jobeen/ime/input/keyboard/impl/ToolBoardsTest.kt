@@ -30,11 +30,13 @@ class ToolBoardsTest {
     fun layoutSwitchBoard_rowsSumToOneAndSwitchLayouts() {
         val layout = LayoutSwitchKeyboard.buildLayout()
         assertEquals(listOf(1f), rowWidths(layout))
-        assertEquals(listOf("9键", "15键", "26键"), texts(layout))
+        assertEquals(listOf("9键", "14键", "15键", "18键", "26键"), texts(layout))
         assertEquals(
             listOf(
                 KeyboardAction.LayoutSwitchAction("T9"),
+                KeyboardAction.LayoutSwitchAction("T14"),
                 KeyboardAction.LayoutSwitchAction("T15"),
+                KeyboardAction.LayoutSwitchAction("T18"),
                 KeyboardAction.LayoutSwitchAction("Qwerty"),
             ),
             pressActions(layout),

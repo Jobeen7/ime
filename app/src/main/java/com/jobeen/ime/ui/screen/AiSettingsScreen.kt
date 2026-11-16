@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -206,11 +207,13 @@ fun AiSettingsScreen(
                 var modelId by rememberSaveable(provider.id) { mutableStateOf(models[provider.id]?.modelID.orEmpty()) }
                 var baseUrlError by rememberSaveable(provider.id) { mutableStateOf(false) }
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = name, onValueChange = { name = it },
                     label = { Text(stringResource(R.string.ai_provider_name)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = baseUrl, onValueChange = { baseUrl = it; baseUrlError = false },
                     label = { Text(stringResource(R.string.ai_provider_base_url)) },
                     isError = baseUrlError,
@@ -224,11 +227,13 @@ fun AiSettingsScreen(
                     )
                 }
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = apiPath, onValueChange = { apiPath = it },
                     label = { Text(stringResource(R.string.ai_provider_api_path)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = token, onValueChange = { token = it },
                     label = { Text(stringResource(R.string.ai_provider_token)) },
                     placeholder = { Text(stringResource(R.string.ai_provider_token_hint)) },
@@ -241,17 +246,20 @@ fun AiSettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = modelId, onValueChange = { modelId = it },
                     label = { Text(stringResource(R.string.ai_provider_model)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = timeout, onValueChange = { timeout = it },
                     label = { Text(stringResource(R.string.ai_provider_timeout)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = temperature, onValueChange = { temperature = it },
                     label = { Text(stringResource(R.string.ai_provider_temperature)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -437,6 +445,7 @@ fun AiSettingsScreen(
                 modifier = Modifier.padding(vertical = 8.dp),
             )
             OutlinedTextField(
+                shape = RoundedCornerShape(12.dp),
                 value = aiPrefix,
                 onValueChange = {
                     aiPrefix = it
@@ -446,6 +455,7 @@ fun AiSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
+                shape = RoundedCornerShape(12.dp),
                 value = aiHistoryPrefix,
                 onValueChange = {
                     aiHistoryPrefix = it
@@ -455,6 +465,7 @@ fun AiSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
+                shape = RoundedCornerShape(12.dp),
                 value = historyLimit,
                 onValueChange = {
                     historyLimit = it.filter { c -> c.isDigit() }

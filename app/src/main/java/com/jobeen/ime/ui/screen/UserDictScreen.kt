@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -65,6 +66,8 @@ class UserDictUiState {
     var remoteFiles by mutableStateOf<List<String>?>(null)
     /** 已删除词管理对话框：非空时打开，内容为当前已删词列表 */
     var deletedWords by mutableStateOf<List<String>?>(null)
+    /** 合并前备份信息（恢复行副标题）：null 表示暂无备份，恢复行不可点 */
+    var backupInfo by mutableStateOf<String?>(null)
     var noticeTitle by mutableStateOf("")
     var noticeMessage by mutableStateOf<String?>(null)
     /** 词典列表加载失败（超时/异常）时为真：区别于“加载中”（null）和“确实为空”（空表）。
@@ -97,6 +100,7 @@ fun UserDictScreen(
     onShowDeletedWords: () -> Unit,
     onRestoreDeletedWord: (String) -> Unit,
     onDismissDeletedWords: () -> Unit,
+    onRestoreBeforeMerge: () -> Unit,
     onOpenWordCreation: () -> Unit,
     onPeriodicSyncEnabledChange: (Boolean) -> Unit,
     onPeriodicIntervalChange: (Int) -> Unit,
@@ -104,6 +108,7 @@ fun UserDictScreen(
 ) {
     var showDictDialog by remember { mutableStateOf(false) }
     var showHttpRiskConfirm by remember { mutableStateOf(false) }
+    var showRestoreConfirm by remember { mutableStateOf(false) }
     var showIntervalDialog by remember { mutableStateOf(false) }
     var serverText by remember { mutableStateOf(state.webdavServer) }
     var usernameText by remember { mutableStateOf(state.webdavUsername) }
@@ -198,6 +203,7 @@ fun UserDictScreen(
                         // WebDAV 表单：字段与保存逻辑不动，只收进分组卡片。
                         Column(Modifier.padding(vertical = 12.dp)) {
                             OutlinedTextField(
+                                shape = RoundedCornerShape(12.dp),
                                 value = serverText,
                                 onValueChange = { serverText = it },
                                 label = { Text(stringResource(R.string.user_dict_server)) },
@@ -209,6 +215,7 @@ fun UserDictScreen(
                             )
                             Spacer(Modifier.height(4.dp))
                             OutlinedTextField(
+                                shape = RoundedCornerShape(12.dp),
                                 value = usernameText,
                                 onValueChange = { usernameText = it },
                                 label = { Text(stringResource(R.string.user_dict_username)) },
@@ -218,6 +225,7 @@ fun UserDictScreen(
                             )
                             Spacer(Modifier.height(4.dp))
                             OutlinedTextField(
+                                shape = RoundedCornerShape(12.dp),
                                 value = passwordText,
                                 onValueChange = { passwordText = it },
                                 label = { Text(stringResource(R.string.user_dict_password)) },
@@ -233,6 +241,7 @@ fun UserDictScreen(
                             )
                             Spacer(Modifier.height(4.dp))
                             OutlinedTextField(
+                                shape = RoundedCornerShape(12.dp),
                                 value = syncPathText,
                                 onValueChange = { syncPathText = it },
                                 label = { Text(stringResource(R.string.user_dict_sync_path)) },
@@ -348,6 +357,16 @@ fun UserDictScreen(
                             subtitle = stringResource(R.string.user_dict_deleted_words_hint),
                             onClick = { if (!state.busy) onShowDeletedWords() },
                         )
+                        NavRow(
+                            title = stringResource(R.string.user_dict_backup_title),
+                            subtitle = state.backupInfo
+                                ?: stringResource(R.string.user_dict_backup_none),
+                            onClick = {
+                                if (!state.busy && state.backupInfo != null) {
+                                    showRestoreConfirm = true
+                                }
+                            },
+                        )
                     }
                 }
             }
@@ -420,6 +439,20 @@ fun UserDictScreen(
             onConfirm = {
                 showHttpRiskConfirm = false
                 onAllowHttpChange(true)
+            },
+            dismissText = stringResource(R.string.user_dict_cancel),
+        )
+    }
+
+    if (showRestoreConfirm) {
+        SettingsConfirmDialog(
+            onDismissRequest = { showRestoreConfirm = false },
+            title = stringResource(R.string.user_dict_restore_confirm_title),
+            text = stringResource(R.string.user_dict_restore_confirm_msg),
+            confirmText = stringResource(R.string.user_dict_restore_confirm_ok),
+            onConfirm = {
+                showRestoreConfirm = false
+                onRestoreBeforeMerge()
             },
             dismissText = stringResource(R.string.user_dict_cancel),
         )

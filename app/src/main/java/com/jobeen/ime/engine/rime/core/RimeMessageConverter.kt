@@ -66,6 +66,7 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
         }
 
         is RimeMessage.CompositionMessage -> {
+            CandidateCompositionState.onComposition(message.data)
             KeycapFilterState.onComposition(
                 compositionHasUnresolvedDigitSegment(message.data)
             )
@@ -96,10 +97,12 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
                 page = 0,
                 total = message.data.total,
                 pageSize = message.data.pageSize,
+                composition = CandidateCompositionState.snapshot(),
             )
         }
 
         is RimeMessage.StatusMessage -> {
+            CandidateCompositionState.onSchemaId(message.data.schemaId)
             EngineMessage.Status(
                 isComposing = message.data.isComposing
             )
@@ -129,6 +132,7 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
         }
 
         is RimeMessage.DynamicPreeditMessage -> {
+            CandidateCompositionState.onComposition(message.data.composition)
             KeycapFilterState.onComposition(
                 compositionHasUnresolvedDigitSegment(message.data.composition)
             )
@@ -136,6 +140,7 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
         }
 
         is RimeMessage.SchemaMessage -> {
+            CandidateCompositionState.onSchemaId(message.data.id)
             KeycapFilterState.onSchemaLayout(message.data.layout)
             EngineMessage.Schema(
                 message.data.id,
@@ -273,6 +278,56 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
         }
         return false
     }
+}
+
+/**
+ * 候选批次的组字快照暂存（性能第 1 条）：转换器（写入方）与
+ * restoreCandidates（读取方，经 EngineMessage.Candidates.composition）
+ * 共用同一份，替代还原协程经 awaitJob 回 jobs 取组字码／音节／方案 id。
+ *
+ * 写入点与 KeycapFilterState 同口径：组字经 Composition /
+ * DynamicPreedit 两路同源消息（handleComposition 在候选消息之前连续
+ * 发出、转换串行进行，故首屏转换时读到的必是同轮状态）；方案 id
+ * 取自 Schema 消息，Status 增量携带新 id 时同步（与 Rime.handleRimeMessage
+ * 的 updateSchemaCached 同口径：空串不覆盖）。初值取 awaitJob 的
+ * 缺省同值（空组字；方案 ".default"，与 Rime.schemaCached 初值同源）：
+ * 首批候选之前无组字／方案消息时，读到即缺省，不阻塞候选落地。
+ *
+ * 线程：写入与读取（转换时快照）都在 reduce 串行路径；@Volatile 只
+ * 保证可见性。极窄窗口内（actions 通道满 512 时组字消息被丢弃而候选
+ * 幸存）可能读到上一轮组字，与旧 awaitJob 读到新组字的竞态同级，
+ * 落地前均有 requestId 门控兜底；DynamicPreedit 与 Composition 双路
+ * 写入使单路丢弃不致 stale。
+ */
+internal object CandidateCompositionState {
+
+    @Volatile
+    private var preedit: String = ""
+
+    @Volatile
+    private var spellings: List<String> = emptyList()
+
+    @Volatile
+    private var firstRawInput: String = ""
+
+    @Volatile
+    private var schemaId: String = ".default"
+
+    /** 组字消息到达时全量覆盖：本轮组字的组字码＋各音节拼写＋首音节原始输入。 */
+    fun onComposition(composition: CompositionProto) {
+        preedit = composition.preedit.orEmpty()
+        spellings = composition.syllables.map { it.spelling }
+        firstRawInput = composition.syllables.firstOrNull()?.rawInput.orEmpty()
+    }
+
+    /** 方案消息到达时覆盖方案 id：空串不覆盖（Status 稀疏增量恒为空）。 */
+    fun onSchemaId(id: String) {
+        if (id.isNotBlank()) schemaId = id
+    }
+
+    /** 候选消息转换时取本批快照：组字与方案 id 同批下发。 */
+    fun snapshot(): EngineMessage.CompositionSnapshot =
+        EngineMessage.CompositionSnapshot(preedit, spellings, firstRawInput, schemaId)
 }
 
 /**

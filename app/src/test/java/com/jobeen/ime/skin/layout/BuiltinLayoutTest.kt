@@ -2,7 +2,9 @@ package com.jobeen.ime.skin.layout
 
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
+import com.jobeen.ime.input.keyboard.impl.T14Keyboard
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
+import com.jobeen.ime.input.keyboard.impl.T18Keyboard
 import com.jobeen.ime.input.keyboard.impl.T9Keyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
@@ -22,7 +24,7 @@ class BuiltinLayoutTest {
     @Test
     fun builtinIdsMatchFactoryKeyboardNames() {
         assertEquals(
-            setOf(T9Keyboard.NAME, QwertyKeyboard.NAME, T15Keyboard.NAME, NumberKeyboard.NAME),
+            setOf(T9Keyboard.NAME, QwertyKeyboard.NAME, T15Keyboard.NAME, T14Keyboard.NAME, T18Keyboard.NAME, NumberKeyboard.NAME),
             BuiltinLayouts.IDS,
         )
         assertTrue(BuiltinLayouts.isBuiltin("T9"))

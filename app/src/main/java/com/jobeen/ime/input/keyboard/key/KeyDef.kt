@@ -167,6 +167,12 @@ open class KeyDef(
         /** G1 前景多层叠加（装配期已解析，渲染层按序叠加、后层压前层）。 */
         var skinForegroundLayers: List<com.jobeen.ime.skin.model.ResolvedForegroundLayer>? = null
         /**
+         * t9Symbols 集合键的分区符号（Bin 皮肤左竖栏 tall 键）：
+         * 前景层纵向排布的符号表，渲染层按抬手 Y 落区分区提交。
+         * null = 普通键（无分区行为）。
+         */
+        var symbolZoneSymbols: List<String>? = null
+        /**
          * 长按符号样式名（现行 form）：只由覆写装配器写在它生成
          * 的外观副本上；快照 hintSymbolsStyles 表中的样式名，
          * 长按面板挂载时按名取样式（面板本身为后续项）。

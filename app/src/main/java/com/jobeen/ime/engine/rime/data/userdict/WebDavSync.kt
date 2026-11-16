@@ -771,15 +771,32 @@ object WebDavSync {
                 if (remoteFile.endsWith(".userdb.txt", ignoreCase = true)) {
                     tempFile.writeBytes(convertUserDbSnapshot(tempFile.readBytes()))
                 }
-                // 导入为合并操作：只增不减，不会删除本地已有词；
+                // 合并安全流程（UserDictMergeSafety）：整批先校验（格式/
+                // 词典归属/与当前 librime 的兼容性，不合格整批不写）→
+                // 合并前导出当前词库存 before-merge.json 安全副本 →
+                // 批内同词条取较大权重去重后导入。负权重行是 librime
+                // 的删除标记，一律整批拒绝，绝不经此处进入词库（只允许
+                // 用户确认的“恢复合并前备份”流程内部产生删除标记行）。
+                // 导入仍是合并操作：只增不减，不会删除本地已有词；
                 // 热导入直接写运行中引擎的词库，导入后立即生效，无需重启
                 // 大文件分批导入，避免整段独占引擎线程导致同步期间按键卡顿
-                val count = session.runOnReady {
-                    UserDictManager.importUserDictInChunks(tempFile) { chunk ->
-                        importUserDictLive(dictName, chunk.absolutePath)
-                    }
-                }
-                if (count < 0) throw IllegalStateException("导入用户词典失败")
+                val count = UserDictMergeSafety.mergeValidatedBatch(
+                    dictName = dictName,
+                    batchFile = tempFile,
+                    batchLabel = remoteFile,
+                    filesDir = appContext.filesDir,
+                    cacheDir = appContext.cacheDir,
+                    exportCurrent = { tmp ->
+                        session.runOnReady { exportUserDictLive(dictName, tmp.absolutePath) }
+                    },
+                    importFile = { file ->
+                        session.runOnReady {
+                            UserDictManager.importUserDictInChunks(file) { chunk ->
+                                importUserDictLive(dictName, chunk.absolutePath)
+                            }
+                        }
+                    },
+                )
                 // 任意下载合并成功都记一笔显示时间（含跨词典下载，
                 // 它不建 per-file 基准，但「上次下载」应更新；仅显示）
                 UserDictPrefs.noteAnyDownload(System.currentTimeMillis())
@@ -1683,14 +1700,26 @@ object WebDavSync {
                     val snapshotHash = tmpIn.inputStream().use {
                         sha256Stream(it, MAX_SYNC_FILE_BYTES)
                     }
-                    val count = session.runOnReady {
-                        UserDictManager.importUserDictInChunks(tmpIn) { chunk ->
-                            importUserDictLive(dict, chunk.absolutePath)
-                        }
-                    }
-                    if (count < 0) {
-                        throw IllegalStateException("导入用户词典失败：$dict")
-                    }
+                    // 目录同步的下载合并同样走安全流程：整批校验→合并前
+                    // 备份 before-merge.json→批内取较大权重去重后导入
+                    // （与 downloadLocked 同口径，见该处注释）。
+                    UserDictMergeSafety.mergeValidatedBatch(
+                        dictName = dict,
+                        batchFile = tmpIn,
+                        batchLabel = remoteFileName(dict),
+                        filesDir = appContext.filesDir,
+                        cacheDir = appContext.cacheDir,
+                        exportCurrent = { tmp ->
+                            session.runOnReady { exportUserDictLive(dict, tmp.absolutePath) }
+                        },
+                        importFile = { file ->
+                            session.runOnReady {
+                                UserDictManager.importUserDictInChunks(file) { chunk ->
+                                    importUserDictLive(dict, chunk.absolutePath)
+                                }
+                            }
+                        },
+                    )
                     snapshotHash
                 }
                 DictDownloadAction.SKIP -> null // 首次上传，跳过合并

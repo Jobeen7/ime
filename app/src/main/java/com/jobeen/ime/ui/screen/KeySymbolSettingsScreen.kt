@@ -192,6 +192,7 @@ private fun KeySymbolEditDialog(
         text = {
             Column {
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = draft,
                     onValueChange = { if (it.codePointCount(0, it.length) <= 1) draft = it },
                     singleLine = true,

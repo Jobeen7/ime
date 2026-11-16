@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -125,6 +126,9 @@ fun SkinEditorScreen(
     var result by remember { mutableStateOf<SkinEditorSaveResult?>(null) }
     var confirmLeave by remember { mutableStateOf(false) }
     var pendingFile by remember { mutableStateOf<EditorFile?>(null) }
+    // 可视化布局编辑（2026-11-16 松烟可取项 3a）：布局文件切到
+    // 可视化编辑器；保存仍走同一 saveLayout 链路。
+    var visualEditing by rememberSaveable { mutableStateOf(false) }
     val dirty = text != originalText
     val editorScroll = rememberScrollState()
     val resultScroll = rememberScrollState()
@@ -195,20 +199,22 @@ fun SkinEditorScreen(
         }
     }
 
-    fun save() {
+    fun save(overrideText: String? = null) {
         val file = selected ?: return
         val current = active ?: return
         busy = true
         result = null
         scope.launch {
+            // 可视化编辑器传来新文本时用它保存（避免 state 尚未更新的竞态）。
+            val saveText = overrideText ?: text
             val saved = when (file.kind) {
-                EditorFile.Kind.SKIN_JSON -> saver.saveSkinJson(current, text)
-                EditorFile.Kind.LAYOUT -> saver.saveLayout(current, file, text)
+                EditorFile.Kind.SKIN_JSON -> saver.saveSkinJson(current, saveText)
+                EditorFile.Kind.LAYOUT -> saver.saveLayout(current, file, saveText)
             }
             busy = false
             result = saved
             if (saved is SkinEditorSaveResult.Saved) {
-                originalText = text
+                originalText = saveText
             } else if (saved is SkinEditorSaveResult.Stale) {
                 // 活动皮肤已变化：未保存，刷新页面为新皮肤（旧目标的未保存修改已失效）。
                 reload()
@@ -247,8 +253,10 @@ fun SkinEditorScreen(
                     }
                 },
                 actions = {
-                    TextButton(onClick = ::save, enabled = !busy && selected != null) {
-                        Text(stringResource(R.string.save))
+                    if (!visualEditing) {
+                        TextButton(onClick = { save() }, enabled = !busy && selected != null) {
+                            Text(stringResource(R.string.save))
+                        }
                     }
                 },
             )
@@ -274,11 +282,11 @@ fun SkinEditorScreen(
                 items(active!!.files) { file ->
                     val label = file.displayName + if (file.isShared) stringResource(R.string.skin_editor_shared_suffix) else ""
                     if (file == selected) {
-                        Button(onClick = { requestSwitch(file) }, enabled = !busy) {
+                        Button(onClick = { requestSwitch(file) }, enabled = !busy && !visualEditing) {
                             Text(label)
                         }
                     } else {
-                        OutlinedButton(onClick = { requestSwitch(file) }, enabled = !busy) {
+                        OutlinedButton(onClick = { requestSwitch(file) }, enabled = !busy && !visualEditing) {
                             Text(label)
                         }
                     }
@@ -306,6 +314,16 @@ fun SkinEditorScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            // 可视化编辑入口（2026-11-16 松烟可取项 3a）：仅布局文件有；
+            // 共用布局的警告在上，保存仍走同一 saveLayout 链路。
+            if (selectedFile != null && selectedFile.kind == EditorFile.Kind.LAYOUT) {
+                OutlinedButton(
+                    onClick = { visualEditing = true },
+                    enabled = !busy && !visualEditing,
+                ) {
+                    Text(stringResource(R.string.skin_editor_visual_edit))
+                }
+            }
             if (loadError != null) {
                 Text(loadError!!, color = MaterialTheme.colorScheme.error)
             }
@@ -313,6 +331,7 @@ fun SkinEditorScreen(
             val currentResult = result
             if (currentResult != null) {
                 Card(
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = when (currentResult) {
                             is SkinEditorSaveResult.Saved ->
@@ -348,19 +367,35 @@ fun SkinEditorScreen(
                     }
                 }
             }
-            // 文本编辑区（等宽字体，整页滚动）。
-            BasicTextField(
-                value = text,
-                onValueChange = { text = it; result = null },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(editorScroll),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                ),
-                enabled = !busy && selected != null,
-            )
+            // 可视化编辑态：文本区换成可视化编辑器（自带顶栏与保存）；
+            // 保存回调把新文本写回 text 并走同一 save() 链路。
+            if (visualEditing && selectedFile != null) {
+                LayoutEditorScreen(
+                    layoutName = selectedFile.displayName,
+                    initialText = text,
+                    onSave = { newText ->
+                        text = newText
+                        save(newText)
+                        visualEditing = false
+                    },
+                    onBack = { visualEditing = false },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                // 文本编辑区（等宽字体，整页滚动）。
+                BasicTextField(
+                    value = text,
+                    onValueChange = { text = it; result = null },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(editorScroll),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                    ),
+                    enabled = !busy && selected != null,
+                )
+            }
         }
     }
 }

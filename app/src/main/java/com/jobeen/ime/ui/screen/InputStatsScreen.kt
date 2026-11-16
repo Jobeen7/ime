@@ -265,7 +265,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                                     MaterialTheme.colorScheme.secondaryContainer,
                                 ),
                             ),
-                            RoundedCornerShape(16.dp),
+                            RoundedCornerShape(20.dp),
                         )
                         .padding(16.dp),
                 ) {
@@ -401,6 +401,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 val t = stats.total
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -442,6 +443,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 // 不受方案过滤影响，与 hero 同口径）。
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -476,6 +478,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 val wlTotal = single + double + multi
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -524,6 +527,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 // 码长分布卡：无干净采集源，只留空态（不建脏近似采集）。
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -548,6 +552,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 val heatTotal = heat.values.sum()
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),

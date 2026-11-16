@@ -981,29 +981,28 @@ class KeyOverrideApplierTest {
             .filterIsInstance<KeyDef.Behavior.Swipe>()
             .firstOrNull()?.downAction
 
+    // TAB 下滑不再派生 "⇥" 副显（2026-11-16，Bin 皮肤错位修复）：
+    // 源包 .cskin 无此提示样式、元书也不渲染它；派生出的 ⇥ 是 Jime
+    // 独有标记，还把键转成 AltText、主字形上移约 7px。下滑 tab
+    // 动作本身不受影响（仍由 behaviors 执行），以下三处原断言
+    // "⇥" 的测试改断言“无副显、动作保留”。
     @Test
-    fun swipeDownTabDerivesHintGlyph() {
+    fun swipeDownTabDerivesNoHintRegardlessOfMnemonic() {
         val layout = tabHintLayout(downAction = KeyboardAction.AppKeyEventAction(61))
-        val result = KeyOverrideApplier.apply(
+        val resultOn = KeyOverrideApplier.apply(
             "X", layout, snapshot(), noPlaceholders,
         )
-        assertNotSame(layout, result)
-        assertEquals("⇥", result.hintOf("X:K-q"))
-        assertEquals("Q", (result.byId("X:K-q").appearance as KeyDef.Appearance.AltText).displayText)
+        assertSame(layout, resultOn)
+        assertNull(resultOn.hintOf("X:K-q"))
         assertEquals(
             KeyboardAction.AppKeyEventAction(61),
-            result.swipeDownOf("X:K-q"),
+            resultOn.swipeDownOf("X:K-q"),
         )
-    }
-
-    @Test
-    fun swipeDownTabHintRespectsMnemonicOff() {
-        val layout = tabHintLayout(downAction = KeyboardAction.AppKeyEventAction(61))
-        val result = KeyOverrideApplier.apply(
+        val resultOff = KeyOverrideApplier.apply(
             "X", layout, snapshot(), noPlaceholders, mnemonicEnabled = false,
         )
-        assertSame(layout, result)
-        assertTrue(result.byId("X:K-q").appearance is KeyDef.Appearance.Text)
+        assertSame(layout, resultOff)
+        assertNull(resultOff.hintOf("X:K-q"))
     }
 
     @Test
@@ -1042,13 +1041,14 @@ class KeyOverrideApplierTest {
     }
 
     @Test
-    fun overrideAddsSwipeDownTabDerivesHint() {
+    fun overrideAddsSwipeDownTabDerivesNoHint() {
         val layout = tabHintLayout(downAction = null)
         val snap = snapshot(
             mapOf("X:K-q" to KeyOverride(swipeDown = SkinAction.Command(WhitelistAction.TAB))),
         )
         val result = KeyOverrideApplier.apply("X", layout, snap, noPlaceholders)
-        assertEquals("⇥", result.hintOf("X:K-q"))
+        assertNull(result.hintOf("X:K-q"))
+        assertTrue(result.byId("X:K-q").appearance is KeyDef.Appearance.Text)
         assertEquals(
             KeyboardAction.AppKeyEventAction(61),
             result.swipeDownOf("X:K-q"),
@@ -1107,7 +1107,7 @@ class KeyOverrideApplierTest {
     }
 
     @Test
-    fun latchedNotificationAddingSwipeDownTabDerivesHint() {
+    fun latchedNotificationAddingSwipeDownTabDerivesNoHint() {
         val layout = tabHintLayout(
             downAction = KeyboardAction.KeySequenceAction("、"),
             styleRef = "s1",
@@ -1127,7 +1127,7 @@ class KeyOverrideApplierTest {
             "X", layout, snapshot(), noPlaceholders,
             notifications = mapOf("s1" to notification),
         )
-        assertEquals("⇥", result.hintOf("X:K-q"))
+        assertNull(result.hintOf("X:K-q"))
         assertEquals(
             KeyboardAction.AppKeyEventAction(61),
             result.swipeDownOf("X:K-q"),

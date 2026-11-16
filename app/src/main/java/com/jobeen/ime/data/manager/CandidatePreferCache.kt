@@ -3,6 +3,7 @@ package com.jobeen.ime.data.manager
 import android.content.Context
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.CandidatePreferDao
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -94,6 +95,19 @@ object CandidatePreferCache {
                 Timber.w(e, "CandidatePreferCache landing failed")
             }
     )
+
+    /**
+     * 偏好表的只读视图（2026-11-16 性能 ②）：重排每批读偏好不再全量
+     * 拷贝（[snapshot] 的 HashMap(cache)，上限 5000 条），直接读活
+     * 表。调用方只读，不得改写（改写抛 UnsupportedOperationException；
+     * 旧实现返回活 Map 曾让调用方破坏缓存，D-M13——本视图不可变，
+     * 不重蹈覆辙）。读到的是弱一致视图：一次点击若正好落在重排中
+     * 途，该批可能看不到、也可能看到——与今日“先拷贝再读”同属一
+     * 类竞态（拷贝点前后同样可能漏/含那次点击），只影响一批的排
+     * 序、不影响计数本身。缓存本体是 ConcurrentHashMap，并发读与
+     * 落点合并互不阻塞；同一视图实例随后也能看到新落点。
+     */
+    fun readOnlyView(): Map<String, Int> = Collections.unmodifiableMap(cache)
 
     /**
      * 返回 text → click_count 的快照副本（D-M13）：旧实现返回活 Map，

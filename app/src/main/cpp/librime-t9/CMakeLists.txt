@@ -10,6 +10,7 @@
 
 set(T9_PLUGIN_SOURCES
   t9_pinyin_map.cc
+  compact_pinyin_map.cc
   t9_session.cc
   t9_module.cc
 )

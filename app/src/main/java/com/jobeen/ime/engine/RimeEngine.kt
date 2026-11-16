@@ -52,7 +52,6 @@ import com.jobeen.ime.engine.rime.behavior.SelectPinYin
 import com.jobeen.ime.engine.rime.behavior.Selection
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.core.RimeApi
-import com.jobeen.ime.engine.rime.core.SyllableProto
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.manager.CandidateRerankManager
@@ -64,6 +63,7 @@ import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.RimeMessage
 import com.jobeen.ime.engine.rime.core.RimeStoppedException
+import com.jobeen.ime.skin.layout.CompactGrouping
 import com.jobeen.ime.data.App.modelDir
 import com.jobeen.ime.engine.rime.data.CrossProcessUserDataLock
 import com.jobeen.ime.engine.rime.data.DataManager.sharedDataDir
@@ -379,6 +379,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             val confirmedLen: Int,
             /** WO52 1.5：native t9PinyinList 的原始串（空格连接）；非 T9 段为 null。 */
             val t9ListRaw: String? = null,
+            /** 紧凑键盘（14/18 键）分组；非空时侧栏走 Kotlin 紧凑展开，t9ListRaw 为 null。 */
+            val compactGrouping: CompactGrouping? = null,
         ) : Action
 
         data object Reset : Action
@@ -480,6 +482,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var session: RimeSession? = null
     private var behaviorHosted: BehaviorHost? = null
     private var context: Context? = null
+
+    /**
+     * 当前紧凑键盘分组（14/18 键）：窗口切键盘时由 KeyboardWindowView
+     * 经 setCompactGrouping 推送；T9/26 键等推 null（清除）。引擎
+     * 本身不知道键盘——分组只决定侧栏拼音的展开函数（BehaviorHost
+     * possibleCompactPinYin），不参与候选产出。@Volatile：窗口在
+     * 主线程写，引擎任务线程读。
+     */
+    @Volatile
+    private var compactGrouping: CompactGrouping? = null
+
+    /** 窗口切键盘时推送当前紧凑分组（T14/T18）；其他键盘推 null 清除。 */
+    override fun setCompactGrouping(grouping: CompactGrouping?) {
+        compactGrouping = grouping
+    }
 
     @Volatile
     private var inputConnection: InputConnection? = null
@@ -1411,8 +1428,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
             // WO52 1.5：T9 段的拼音列表取自 native t9PinyinList（按空格
             // 切分）；全拼段仍走既有 Kotlin 计算。raw 串随快照动作下发，
-            // 切分与配对在 reduce 里做。
-            val t9ListRaw = if (schemaCached.candidateKind == PinYinUtil.CandidateKindT9) {
+            // 切分与配对在 reduce 里做。紧凑键盘（14/18 键）不走 native
+            // T9 表（9 键分组）：分组随快照下发，reduce 里走 Kotlin
+            // 紧凑展开（BehaviorHost.possibleCompactPinYin）。
+            val grouping = compactGrouping
+            val t9ListRaw = if (grouping != null) {
+                null
+            } else if (schemaCached.candidateKind == PinYinUtil.CandidateKindT9) {
                 t9PinyinList()
             } else {
                 null
@@ -1421,7 +1443,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             val confirmedLen = getInputConfirmedPosition()
             dispatchAction(
                 Action.PossibleCandidatePinYinSnapshot(
-                    schemaCached.candidateKind, currentInput, confirmedLen, t9ListRaw
+                    schemaCached.candidateKind, currentInput, confirmedLen, t9ListRaw, grouping
                 )
             )
         }
@@ -1636,22 +1658,32 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             is Action.EmitMessage -> emitMessage(action.message)
 
             is Action.PossibleCandidatePinYinSnapshot -> {
+                // 紧凑键盘（14/18 键）以 Kotlin 紧凑展开为准（分组随快照
+                // 下发；native T9 表是 9 键分组，不参与）。
                 // WO52 1.5：T9 段以 native 列表为准绳（按空格切分）；
                 // raw/position 仍取 Kotlin 侧同一段的计算（BehaviorHost
                 // 队列坐标，native 只有会话输入坐标）。两者同源同算法，
                 // 正常恒一致；native 多出的拼音无队列坐标可配对、丢弃
                 // （宁可漏，不可错）。非 T9 段走既有 Kotlin 计算。
-                val pinYins = if (action.t9ListRaw != null) {
-                    val native = parseT9PinyinList(action.t9ListRaw)
-                    val local = behaviorHosted?.possiblePinYin(
-                        action.candidatePinYinType, action.currentInput, action.confirmedLen
-                    ) ?: emptyList()
-                    val byPinYin = local.associateBy { it.pinYin }
-                    native.mapNotNull { byPinYin[it] }
-                } else {
-                    behaviorHosted?.possiblePinYin(
-                        action.candidatePinYinType, action.currentInput, action.confirmedLen
-                    ) ?: emptyList()
+                val pinYins = when {
+                    action.compactGrouping != null -> {
+                        behaviorHosted?.possibleCompactPinYin(
+                            action.compactGrouping, action.currentInput, action.confirmedLen
+                        ) ?: emptyList()
+                    }
+                    action.t9ListRaw != null -> {
+                        val native = parseT9PinyinList(action.t9ListRaw)
+                        val local = behaviorHosted?.possiblePinYin(
+                            action.candidatePinYinType, action.currentInput, action.confirmedLen
+                        ) ?: emptyList()
+                        val byPinYin = local.associateBy { it.pinYin }
+                        native.mapNotNull { byPinYin[it] }
+                    }
+                    else -> {
+                        behaviorHosted?.possiblePinYin(
+                            action.candidatePinYinType, action.currentInput, action.confirmedLen
+                        ) ?: emptyList()
+                    }
                 }
                 emitMessage(EngineMessage.PossibleCandidatePinYin(pinYins))
             }
@@ -2497,7 +2529,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             // 兜底分支也要用过滤后的列表，故在 try 外先算好
             val filtered = msg.list.filterNot { DeletedWordsStore.isDeleted(it.text) }
             val filteredMsg = if (filtered.size == msg.list.size) msg
-                else EngineMessage.Candidates(filtered, msg.highlighted, msg.page, total = msg.total)
+                else EngineMessage.Candidates(filtered, msg.highlighted, msg.page, total = msg.total,
+                    composition = msg.composition)
             try {
                 val ctx = context
                 if (ctx == null) {
@@ -2506,12 +2539,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 }
 
                 // 常用语输入码候选（WO52 6.1）：组字码与输入码完整匹配时，
-                // 拼到候选前。组字码经 awaitJob 一次取齐（与排序键同源）；
-                // 开关关着或码非法时 PhraseManager 短路不查库；查库失败
-                // 只丢输入码候选，不影响本批 Rime 候选落地。迟到批次
-                // （代次已被新批取代）不用这份匹配，与保存顺序同口径。
+                // 拼到候选前。组字码随候选消息的 composition 快照下发
+                // （转换器在同批组字消息转换时暂存，与 KeycapFilterState
+                // 同口径），不再经 awaitJob 回 jobs 取——按键不再排在
+                // 上一批候选后处理后面。开关关着或码非法时 PhraseManager
+                // 短路不查库（码格式校验在查库前，见 getByShortcut）；
+                // 查库失败只丢输入码候选，不影响本批 Rime 候选落地。
+                // 迟到批次（代次已被新批取代）不用这份匹配，与保存顺序同口径。
                 val phrasePrefix: List<Candidate> = runCatching {
-                    val preedit = awaitJob("") { compositionCached.preedit.orEmpty() }
+                    val preedit = msg.composition.preedit
                     if (state.latestCandidateRequestId.get() != requestId) {
                         emptyList()
                     } else {
@@ -2557,22 +2593,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     } else {
                         // 按本批候选所属的组字串＋方案查保存顺序（与保存
                         // 端同源同值）；保存的文本哈希序列可套到本批
-                        // 子集上。组字缓存与当前方案只在 RimeApi 作用域
-                        // 内可读，经 awaitJob 一次取齐——仅排序表非空
-                        // （用户真拖过）时才走这里，从未拖过的用户被
-                        // 上面的判空缓存短路、热路径无感
-                        val key = awaitJob("") {
-                            candidateSortingKey(
-                                compositionCached.preedit.orEmpty(),
-                                schemaCached.schemaId,
-                            )
-                        }
-                        // awaitJob 与按键共用 jobs FIFO：它排队期间，
-                        // 后续按键可能已把组字推进到下一批，此时读到的
-                        // 组字属于新组字、其保存顺序套到本批候选上即
-                        // 错套。故落地前验本批代次：本批已被更新代次
-                        // 取代（新批已开始还原）则弃用这份保存顺序，
-                        // 不让它借本批的落地通道把新组字的顺序套进来
+                        // 子集上。组字码与方案 id 随候选消息的 composition
+                        // 快照下发，不再经 awaitJob 回 jobs 取（与常用语
+                        // 输入码同源）。仅排序表非空（用户真拖过）时才
+                        // 走这里，从未拖过的用户被上面的判空缓存短路、
+                        // 热路径无感
+                        val key = candidateSortingKey(
+                            msg.composition.preedit,
+                            msg.composition.schemaId,
+                        )
                         if (state.latestCandidateRequestId.get() != requestId) {
                             null
                         } else {
@@ -2580,35 +2609,35 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         }
                     }
                 }
-                // 生僻字补字只在打满一个完整音节时触发：音节读组字缓存，
-                // 与排序键同源（RimeApi 作用域内经 awaitJob 一次取齐；
-                // compositionCached 只在 sendJob/awaitJob 块内可读，
-                // 普通函数里直接读编译不过）。开关关着时不取——热路径
-                // 无感。awaitJob 排队期间后续按键可能已把组字推进到
-                // 下一批：落地前验本批代次，已被新批取代时不用这份
-                // 音节（与保存顺序同口径）。
-                val rareSyllables = if (CandidateManager.isRareCharactersEnabled(ctx)) {
-                    val syllables = awaitJob(emptyList<SyllableProto>()) {
-                        compositionCached.syllables.toList()
+                // 生僻字补字只在打满一个完整音节时触发：音节随候选消息
+                // 的 composition 快照下发（与组字码同源，不再经 awaitJob
+                // 回 jobs 取）；开关关着时不取——热路径无感。补字目标
+                // 只在单音节命中时存在（见 RareCharPolicy.targetSupplement），
+                // 无目标时 supplementedCandidates 原样返回。
+                // 快照即本批组字（转换时暂存），不存在旧 awaitJob 那种
+                // “读到新组字”的错套，故不再验本批代次；迟到批次由
+                // CandidatesReady 的 requestId 门控丢弃。
+                val (rareSpellings, rareFirstRawInput) =
+                    if (CandidateManager.isRareCharactersEnabled(ctx)) {
+                        msg.composition.spellings to msg.composition.firstRawInput
+                    } else {
+                        emptyList<String>() to ""
                     }
-                    if (state.latestCandidateRequestId.get() != requestId) emptyList() else syllables
-                } else {
-                    emptyList()
-                }
                 val rerankEnabled = CandidateManager.isRerankEnabled(ctx)
                 if (rerankEnabled) {
                     // 隐私模式下不读光标前文（gramDb 为空时前文本来也不参与打分）；
                     // 非隐私模式走前文缓存，避免每次候选刷新都跨进程读一次
                     val inputContext = if (isNoPersonalizedLearning(editorInfo)) "" else
                         peekTextBeforeCursor(20, expectedGen = fieldGen) ?: ""
-                    // 偏好快照直读：已加载时是内存直读；未加载时
+                    // 偏好只读视图：已加载时直接读活表（2026-11-16 性能 ②，
+                    // 不再每批 HashMap(cache) 全量拷贝）；未加载时
                     // 不在本 job 里等加载——加载段与点击写事务同在
                     // 缓存的跨挂起互斥内，首屏等它就等于等在途写
                     // 事务整段。先用当前缓存（可能为空）出本批候
                     // 选，偏好在下一次按键的新批次里自然生效；同
-                    // 时发起后台加载，下批直接走快照
+                    // 时发起后台加载，下批直接走只读视图
                     val prefers = if (CandidatePreferCache.isLoaded()) {
-                        CandidatePreferCache.snapshot(ctx)
+                        CandidatePreferCache.readOnlyView()
                     } else {
                         CandidatePreferCache.ensureLoadInBackground(ctx)
                         CandidatePreferCache.currentCache()
@@ -2625,7 +2654,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         Action.CandidatesReady(
                             requestId,
                             withPhrasePrefix(
-                                supplementedCandidates(ordered, 0, filteredMsg.total, rareSyllables)
+                                supplementedCandidates(ordered, 0, filteredMsg.total, rareSpellings, rareFirstRawInput)
                                     ?: EngineMessage.Candidates(ordered, 0, 0, total = filteredMsg.total)
                             )
                         )
@@ -2637,11 +2666,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                                 if (savedOrder.isNullOrEmpty()) {
                                     supplementedCandidates(
                                         filteredMsg.list, filteredMsg.highlighted, filteredMsg.total,
-                                        rareSyllables,
+                                        rareSpellings, rareFirstRawInput,
                                     ) ?: filteredMsg
                                 } else {
                                     val ordered = applySavedCandidateOrder(filteredMsg.list, savedOrder)
-                                    supplementedCandidates(ordered, 0, filteredMsg.total, rareSyllables)
+                                    supplementedCandidates(ordered, 0, filteredMsg.total, rareSpellings, rareFirstRawInput)
                                         ?: EngineMessage.Candidates(ordered, 0, 0, total = filteredMsg.total)
                                 }
                             )
@@ -2663,20 +2692,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 径与旧行为一致）；只有确实插入新项时 total +1，移位时表长不变、
      * 总数不变（否则 hasMore 恒真，面板多发一次分页请求），未知总数
      *（-1）保持；高亮下标随插入／移位重映射。音节由调用方在 restoreCandidates 内
-     * 经 awaitJob 取齐传入（compositionCached 只在 RimeApi 作用域内
-     * 可读，普通函数里直接读编译不过）；迟到批次由 CandidatesReady
-     * 的 requestId 门控丢弃。
+     * 随候选消息的 composition 快照传入（转换器在同批组字消息转换时暂存）；
+     * 迟到批次由 CandidatesReady 的 requestId 门控丢弃。
      */
     private fun supplementedCandidates(
         list: List<EngineMessage.Candidate>,
         highlighted: Int,
         total: Int,
-        syllables: List<SyllableProto>,
+        spellings: List<String>,
+        firstRawInput: String,
     ): EngineMessage.Candidates? {
         val outcome = RareCharPolicy.applySupplement(
             list,
-            syllables.map { it.spelling },
-            syllables.firstOrNull()?.rawInput.orEmpty(),
+            spellings,
+            firstRawInput,
             enabled = true,
             isDeleted = DeletedWordsStore::isDeleted,
         )

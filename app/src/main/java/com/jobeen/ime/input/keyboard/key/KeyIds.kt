@@ -115,6 +115,73 @@ object KeyIds {
         )
     }
 
+    object T14 {
+        const val T14_KEY_1 = "T14_KEY_1"
+        const val T14_KEY_2 = "T14_KEY_2"
+        const val T14_KEY_3 = "T14_KEY_3"
+        const val T14_KEY_4 = "T14_KEY_4"
+        const val T14_KEY_5 = "T14_KEY_5"
+        const val T14_KEY_6 = "T14_KEY_6"
+        const val T14_KEY_7 = "T14_KEY_7"
+        const val T14_KEY_8 = "T14_KEY_8"
+        const val T14_KEY_9 = "T14_KEY_9"
+        const val T14_KEY_10 = "T14_KEY_10"
+        const val T14_KEY_11 = "T14_KEY_11"
+        const val T14_KEY_12 = "T14_KEY_12"
+        const val T14_KEY_13 = "T14_KEY_13"
+        const val T14_KEY_14 = "T14_KEY_14"
+        const val T14_DELETE = "T14_DELETE"
+        const val T14_NEWLINE = "T14_NEWLINE"
+        const val T14_ENTER = "T14_ENTER"
+        const val T14_LAYOUT_NUMBER = "T14_LAYOUT_NUMBER"
+        const val T14_PERIOD = "T14_PERIOD"
+        const val T14_SPACE = "T14_SPACE"
+        const val T14_SCHEMA = "T14_SCHEMA"
+
+        val ALL: Set<String> = setOf(
+            T14_KEY_1, T14_KEY_2, T14_KEY_3, T14_KEY_4, T14_KEY_5,
+            T14_KEY_6, T14_KEY_7, T14_KEY_8, T14_KEY_9, T14_KEY_10,
+            T14_KEY_11, T14_KEY_12, T14_KEY_13, T14_KEY_14,
+            T14_DELETE, T14_NEWLINE, T14_ENTER, T14_LAYOUT_NUMBER, T14_PERIOD, T14_SPACE, T14_SCHEMA,
+        )
+    }
+
+    object T18 {
+        const val T18_KEY_1 = "T18_KEY_1"
+        const val T18_KEY_2 = "T18_KEY_2"
+        const val T18_KEY_3 = "T18_KEY_3"
+        const val T18_KEY_4 = "T18_KEY_4"
+        const val T18_KEY_5 = "T18_KEY_5"
+        const val T18_KEY_6 = "T18_KEY_6"
+        const val T18_KEY_7 = "T18_KEY_7"
+        const val T18_KEY_8 = "T18_KEY_8"
+        const val T18_KEY_9 = "T18_KEY_9"
+        const val T18_KEY_10 = "T18_KEY_10"
+        const val T18_KEY_11 = "T18_KEY_11"
+        const val T18_KEY_12 = "T18_KEY_12"
+        const val T18_KEY_13 = "T18_KEY_13"
+        const val T18_KEY_14 = "T18_KEY_14"
+        const val T18_KEY_15 = "T18_KEY_15"
+        const val T18_KEY_16 = "T18_KEY_16"
+        const val T18_KEY_17 = "T18_KEY_17"
+        const val T18_KEY_18 = "T18_KEY_18"
+        const val T18_DELETE = "T18_DELETE"
+        const val T18_NEWLINE = "T18_NEWLINE"
+        const val T18_ENTER = "T18_ENTER"
+        const val T18_LAYOUT_NUMBER = "T18_LAYOUT_NUMBER"
+        const val T18_PERIOD = "T18_PERIOD"
+        const val T18_SPACE = "T18_SPACE"
+        const val T18_SCHEMA = "T18_SCHEMA"
+
+        val ALL: Set<String> = setOf(
+            T18_KEY_1, T18_KEY_2, T18_KEY_3, T18_KEY_4, T18_KEY_5,
+            T18_KEY_6, T18_KEY_7, T18_KEY_8, T18_KEY_9, T18_KEY_10,
+            T18_KEY_11, T18_KEY_12, T18_KEY_13, T18_KEY_14, T18_KEY_15,
+            T18_KEY_16, T18_KEY_17, T18_KEY_18,
+            T18_DELETE, T18_NEWLINE, T18_ENTER, T18_LAYOUT_NUMBER, T18_PERIOD, T18_SPACE, T18_SCHEMA,
+        )
+    }
+
     object Number {
         const val NUM_KEY_1 = "NUM_KEY_1"
         const val NUM_KEY_2 = "NUM_KEY_2"
@@ -185,8 +252,8 @@ object KeyIds {
         val ALL: Set<String> = setOf(EMOJI_RETURN) + CATS
     }
 
-    /** 全部可覆写键 ID（四布局）。 */
-    val OVERRIDABLE: Set<String> = Qwerty.ALL + T9.ALL + T15.ALL + Number.ALL
+    /** 全部可覆写键 ID（六布局）。 */
+    val OVERRIDABLE: Set<String> = Qwerty.ALL + T9.ALL + T15.ALL + T14.ALL + T18.ALL + Number.ALL
 
     /** 全部功能锚点 ID（只登记不覆写）。 */
     val ANCHORS: Set<String> = Symbol.ALL + Emoji.ALL

@@ -18,6 +18,7 @@ import com.jobeen.ime.engine.rime.data.userdict.RemoteTransferKind
 import com.jobeen.ime.engine.rime.data.userdict.RemoteTransferService
 import com.jobeen.ime.engine.rime.data.userdict.RemoteTransferStatus
 import com.jobeen.ime.engine.rime.data.userdict.UserDictManager
+import com.jobeen.ime.engine.rime.data.userdict.UserDictMergeSafety
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.PeriodicSyncPrefs
 import com.jobeen.ime.engine.rime.data.userdict.PeriodicSyncScheduler
@@ -33,6 +34,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 用户词典：手动导出/导入 + WebDAV 同步。
@@ -120,6 +124,7 @@ class UserDictActivity : ImeActivity() {
                     RemoteTransferKind.DOWNLOAD -> {
                         uiState.lastDownload = UserDictPrefs.lastDownloadTime
                         if (done.status == RemoteTransferStatus.SUCCESS) {
+                            refreshBackupInfo()
                             val count = done.count ?: 0
                             ToastUtil.showToast(
                                 if (count == 0) {
@@ -189,6 +194,7 @@ class UserDictActivity : ImeActivity() {
                 )
             },
             onDismissDeletedWords = { uiState.deletedWords = null },
+            onRestoreBeforeMerge = { doRestoreBeforeMerge() },
             onOpenWordCreation = {
                 startActivity(
                     android.content.Intent(
@@ -228,6 +234,7 @@ class UserDictActivity : ImeActivity() {
         }
         // 后台任务可能在外跑过：回来时刷新上次同步显示
         refreshPeriodicSyncState()
+        refreshBackupInfo()
     }
 
     /** 后台定期同步状态 → 界面状态（开关／间隔／上次结果） */
@@ -236,6 +243,96 @@ class UserDictActivity : ImeActivity() {
         uiState.periodicIntervalHours = PeriodicSyncPrefs.intervalHours
         uiState.lastPeriodicSync = PeriodicSyncPrefs.lastSyncTime
         uiState.lastPeriodicSyncOk = PeriodicSyncPrefs.lastSyncOk
+    }
+
+    /**
+     * 合并前备份信息 → 界面状态（恢复入口的副标题）：无备份时为 null，
+     * 恢复行显示“暂无合并前备份”且不可点。读备份是纯文件 IO，不碰引擎。
+     */
+    private fun refreshBackupInfo() {
+        val dict = selectedDict() ?: run {
+            uiState.backupInfo = null
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val snapshot = UserDictMergeSafety.readBackupMeta(filesDir, dict)
+            withContext(Dispatchers.Main) {
+                // 切词典后才回来的旧结果不覆盖当前词典的显示。
+                if (selectedDict() != dict) return@withContext
+                uiState.backupInfo = snapshot?.let {
+                    val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                        .format(Date(it.createdAtMs))
+                    getString(
+                        R.string.user_dict_backup_info,
+                        time,
+                        it.entries.size,
+                        it.sourceLabel,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 恢复到合并前备份（用户在确认对话框里点过“恢复”才到这里）：
+     * 按 before-merge.json 把合并后新增的词删掉、被抬高的权重恢复。
+     * 删除标记行只在这条恢复流程内部产生。
+     */
+    private fun doRestoreBeforeMerge() {
+        val dict = selectedDict() ?: return
+        setBusy(getString(R.string.user_dict_restoring_backup))
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val s = session
+                    ?: throw IllegalStateException("Rime session not established")
+                val result = UserDictMergeSafety.restoreBeforeMerge(
+                    dictName = dict,
+                    filesDir = filesDir,
+                    cacheDir = cacheDir,
+                    exportCurrent = { tmp ->
+                        s.runOnReady { exportUserDictLive(dict, tmp.absolutePath) }
+                    },
+                    importFile = { file ->
+                        s.runOnReady {
+                            UserDictManager.importUserDictInChunks(file) { chunk ->
+                                importUserDictLive(dict, chunk.absolutePath)
+                            }
+                        }
+                    },
+                )
+                withContext(Dispatchers.Main) {
+                    setIdle()
+                    refreshBackupInfo()
+                    result.onSuccess { report ->
+                        ToastUtil.showToast(
+                            if (report.removed == 0 && report.restored == 0) {
+                                getString(R.string.user_dict_restore_noop)
+                            } else {
+                                getString(
+                                    R.string.user_dict_restore_done,
+                                    report.removed,
+                                    report.restored,
+                                )
+                            },
+                        )
+                    }.onFailure { e ->
+                        showNotice(
+                            getString(R.string.user_dict_op_failed_title),
+                            e.message ?: getString(R.string.user_dict_restore_failed),
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "Restore before-merge backup failed")
+                withContext(Dispatchers.Main) {
+                    setIdle()
+                    showNotice(
+                        getString(R.string.user_dict_op_failed_title),
+                        getString(R.string.user_dict_restore_failed),
+                    )
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -277,6 +374,7 @@ class UserDictActivity : ImeActivity() {
                     uiState.dicts = dicts
                     uiState.selectedDict = dicts.firstOrNull()
                 }
+                refreshBackupInfo()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // 被新一次加载取代的旧加载：不置失败态、不弹提示。
                 throw e
@@ -342,19 +440,36 @@ class UserDictActivity : ImeActivity() {
                 val tempFile = contentResolver.openInputStream(uri)?.use { input ->
                     UserDictManager.stageImportFile(input, "import-$dict.txt").getOrThrow()
                 } ?: throw IllegalStateException("无法读取文件")
-                // 经引擎线程串行导入，不与引擎查词/学词并发访问同一个 LevelDB；
-                // 大文件分批导入，避免整段独占引擎线程导致导入期间按键卡顿
+                // 安全合并（UserDictMergeSafety）：整批先校验，不合格整批
+                // 不写并在对话框里说明哪一批、为什么；合格才导出当前词库
+                // 存 before-merge.json 安全副本、批内同词条取较大权重去重
+                // 后再导入。经引擎线程串行导入，不与引擎查词/学词并发
+                // 访问同一个 LevelDB；大文件分批导入，避免整段独占引擎
+                // 线程导致导入期间按键卡顿
                 val count = try {
-                    s.runOnReady {
-                        UserDictManager.importUserDictInChunks(tempFile) { chunk ->
-                            importUserDictLive(dict, chunk.absolutePath)
-                        }
-                    }
+                    UserDictMergeSafety.mergeValidatedBatch(
+                        dictName = dict,
+                        batchFile = tempFile,
+                        batchLabel = tempFile.name,
+                        filesDir = filesDir,
+                        cacheDir = cacheDir,
+                        exportCurrent = { tmp ->
+                            s.runOnReady { exportUserDictLive(dict, tmp.absolutePath) }
+                        },
+                        importFile = { file ->
+                            s.runOnReady {
+                                UserDictManager.importUserDictInChunks(file) { chunk ->
+                                    importUserDictLive(dict, chunk.absolutePath)
+                                }
+                            }
+                        },
+                    )
                 } finally {
                     tempFile.delete()
                 }
                 withContext(Dispatchers.Main) {
                     setIdle()
+                    refreshBackupInfo()
                     when {
                         count < 0 -> {
                             Timber.w("Import user dict failed: native returned $count")
@@ -363,6 +478,17 @@ class UserDictActivity : ImeActivity() {
                         count == 0 -> ToastUtil.showToast(getString(R.string.user_dict_no_words_in_file))
                         else -> ToastUtil.showToast(getString(R.string.user_dict_imported_count, count))
                     }
+                }
+            } catch (e: UserDictMergeSafety.UserDictMergeException) {
+                // 校验/备份/导入中止：message 已是给用户看的整批说明，
+                // 用对话框原样展示（哪一批、为什么不合格），不只弹“导入失败”。
+                Timber.w(e, "Import user dict rejected")
+                withContext(Dispatchers.Main) {
+                    setIdle()
+                    showNotice(
+                        getString(R.string.user_dict_merge_invalid_title),
+                        e.message ?: getString(R.string.import_failed),
+                    )
                 }
             } catch (e: Exception) {
                 Timber.w(e, "Import user dict failed")

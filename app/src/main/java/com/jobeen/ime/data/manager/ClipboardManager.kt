@@ -238,6 +238,8 @@ object ClipboardManager {
         val groupId: Long = 0,
         /** 收藏（WO52 5.3）：与置顶并存 */
         val isFavorite: Boolean = false,
+        /** 行 id（clipboard_records.id）：deep link 定位用，默认 0＝未知 */
+        val id: Long = 0L,
     )
 
     /**
@@ -254,7 +256,7 @@ object ClipboardManager {
         return db(context) { db ->
             val cutoff = System.currentTimeMillis() - getRetentionDays(context) * 86400000L
             db.clipboardDao().getAllActiveSince(cutoff)
-                .map { Entry(it.text, it.timestamp, it.cloud, it.pinned, it.groupId, it.isFavorite) }
+                .map { Entry(it.text, it.timestamp, it.cloud, it.pinned, it.groupId, it.isFavorite, it.id) }
         }
     }
 

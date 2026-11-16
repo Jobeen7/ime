@@ -16,6 +16,7 @@ import com.jobeen.ime.engine.rime.behavior.Selection
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.core.KeyMapping
 import com.jobeen.ime.engine.rime.core.RimeApi
+import com.jobeen.ime.skin.layout.CompactGrouping
 import timber.log.Timber
 
 class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
@@ -287,7 +288,42 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
     private fun possiblePinYinLocked(
         candidatePinYinType: String, currentInput: String, confirmedLen: Int
     ): List<CandidatePinYin> {
-        if (inputStringQueue.isEmpty()) return emptyList()
+        val (sequence, position) = sequenceAndPosition(currentInput, confirmedLen) ?: return emptyList()
+        return toCandidatePinYins(
+            sequence, position,
+            PinYinUtil.possibleCombinations(candidatePinYinType, sequence),
+        )
+    }
+
+    /**
+     * 紧凑键盘（14/18 键）侧栏拼音：与 [possiblePinYin] 同构，只换展开
+     * 函数——T14/T18 键按首字母进组字（compactAlphabetKey），队列里
+     * 是首字母串，[PinYinUtil.possibleCompactCombinations] 按当前
+     * 分组（group.code＝组首字母大写）展开；native t9PinyinList 是
+     * 9 键分组，不参与（引擎侧快照里 compactGrouping 非空时 t9ListRaw
+     * 为 null）。分词修正／坐标／raw 配对与 T9 同口径。
+     */
+    fun possibleCompactPinYin(
+        grouping: CompactGrouping, currentInput: String, confirmedLen: Int
+    ): List<CandidatePinYin> =
+        synchronized(queueLock) { possibleCompactPinYinLocked(grouping, currentInput, confirmedLen) }
+
+    private fun possibleCompactPinYinLocked(
+        grouping: CompactGrouping, currentInput: String, confirmedLen: Int
+    ): List<CandidatePinYin> {
+        val (sequence, position) = sequenceAndPosition(currentInput, confirmedLen) ?: return emptyList()
+        return toCandidatePinYins(
+            sequence, position,
+            PinYinUtil.possibleCompactCombinations(grouping, sequence),
+        )
+    }
+
+    /**
+     * 共享前半段：手动选择拼音插入分隔符后修正已确认长度，再定位
+     * 下一个空闲输入位置并取该段输入串。返回 null 表示无可展开段。
+     */
+    private fun sequenceAndPosition(currentInput: String, confirmedLen: Int): Pair<String, Int>? {
+        if (inputStringQueue.isEmpty()) return null
         // 因为手动选择拼音插入分隔符的缘故，此处需要先修正已确认的内容长度
         var len = confirmedLen
         var index = 0
@@ -303,9 +339,16 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
             }
         }
         val position = nextSequencePosition(len)
-        if (position < 0) return emptyList()
+        if (position < 0) return null
         val sequence = inputStringQueue.joinToString("").substring(position)
-        return PinYinUtil.possibleCombinations(candidatePinYinType, sequence).map { pinYin ->
+        return sequence to position
+    }
+
+    /** 共享后半段：展开出的拼音串配对队列坐标与 raw（分词标记跟随）。 */
+    private fun toCandidatePinYins(
+        sequence: String, position: Int, pinYins: Array<String>
+    ): List<CandidatePinYin> {
+        return pinYins.map { pinYin ->
             var raw = sequence.substring(0, pinYin.length)
             // 如果候选拼音以分词标记结束，必须把分词标记加入 raw
             if (segmentKeyChar == sequence.getOrNull(pinYin.length)) {

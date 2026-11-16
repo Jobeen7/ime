@@ -135,11 +135,14 @@ class SkinMiniPreviewTest {
     fun builtinRowsUseRealFactoryGeometry() {
         // 出厂 buildLayout 的真实行/键数（与各键盘实现逐项对过）：
         // 九宫格 5/4/4/4（含侧栏），26 键 10/9/9/5，十五键 7/6/6/5
-        // （首行含侧栏键：侧栏 + 5 字母键 + 删除键），数字 5/4/4/7。
+        // （首行含侧栏键：侧栏 + 5 字母键 + 删除键），十四键 6/6/6/4，
+        // 十八键 7/7/8/4，数字 5/4/4/7。
         val expected = mapOf(
             BuiltinPreviewLayout.T9 to listOf(5, 4, 4, 4),
             BuiltinPreviewLayout.QWERTY to listOf(10, 9, 9, 5),
             BuiltinPreviewLayout.T15 to listOf(7, 6, 6, 5),
+            BuiltinPreviewLayout.T14 to listOf(6, 6, 6, 4),
+            BuiltinPreviewLayout.T18 to listOf(7, 7, 8, 4),
             BuiltinPreviewLayout.NUMBER to listOf(5, 4, 4, 7),
         )
         for ((layout, sizes) in expected) {

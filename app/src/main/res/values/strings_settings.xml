@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设置页统一风格新增文案（勿改 strings.xml）：弹窗滑块三钮。 -->
+<resources>
+    <string name="settings_slider_default">默认值</string>
+    <string name="settings_slider_confirm">确定</string>
+</resources>

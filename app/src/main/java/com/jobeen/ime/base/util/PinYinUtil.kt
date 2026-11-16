@@ -1,5 +1,8 @@
 package com.jobeen.ime.base.util
 
+import com.jobeen.ime.skin.layout.CompactGrouping
+import com.jobeen.ime.skin.layout.CompactLayoutGenerator
+
 object PinYinUtil {
     const val CandidateKindT9 = "T9PinYin"
     const val CandidateKindFull = "PinYin"
@@ -544,6 +547,47 @@ object PinYinUtil {
             else -> emptyArray()
         }
     }
+
+    /**
+     * 紧凑布局的组合消歧（与 [possibleT9Combinations] 同算法、同一音节表
+     * [allPinyin]，只换分组）：输入串逐字经 [CompactGrouping.codeForInput]
+     * 归一化为组码、取前 6 码、按长度从长到短查前缀；无拼写的单字母
+     * i/u/v 不产出。T9 分组走本函数的结果与 [possibleT9Combinations]
+     * 逐项一致（CompactPinyinExpanderTest 锁死），旧 T9 路径本身不动。
+     */
+    fun possibleCompactCombinations(
+        grouping: CompactGrouping,
+        sequence: String?,
+    ): Array<String> {
+        if (sequence.isNullOrBlank()) return emptyArray()
+        val mappedSequence = buildString(sequence.length) {
+            sequence.forEach { c ->
+                append(grouping.codeForInput(c) ?: c)
+            }
+        }
+        val numString = mappedSequence.take(6)
+        if (numString.isEmpty()) return emptyArray()
+        val compactMap: Map<String, List<String>> = buildMap {
+            allPinyin.groupBy { pinyin ->
+                buildString(pinyin.length) {
+                    pinyin.forEach { c -> append(grouping.codeForInput(c) ?: c) }
+                }
+            }.forEach { (key, value) -> put(key, value) }
+        }
+        val result = ArrayList<String>()
+        for (length in numString.length downTo 1) {
+            compactMap[numString.substring(0, length)]?.let { matches ->
+                result.addAll(
+                    matches.filterNot { it.length == 1 && it in NO_SPELLING_SINGLE_LETTERS },
+                )
+            }
+        }
+        return result.toTypedArray()
+    }
+
+    /** 9 键分组（回归锚点：与 [possibleT9Combinations] 的分组同值）。 */
+    fun t9Grouping(): CompactGrouping =
+        CompactLayoutGenerator.groupingFor(9) ?: error("unreachable T9 grouping")
 
     private fun possibleT9Combinations(sequence: String): Array<String> {
         val mappedSequence = buildString(sequence.length) {

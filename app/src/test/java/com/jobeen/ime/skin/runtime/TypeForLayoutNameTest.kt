@@ -65,6 +65,14 @@ class TypeForLayoutNameTest {
             CustomLayoutRuntime.typeForLayoutName(snap, "T15"),
         )
         assertEquals(
+            KeyboardTypes.PINYIN,
+            CustomLayoutRuntime.typeForLayoutName(snap, "T14"),
+        )
+        assertEquals(
+            KeyboardTypes.PINYIN,
+            CustomLayoutRuntime.typeForLayoutName(snap, "T18"),
+        )
+        assertEquals(
             KeyboardTypes.SYMBOLIC,
             CustomLayoutRuntime.typeForLayoutName(snap, "Symbol"),
         )

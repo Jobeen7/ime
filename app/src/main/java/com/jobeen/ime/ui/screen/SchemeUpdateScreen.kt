@@ -316,7 +316,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                         grammarLanguage != null -> Button(
                             onClick = { downloadGrammar(grammarLanguage!!) },
                             enabled = !updating && !updatePending && !deployBusy,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(20.dp),
                         ) {
                             Text(stringResource(R.string.download), fontSize = rowSubFontSize)
                         }
@@ -447,7 +447,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                         )
                         Button(
                             onClick = { checkWanxiangUpdate() },
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(20.dp),
                         ) {
                             Text(
                                 stringResource(R.string.schema_update_check),
@@ -464,7 +464,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     checkingUpdate -> Button(
                         onClick = {},
                         enabled = false,
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(20.dp),
                     ) {
                         Text(
                             stringResource(R.string.schema_update_checking),
@@ -475,7 +475,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     info?.hasUpdate == true -> Button(
                         onClick = { startWanxiangUpdate(info) },
                         enabled = !grammarDownloading && !grammarPending && !deployBusy,
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(20.dp),
                     ) {
                         Text(
                             stringResource(R.string.schema_update_start),
@@ -486,7 +486,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     updateSource !is WanxiangUpdateManager.UpdateSource.Wanxiang -> {}
                     else -> Button(
                         onClick = { checkWanxiangUpdate() },
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(20.dp),
                     ) {
                         Text(
                             stringResource(R.string.schema_update_check),

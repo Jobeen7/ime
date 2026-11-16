@@ -13,7 +13,9 @@ import androidx.compose.ui.unit.dp
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
+import com.jobeen.ime.input.keyboard.impl.T14Keyboard
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
+import com.jobeen.ime.input.keyboard.impl.T18Keyboard
 import com.jobeen.ime.input.keyboard.impl.T9Keyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
@@ -105,6 +107,8 @@ enum class BuiltinPreviewLayout(val label: String) {
     T9("九宫格"),
     QWERTY("26键"),
     T15("十五键"),
+    T14("十四键"),
+    T18("十八键"),
     NUMBER("数字"),
 }
 
@@ -113,6 +117,8 @@ fun builtinPreviewRows(layout: BuiltinPreviewLayout): List<List<MiniPreviewKey>>
         BuiltinPreviewLayout.T9 -> T9Keyboard.buildLayout(Variant.Normal)
         BuiltinPreviewLayout.QWERTY -> QwertyKeyboard.buildLayout(Variant.Normal)
         BuiltinPreviewLayout.T15 -> T15Keyboard.buildLayout(Variant.Normal)
+        BuiltinPreviewLayout.T14 -> T14Keyboard.buildLayout(Variant.Normal)
+        BuiltinPreviewLayout.T18 -> T18Keyboard.buildLayout(Variant.Normal)
         BuiltinPreviewLayout.NUMBER -> NumberKeyboard.buildLayout(Variant.Normal)
     }
     return layoutPreviewRows(base)

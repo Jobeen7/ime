@@ -3,7 +3,9 @@ package com.jobeen.ime.skin.runtime
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
+import com.jobeen.ime.input.keyboard.impl.T14Keyboard
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
+import com.jobeen.ime.input.keyboard.impl.T18Keyboard
 import com.jobeen.ime.input.keyboard.impl.T9Keyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
@@ -110,7 +112,7 @@ class LayoutMatrixTest {
     fun landscapeOnlyBindingRedirectsMainSlotOnlyInLandscape() {
         val snap = snapshot(landscape = resolved("lay-ls", "l"))
         // 竖屏：无竖屏绑定，主键盘名恒原样（内置布局照常）
-        for (main in listOf("Qwerty", "T9", "T15")) {
+        for (main in listOf("Qwerty", "T9", "T14", "T15", "T18")) {
             assertEquals(
                 main,
                 CustomLayoutRuntime.resolveSwitchTarget(snap, main, "Qwerty"),
@@ -124,7 +126,7 @@ class LayoutMatrixTest {
                 snap, "Qwerty", "Qwerty", landscape = true,
             ),
         )
-        for (main in listOf("T9", "T15")) {
+        for (main in listOf("T9", "T14", "T15", "T18")) {
             assertEquals(
                 "custom:lay-ls",
                 CustomLayoutRuntime.resolveSwitchTarget(
@@ -285,7 +287,9 @@ class LayoutMatrixTest {
         val layouts = listOf(
             "Qwerty" to QwertyKeyboard.buildLayout(Variant.Accent),
             "T9" to T9Keyboard.buildLayout(Variant.Accent),
+            "T14" to T14Keyboard.buildLayout(Variant.Accent),
             "T15" to T15Keyboard.buildLayout(Variant.Accent),
+            "T18" to T18Keyboard.buildLayout(Variant.Accent),
             "Number" to NumberKeyboard.buildLayout(Variant.Accent),
         )
         for ((name, layout) in layouts) {

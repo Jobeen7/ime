@@ -11,6 +11,9 @@ import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 /**
  * 出厂 26 键字母键（.19 原样，施工单 4：默认分支恢复此口径）：
  * 小写显示、副标为标点、字号 22；长按直接提交标点。
+ *
+ * [hintText]（双拼韵母提示）：非空时只换副标显示（角标改韵母），
+ * 长按提交仍是 [punctuation]，点按动作一字不动。
  */
 fun alphabetKey(
     character: String,
@@ -18,11 +21,12 @@ fun alphabetKey(
     altTextTranslationY: Int = 2,
     mainTextTranslationY: Int = -2,
     id: String? = null,
+    hintText: String? = null,
 ) = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.AltText(
         displayText = character,
-        altText = punctuation,
+        altText = hintText ?: punctuation,
         textSize = 22f,
         altTextTranslationY = altTextTranslationY,
         mainTextTranslationY = mainTextTranslationY,
@@ -31,6 +35,31 @@ fun alphabetKey(
         KeyDef.Behavior.Press(KeyboardAction.KeySequenceAction(character)),
         KeyDef.Behavior.LongPress(KeyboardAction.CommitAction(punctuation))
     )
+)
+
+/**
+ * 紧凑布局字母键（14/18 键，CompactLayoutGenerator 的分组）：
+ * 主显为整组合并字母（如 "qw"），副标为长按发的字母（与 T15
+ * 的“副标＝长按输出”同口径）；点按发首字母、长按发次字母
+ * （KeySequenceAction，两者都进组字，与直接提交的 CommitAction
+ * 不同；单字母组长按同首字母）。26 个字母全部可达。
+ */
+fun compactAlphabetKey(
+    letters: String, percentWidth: Float = 0.134f, id: String? = null,
+) = KeyDef(
+    id = id,
+    appearance = KeyDef.Appearance.AltText(
+        displayText = letters,
+        altText = if (letters.length > 1) letters[1].toString() else letters,
+        textSize = 18f,
+        percentWidth = percentWidth,
+        mainTextTranslationY = 4,
+        altTextTranslationY = 4
+    ),
+    behaviors = setOf(
+        KeyDef.Behavior.Press(KeyboardAction.KeySequenceAction(letters[0].toString())),
+        KeyDef.Behavior.LongPress(KeyboardAction.KeySequenceAction(letters.getOrElse(1) { letters[0] }.toString())),
+    ),
 )
 
 fun mixedAlphabetKey(
@@ -173,7 +202,11 @@ fun spaceKey(percentWidth: Float = 0.23333f, id: String? = null): KeyDef = KeyDe
     ),
 )
 
-fun peroidKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
+fun peroidKey(
+    percentWidth: Float,
+    id: String? = null,
+    popup: KeyDef.Popup.Keyboard? = null,
+): KeyDef = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.ImageText(
         displayText = ".",
@@ -183,10 +216,18 @@ fun peroidKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
         variant = Variant.Alternative,
         viewId = KeyView.button_peroid
     ),
-    behaviors = setOf(
+    behaviors = setOfNotNull(
         KeyDef.Behavior.Press(KeyboardAction.KeySequenceAction(".")),
-        KeyDef.Behavior.LongPress(KeyboardAction.LayoutSwitchAction(SymbolKeyboard.NAME))
+        // 弹窗在位时不另挂长按（与 layoutSwitchKey 同口径：弹窗接管
+        // 长按槽；T9 句号键挂快捷符号弹窗时，长按进符号板由 ?123→
+        // 数字键符号键接替，见 T9Keyboard）。
+        if (popup == null) {
+            KeyDef.Behavior.LongPress(KeyboardAction.LayoutSwitchAction(SymbolKeyboard.NAME))
+        } else {
+            null
+        },
     ),
+    popups = popup?.let { arrayOf(it) },
 )
 
 fun schemaSwitchKey(

@@ -208,6 +208,12 @@ object SkinSnapshotBuilder {
         for (override in validated.keyOverrides.values) {
             override.image?.let { imageReferenced += it }
             override.pressedImage?.let { imageReferenced += it }
+            // 精灵图对象形态（imageRef/pressedImageRef）：与字符串形态
+            // 互斥、接纳口径相同（SkinKeyModel.imageRef 注释）；此前只收
+            // 字符串形态，对象形态的 sheet 从没进 imageAssets，装配期
+            // 一律 key_image_fallback（Bin 皮肤空格键 arsenal-cannon）。
+            override.imageRef?.file?.let { imageReferenced += it }
+            override.pressedImageRef?.file?.let { imageReferenced += it }
             override.foregroundLayers?.forEach { layer ->
                 layer.image?.let { imageReferenced += it }
             }

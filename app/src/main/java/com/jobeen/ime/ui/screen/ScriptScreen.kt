@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -19,7 +20,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Switch
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,10 +50,11 @@ import com.jobeen.ime.data.database.ScriptVariable
 import com.jobeen.ime.data.script.ScriptPrefs
 import com.jobeen.ime.data.script.ScriptRepository
 import com.jobeen.ime.script.AndroidScriptHost
+import com.jobeen.ime.script.IsolatedScriptRunner
 import com.jobeen.ime.script.ScriptInputs
 import com.jobeen.ime.script.ScriptRunException
 import com.jobeen.ime.script.ScriptRunResult
-import com.jobeen.ime.script.ScriptRunner
+import com.jobeen.ime.script.ScriptVariableInjection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -66,10 +68,11 @@ import kotlinx.coroutines.withContext
  * 411dp 排布：行标题＋副标题（标题＋一行说明＋右侧 Switch 的家规；
  * 开关行与列表行均为单行标题＋省略副标题，无横向溢出）。
  *
- * 已知范围：变量只做管理页 CRUD（增删改查），不注入脚本——静态证据
- * 未确认 ScriptVariable 是否以 $key 全局变量注入脚本（见回报）。
- * resultInsertState／closeWindowState 只原值透传，不设开关（语义只
- * 确认到布尔，未确认 UI 文案与默认值口径）。
+ * 已知范围：resultInsertState／closeWindowState 只原值透传，不设开关
+ * （语义只确认到布尔，未确认 UI 文案与默认值口径）。
+ * 变量注入：库里的 ScriptVariable 在试跑时以 `$key` 全局注入脚本
+ * （敏感变量不注入，见 ScriptVariableInjection）；执行走隔离进程
+ * （IsolatedScriptRunner），$http 须在脚本头部 `@connect` 声明域名。
  */
 @Composable
 fun ScriptScreen(
@@ -117,6 +120,7 @@ fun ScriptScreen(
         onBack = onBack,
     ) {
         OutlinedTextField(
+            shape = RoundedCornerShape(12.dp),
             value = query,
             onValueChange = { query = it },
             singleLine = true,
@@ -131,6 +135,7 @@ fun ScriptScreen(
                 modifier = Modifier.padding(vertical = 8.dp),
             )
             OutlinedTextField(
+                shape = RoundedCornerShape(12.dp),
                 value = prefix,
                 onValueChange = {
                     prefix = it
@@ -274,6 +279,11 @@ private fun ScriptVariablesSection(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    Text(
+        text = stringResource(R.string.script_variables_injected_hint),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
     Spacer(Modifier.height(8.dp))
     ScreenComponent.GroupCard {
         variables.forEach { variable ->
@@ -308,6 +318,7 @@ private fun ScriptVariablesSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedTextField(
+                shape = RoundedCornerShape(12.dp),
                 value = key,
                 onValueChange = { key = it },
                 label = { Text("key") },
@@ -316,6 +327,7 @@ private fun ScriptVariablesSection(
             )
             Spacer(Modifier.width(8.dp))
             OutlinedTextField(
+                shape = RoundedCornerShape(12.dp),
                 value = value,
                 onValueChange = { value = it },
                 label = { Text("value") },
@@ -323,7 +335,7 @@ private fun ScriptVariablesSection(
                 modifier = Modifier.weight(1f),
             )
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Checkbox(checked = isSecure, onCheckedChange = { isSecure = it })
+                Switch(checked = isSecure, onCheckedChange = { isSecure = it })
                 Text(
                     text = stringResource(R.string.sensitive_label),
                     style = MaterialTheme.typography.bodySmall,
@@ -356,7 +368,7 @@ private fun ScriptEditPage(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val runner = remember { ScriptRunner() }
+    val runner = remember { IsolatedScriptRunner(context) }
     // UI-2：编辑字段用 rememberSaveable(script?.id)——切另一条脚本时重置，不串草稿。
     var name by rememberSaveable(script?.id) { mutableStateOf(script?.name.orEmpty()) }
     var content by rememberSaveable(script?.id) { mutableStateOf(script?.content ?: ScriptSeeds.DEFAULT_NEW_SCRIPT_CONTENT) }
@@ -413,12 +425,21 @@ private fun ScriptEditPage(
         runJob = scope.launch {
             try {
                 val pasteboard = if (allowPasteboard) readClipboardText(context) else ""
+                // $key 注入：试跑时取库里的全部变量备好（敏感变量在准备
+                // 时剔除，不进隔离进程），随入参一起经 Binder 传进去。
+                val prepared = ScriptVariableInjection.prepare(
+                    repository.getVariables().map {
+                        ScriptVariableInjection.VariableEntry(it.key, it.value, it.isSecure)
+                    },
+                )
                 val result = runner.run(
                     source = content,
                     inputs = ScriptInputs(
                         searchText = runInput,
                         selectedText = "",
                         pasteboardContent = pasteboard,
+                        variables = prepared.values,
+                        skippedVariableLogLines = ScriptVariableInjection.skipLogLines(prepared),
                     ),
                     hostFactory = { logSink, onCompletion ->
                         AndroidScriptHost(
@@ -450,6 +471,7 @@ private fun ScriptEditPage(
         onBack = onBack,
     ) {
         OutlinedTextField(
+            shape = RoundedCornerShape(12.dp),
             value = name,
             onValueChange = { name = it },
             label = { Text(stringResource(R.string.script_name_hint)) },
@@ -458,6 +480,7 @@ private fun ScriptEditPage(
         )
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
+            shape = RoundedCornerShape(12.dp),
             value = content,
             onValueChange = { content = it },
             label = { Text(stringResource(R.string.script_content_hint)) },
@@ -514,6 +537,7 @@ private fun ScriptEditPage(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedTextField(
+                shape = RoundedCornerShape(12.dp),
                 value = newTagName,
                 onValueChange = { newTagName = it },
                 placeholder = { Text(stringResource(R.string.script_tags_hint)) },
@@ -541,6 +565,7 @@ private fun ScriptEditPage(
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
+            shape = RoundedCornerShape(12.dp),
             value = runInput,
             onValueChange = { runInput = it },
             label = { Text(stringResource(R.string.script_run_input_hint)) },

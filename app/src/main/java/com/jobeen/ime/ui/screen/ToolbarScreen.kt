@@ -1226,6 +1226,7 @@ private fun ToolbarCustomSlotRow(
         binding.action.valueRule == WhitelistAction.ValueRule.REQUIRED
     ) {
         OutlinedTextField(
+            shape = RoundedCornerShape(12.dp),
             value = binding.value ?: "",
             onValueChange = onValueChange,
             label = { Text(text = requiredValueHint(binding.action)) },
@@ -1358,6 +1359,7 @@ private fun ToolbarCustomFormDialog(
                 }
                 if (kind != CustomDisplayKind.IMAGE) {
                     OutlinedTextField(
+                        shape = RoundedCornerShape(12.dp),
                         value = display,
                         onValueChange = { display = it },
                         label = {
@@ -1401,6 +1403,7 @@ private fun ToolbarCustomFormDialog(
                 SliderRow(
                     title = stringResource(R.string.toolbar_icon_size),
                     value = iconSize,
+                    defaultValue = 24f,
                     valueLabel = stringResource(R.string.toolbar_dp_value, iconSize.toInt()),
                     range = ToolbarUserStore.MIN_ICON_DP.toFloat()..ToolbarUserStore.MAX_ICON_DP.toFloat(),
                     onValueChange = { iconSize = it },
@@ -1442,6 +1445,7 @@ private fun ToolbarCustomFormDialog(
                     SliderRow(
                         title = stringResource(R.string.toolbar_button_width),
                         value = width,
+                        defaultValue = 48f,
                         valueLabel = stringResource(R.string.toolbar_dp_value, width.toInt()),
                         range = ToolbarUserStore.MIN_WIDTH_DP.toFloat()..ToolbarUserStore.MAX_WIDTH_DP.toFloat(),
                         onValueChange = { width = it },
@@ -1541,6 +1545,7 @@ private fun ToolbarCustomFormDialog(
                         SliderRow(
                             title = stringResource(R.string.toolbar_font_size),
                             value = fontSp,
+                            defaultValue = 14f,
                             valueLabel = stringResource(R.string.toolbar_sp_value, fontSp.toInt()),
                             range = ToolbarUserStore.MIN_FONT_SP..ToolbarUserStore.MAX_FONT_SP,
                             onValueChange = { fontSizeSp = it },
@@ -1554,6 +1559,7 @@ private fun ToolbarCustomFormDialog(
                     SliderRow(
                         title = stringResource(R.string.toolbar_border_width),
                         value = borderWidthDp,
+                        defaultValue = 0f,
                         valueLabel = stringResource(R.string.toolbar_dp_value, borderWidthDp.toInt()),
                         range = ToolbarUserStore.MIN_BORDER_DP..ToolbarUserStore.MAX_BORDER_DP,
                         onValueChange = { v ->
@@ -1792,6 +1798,7 @@ private fun ToolbarToolbarFormDialog(
         body = {
             Column {
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = name,
                     onValueChange = { name = it },
                     label = { Text(text = stringResource(R.string.toolbar_toolbar_name)) },

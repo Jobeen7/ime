@@ -15,6 +15,17 @@ data class ScriptInputs(
     val selectedText: String = "",
     /** 剪贴板内容：仅当脚本 allowPasteboard 时传入，否则传 ""（调用方门控）。 */
     val pasteboardContent: String = "",
+    /**
+     * 已准备的 ScriptVariable（[ScriptVariableInjection.prepare] 的 values）：
+     * 每条按 `$key` 全局注入（eval 之前，与上面三项同一批进引擎）。
+     * 敏感变量调用方已在准备时剔除，永不出现在这里。
+     */
+    val variables: Map<String, String> = emptyMap(),
+    /**
+     * 被跳过的变量的日志行（[ScriptVariableInjection.skipLogLines]）：
+     * 运行器原样写进本次运行的日志列表（不阻断执行）。
+     */
+    val skippedVariableLogLines: List<String> = emptyList(),
 )
 
 /** 一次脚本运行的结果（output 列表，日志列表，耗时秒）。 */
@@ -95,6 +106,24 @@ class ScriptRunner {
                     engine.setGlobalString("\$searchText", inputs.searchText)
                     engine.setGlobalString("\$selectedText", inputs.selectedText)
                     engine.setGlobalString("\$pasteboardContent", inputs.pasteboardContent)
+                    // $key 注入：跳过行先进日志（调用方已准备好），再逐条
+                    // 注入；key 在此再验一次（跨进程传值不信任上游），非法
+                    // 的跳过记 log，不阻断脚本。
+                    inputs.skippedVariableLogLines.forEach { appendLog(logs, it) }
+                    for ((key, value) in inputs.variables) {
+                        if (!ScriptVariableInjection.isValidKey(key) ||
+                            key in ScriptVariableInjection.RESERVED_KEYS
+                        ) {
+                            val reason = if (!ScriptVariableInjection.isValidKey(key)) {
+                                ScriptVariableInjection.SkipReason.INVALID_KEY
+                            } else {
+                                ScriptVariableInjection.SkipReason.RESERVED_KEY
+                            }
+                            appendLog(logs, ScriptVariableInjection.skipLogLine(key, reason))
+                            continue
+                        }
+                        engine.setGlobalString("\$$key", value)
+                    }
                     engine.eval(source)?.let { throw ScriptRunException(it) }
                     if (!engine.isFunction("output")) {
                         throw ScriptRunException(ScriptFailure.NoOutputFunction)

@@ -19,8 +19,8 @@ import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 /**
  * 布局切换板（工具类型 layoutSwitch 的无绑定回退视图）：
  * 对端面板为 6 个拼音布局钮（9/14/17/18/26/27 键）；Jime
- * 的拼音主布局只有三档，故本板只列 9 键／15 键／26 键三钮，
- * 各钮按名切布局（LayoutSwitchAction，与既有布局键同口径）。
+ * 的拼音主布局只有五档，故本板只列 9 键／14 键／15 键／18 键／
+ * 26 键五钮，各钮按名切布局（LayoutSwitchAction，与既有布局键同口径）。
  * 皮肤为 layoutSwitch 绑定了自定义布局时不走本板——类型解析
  * 优先返回 custom:<布局 id>，由通用布局键盘渲染。
  */
@@ -62,12 +62,14 @@ class LayoutSwitchKeyboard(
             )
         }
 
-        /** 出厂行（纯函数）：单行三钮，行宽和恰为 1.0。 */
+        /** 出厂行（纯函数）：单行五钮，行宽和恰为 1.0。 */
         fun buildLayout(): List<List<KeyDef>> = listOf(
             listOf(
-                layoutButton("9键", T9Keyboard.NAME, 0.34f),
-                layoutButton("15键", T15Keyboard.NAME, 0.33f),
-                layoutButton("26键", QwertyKeyboard.NAME, 0.33f),
+                layoutButton("9键", T9Keyboard.NAME, 0.2f),
+                layoutButton("14键", T14Keyboard.NAME, 0.2f),
+                layoutButton("15键", T15Keyboard.NAME, 0.2f),
+                layoutButton("18键", T18Keyboard.NAME, 0.2f),
+                layoutButton("26键", QwertyKeyboard.NAME, 0.2f),
             ),
         )
 

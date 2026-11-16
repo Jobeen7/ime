@@ -131,4 +131,31 @@ class FloatingCandidatePositioningTest {
         assertEquals(FloatingCandidatePosition.BOTTOM_LEFT, FloatingCandidatePosition.parse("bottomLeft"))
         assertEquals(FloatingCandidatePosition.BOTTOM_RIGHT, FloatingCandidatePosition.parse("bottomRight"))
     }
+
+    @Test
+    fun staleCursorBelowKeyboard_neverPlacesBelowKeyboardTop_dot2() {
+        // .2：光标 stale（矩形落在键盘下方）时，夹取也不得把窗放到
+        // 键盘下方——窗底必须 ≤ 键盘顶。旧口径会给 y=1684（底 1884
+        // > 键盘顶 1800，窗压键盘）。
+        val pos = resolve(
+            FloatingCandidatePosition.CURSOR,
+            fallback = FloatingCandidatePosition.CURSOR,
+            cursorTop = 1900, cursorBottom = 1950,
+            windowHeight = 200,
+        )
+        assertTrue(pos.usedFallback)
+        assertEquals(1584, pos.y)
+        assertTrue(pos.y + 200 <= 1800)
+    }
+
+    @Test
+    fun windowTallerThanSpaceAboveKeyboard_clampsToScreenTop_dot2() {
+        // 窗高出键盘上方空间：夹取贴屏顶（y=0），不越过键盘顶。
+        val pos = resolve(
+            FloatingCandidatePosition.BOTTOM_LEFT,
+            windowHeight = 2000,
+        )
+        assertTrue(pos.usedFallback)
+        assertEquals(0, pos.y)
+    }
 }

@@ -11,6 +11,7 @@ import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
 import com.jobeen.ime.skin.runtime.SkinColorMode
+import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.panel.panelColorScheme
@@ -201,9 +202,19 @@ class FloatingCandidateWindow(
             MeasureSpec.makeMeasureSpec(maxHeight, MeasureSpec.AT_MOST),
         )
         container.layout(0, 0, widthPx, maxHeight)
-        // 离线排过后画布已有真实宽度，重算行布局再读行数。
-        grid.updateCandidates(lastList, lastRevision)
+        // 离线排过后画布已有真实宽度：无门重算行布局（重算的是窗
+        // 自身已存的最新表，不是新帧；首次 setCandidates 时宽度
+        // 为 0 导致行数算空，重算必须落地，.2 诊断机制 B）。
+        grid.refreshLayout()
         val rows = grid.contentRowCount().coerceIn(1, MAX_ROWS)
+        if (grid.contentRowCount() == 0 && lastList.isNotEmpty()) {
+            // 可观测性（.2 诊断 A/B 判据）：表非空但行数为 0——行
+            // 布局没算出来；与 candidate_grid 门日志对照定机制。
+            DiagLog.w(
+                "floating_candidate", "measure_height_empty_rows",
+                mapOf("size" to lastList.size, "lastRevision" to lastRevision),
+            )
+        }
         return rows * grid.naturalRowHeightPx() + pagingRowHeightPx()
     }
 
@@ -238,6 +249,11 @@ class FloatingCandidateWindow(
     }
 
     fun dismiss() {
+        // 会话边界：常驻网格的代次门复位——下一组字会话的首帧不再
+        // 被旧会话顶高的代次拦住（引擎重建后 requestId 从头计；
+        // .2 诊断机制 A）。调用方 dismissFloatingWindow 经 onDismissed
+        // 同样走到此处，系统解散亦覆盖。
+        grid.resetRevisionGate()
         popupWindow?.dismiss()
     }
 }

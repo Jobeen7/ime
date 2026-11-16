@@ -1,0 +1,4 @@
+<resources>
+    <!-- clipboard?id= 落点（WO52 4.2 遗留项）：id 指定的条目不在历史里时显示 -->
+    <string name="clipboard_entry_not_found">找不到该条剪贴板记录，可能已被删除或超出保留期。</string>
+</resources>

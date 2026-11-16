@@ -12,14 +12,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.jobeen.ime.ui.theme.LocalMonetCardColor
 import androidx.compose.material3.Text
@@ -251,7 +247,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnosti
         downloading = false
     }
 
-    /** 检查更新（顶部按钮用；行内逻辑与旧版一致）。 */
+    /** 检查更新（版本号文字点按触发；行内逻辑与旧版一致）。 */
     fun checkUpdate() {
         if (BuildConfig.DEBUG) {
             toast(msgDebugUnsupported)
@@ -335,7 +331,10 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnosti
                     Spacer(Modifier.height(10.dp))
                     Box(
                         modifier = Modifier
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .clickable(
+                                enabled = !checkingUpdate && !BuildConfig.DEBUG,
+                            ) { checkUpdate() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -348,7 +347,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnosti
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    // 顶部：简介行 + 检查更新按钮（上移）。
+                    // 顶部：简介行；版本号点按检查更新（2026-11-16 定，检查更新按钮已删）。
                     // logo 保持现有透明底（ic_about_logo 本身无底卡，不加实色底）。
                     Spacer(Modifier.height(12.dp))
                     Text(
@@ -359,35 +358,6 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnosti
                         modifier = Modifier.fillMaxWidth(),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
-                    Spacer(Modifier.height(16.dp))
-                    Button(
-                        onClick = { checkUpdate() },
-                        enabled = !checkingUpdate && !BuildConfig.DEBUG,
-                        shape = RoundedCornerShape(24.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        ),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                            horizontal = 20.dp,
-                            vertical = 10.dp,
-                        ),
-                    ) {
-                        Icon(
-                            Icons.Filled.Refresh,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = if (checkingUpdate) {
-                                stringResource(R.string.checking_update)
-                            } else {
-                                stringResource(R.string.check_update)
-                            },
-                            fontSize = rowSubFontSize,
-                        )
-                    }
                     if (BuildConfig.DEBUG) {
                         Spacer(Modifier.height(8.dp))
                         Text(
@@ -399,7 +369,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnosti
                 }
             }
 
-            // 查到新版后在行内内联展开（随检查更新按钮移到顶部，逻辑不变）：
+            // 查到新版后在行内内联展开（随版本号点按触发，逻辑不变）：
             // 一行版本信息 + 操作按钮，下载中时下方再出一行进度条。
             // 只有点「检查更新」才会走到这里。
             updateInfo?.let { info ->

@@ -113,6 +113,13 @@ class DeepLinkRouterTest {
         )
     }
 
+    @Test
+    fun `clipboard id param is passed through for the entry landing`() {
+        val target = resolve("jime://com.jobeen.ime/clipboard?id=7")
+        assertEquals("clipboard", target?.pageKey)
+        assertEquals("7", target?.params?.get("id"))
+    }
+
     // ---- 17 别名 ----
 
     @Test

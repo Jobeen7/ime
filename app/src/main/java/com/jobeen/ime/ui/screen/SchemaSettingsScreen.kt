@@ -1071,7 +1071,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(4.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -1099,7 +1099,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(12.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -1185,7 +1185,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 Button(
                     onClick = { submitDownloadForm() },
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.inverseSurface,
                         contentColor = MaterialTheme.colorScheme.inverseOnSurface,
@@ -1302,7 +1302,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     // 后下载——Header 从不持久化，故重下载必经表单）。
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(20.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = LocalMonetCardColor.current,
                         ),
@@ -1406,7 +1406,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             if (migrationError != null) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
                     ),
@@ -1556,7 +1556,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 // 高亮区分。
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -1721,7 +1721,7 @@ private fun SchemaManageContent(
             Button(
                 onClick = { onSave(draftEnabled.toList()) },
                 enabled = draftEnabled.isNotEmpty(),
-                shape = RoundedCornerShape(50),
+                shape = RoundedCornerShape(20.dp),
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp),
             ) {
                 Text(stringResource(R.string.schema_manage_save), fontSize = 14.sp)
@@ -1730,7 +1730,7 @@ private fun SchemaManageContent(
         Spacer(Modifier.height(4.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = LocalMonetCardColor.current,
             ),
@@ -1753,7 +1753,7 @@ private fun SchemaManageContent(
         Spacer(Modifier.height(4.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = LocalMonetCardColor.current,
             ),
@@ -2063,7 +2063,7 @@ private fun SchemeDirBrowserContent(
                 } else {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(20.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = LocalMonetCardColor.current,
                         ),
@@ -2147,7 +2147,7 @@ private fun SchemeDirBrowserContent(
                 } else {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(20.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = LocalMonetCardColor.current,
                         ),

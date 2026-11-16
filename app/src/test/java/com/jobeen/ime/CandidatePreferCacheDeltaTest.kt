@@ -401,4 +401,26 @@ class CandidatePreferCacheDeltaTest {
             assertEquals(1, CandidatePreferCache.cacheCopy()["乙"])
         }
     }
+
+    @Test
+    fun readOnlyView_seesLoadedValues_rejectsMutation_andSeesLaterLandings() {
+        // 2026-11-16 性能 ②：重排每批不再 HashMap(cache) 全量拷贝，
+        // 改读只读视图——同实例随后也能看到新落点，且调用方改不动它。
+        val g = gen()
+        CandidatePreferCache.finishLoad(mapOf("甲" to 10, "乙" to 3), g)
+        val view = CandidatePreferCache.readOnlyView()
+        assertEquals(10, view["甲"])
+        assertEquals(3, view["乙"])
+        try {
+            (view as MutableMap<String, Int>)["丙"] = 1
+            org.junit.Assert.fail("expected UnsupportedOperationException")
+        } catch (e: UnsupportedOperationException) {
+            // 预期：只读视图不可改写
+        }
+        // 同一视图实例随后看到新落点（不是拷贝）
+        CandidatePreferCache.noteUpsert("甲")
+        flush()
+        assertEquals(11, view["甲"])
+        assertEquals(11, CandidatePreferCache.cacheCopy()["甲"])
+    }
 }

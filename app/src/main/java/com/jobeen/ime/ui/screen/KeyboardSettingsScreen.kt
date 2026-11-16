@@ -1,5 +1,6 @@
 package com.jobeen.ime.ui.screen
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.manager.KeyboardManager
+import com.jobeen.ime.ui.T9QuickSymbolsSettingsActivity
 import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
@@ -156,6 +158,9 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
     var hideHint by remember {
         mutableStateOf(KeyboardManager.Keyboard.Display.isHideHint(context))
     }
+    var shuangpinHint by remember {
+        mutableStateOf(KeyboardManager.Keyboard.Display.isShuangpinHintEnabled(context))
+    }
 
     // 自定义音效文件选择：复制进应用私有目录（不持有外部 uri 权限），≤5MB
     val soundPicker = rememberLauncherForActivityResult(
@@ -243,6 +248,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.key_sound_volume),
                                 value = soundVolume,
+                                defaultValue = 100f,
                                 valueLabel = "${soundVolume.toInt()}%",
                                 range = 0f..100f,
                                 enabled = keySoundEnabled,
@@ -273,7 +279,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                     Button(
                                         onClick = { soundPicker.launch(arrayOf("audio/*")) },
                                         enabled = keySoundEnabled && customSoundEnabled,
-                                        shape = RoundedCornerShape(8.dp),
+                                        shape = RoundedCornerShape(20.dp),
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                     ) {
                                         Text(
@@ -294,7 +300,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                                 customSoundPath = ""
                                                 KeyboardManager.Keyboard.Feedback.setCustomSoundPath(context, "")
                                             },
-                                            shape = RoundedCornerShape(8.dp),
+                                            shape = RoundedCornerShape(20.dp),
                                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                         ) {
                                             Text(
@@ -312,7 +318,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                     Button(
                                         onClick = { InputFeedbacks.previewSoundEffect(context) },
                                         enabled = keySoundEnabled,
-                                        shape = RoundedCornerShape(8.dp),
+                                        shape = RoundedCornerShape(20.dp),
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                     ) {
                                         Text(
@@ -354,6 +360,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.key_vibration_amplitude),
                                 value = vibrationAmplitude,
+                                defaultValue = 100f,
                                 valueLabel = "${vibrationAmplitude.toInt()}%",
                                 range = 1f..100f,
                                 enabled = keyVibrationEnabled && !vibrationFollowSystem,
@@ -366,6 +373,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.key_vibration_duration),
                                 value = vibrationDurationMs,
+                                defaultValue = 15f,
                                 valueLabel = "${vibrationDurationMs.toInt()} ms",
                                 range = 5f..100f,
                                 enabled = keyVibrationEnabled,
@@ -389,6 +397,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.swipe_trigger_distance),
                                 value = swipeThreshold,
+                                defaultValue = 36f,
                                 valueLabel = "${swipeThreshold.toInt()}dp",
                                 range = 16f..80f,
                                 onValueChange = {
@@ -400,6 +409,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.gesture_swipe_velocity),
                                 value = swipeVelocity,
+                                defaultValue = 0f,
                                 valueLabel = if (swipeVelocity.toInt() == 0) {
                                     stringResource(R.string.gesture_swipe_velocity_unlimited)
                                 } else {
@@ -415,6 +425,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.gesture_long_press_timeout),
                                 value = longPressTimeoutMs,
+                                defaultValue = 250f,
                                 valueLabel = "${longPressTimeoutMs.toInt()} ms",
                                 range = 100f..1000f,
                                 onValueChange = {
@@ -426,6 +437,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.gesture_repeat_interval),
                                 value = repeatIntervalMs,
+                                defaultValue = 100f,
                                 valueLabel = "${repeatIntervalMs.toInt()} ms",
                                 range = 50f..500f,
                                 onValueChange = {
@@ -437,6 +449,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.gesture_double_tap_timeout),
                                 value = doubleTapTimeoutMs,
+                                defaultValue = 250f,
                                 valueLabel = "${doubleTapTimeoutMs.toInt()} ms",
                                 range = 100f..1000f,
                                 onValueChange = {
@@ -448,6 +461,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.gesture_slide_step),
                                 value = slideStepChars,
+                                defaultValue = 1f,
                                 valueLabel = "${slideStepChars.toInt()} 字/步",
                                 range = 1f..5f,
                                 onValueChange = {
@@ -529,6 +543,15 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                 },
                                 showDivider = true,
                             )
+                            SwitchRow(
+                                title = stringResource(R.string.shuangpin_hint_title),
+                                checked = shuangpinHint,
+                                onCheckedChange = {
+                                    shuangpinHint = it
+                                    KeyboardManager.Keyboard.Display.setShuangpinHintEnabled(context, it)
+                                },
+                                showDivider = true,
+                            )
                             Text(
                                 text = stringResource(R.string.display_hide_symbol_note),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -539,9 +562,24 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            Text(
+                                text = stringResource(R.string.shuangpin_hint_note),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            NavRow(
+                                title = stringResource(R.string.t9_quick_symbols_title),
+                                subtitle = stringResource(R.string.t9_quick_symbols_list_desc),
+                                onClick = {
+                                    context.startActivity(
+                                        Intent(context, T9QuickSymbolsSettingsActivity::class.java),
+                                    )
+                                },
+                            )
                             SliderRow(
                                 title = stringResource(R.string.key_corner_radius),
                                 value = keyRadius,
+                                defaultValue = 9f,
                                 valueLabel = "${keyRadius.toInt()} dp",
                                 range = 0f..32f,
                                 onValueChange = {
@@ -553,6 +591,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.key_x_gap),
                                 value = keyXGap,
+                                defaultValue = 4f,
                                 valueLabel = "${keyXGap.toInt()} dp",
                                 range = 0f..16f,
                                 onValueChange = {
@@ -564,6 +603,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.key_y_gap),
                                 value = keyYGap,
+                                defaultValue = 3f,
                                 valueLabel = "${keyYGap.toInt()} dp",
                                 range = 0f..16f,
                                 onValueChange = {
@@ -576,6 +616,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.keyboard_height),
                                 value = keyboardHeight,
+                                defaultValue = 24f,
                                 valueLabel = "${keyboardHeight.toInt()}%",
                                 range = 20f..50f,
                                 onValueChange = {
@@ -587,6 +628,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.keyboard_height_landscape),
                                 value = keyboardHeightLandscape,
+                                defaultValue = 44f,
                                 valueLabel = "${keyboardHeightLandscape.toInt()}%",
                                 range = 30f..70f,
                                 onValueChange = {
@@ -598,6 +640,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.horizontal_padding),
                                 value = horizontalPadding,
+                                defaultValue = 4f,
                                 valueLabel = "${horizontalPadding.toInt()} dp",
                                 range = 0f..20f,
                                 onValueChange = {
@@ -609,6 +652,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             SliderRow(
                                 title = stringResource(R.string.bottom_padding),
                                 value = bottomPadding,
+                                defaultValue = 4f,
                                 valueLabel = "${bottomPadding.toInt()} dp",
                                 range = 0f..40f,
                                 onValueChange = {

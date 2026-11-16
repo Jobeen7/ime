@@ -8,6 +8,7 @@ import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.event.KeyEvent
 import com.jobeen.ime.input.EnterField
+import com.jobeen.ime.skin.layout.CompactGrouping
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 
@@ -51,6 +52,12 @@ interface IEngine {
     fun isFloatingCandidateActive(): Boolean = false
     /** 置浮动候选窗激活态（WO52 1.4）：服务层在浮动窗开／关时调用。 */
     fun setFloatingCandidateActive(active: Boolean) {}
+    /**
+     * 置当前紧凑键盘分组（14/18 键侧栏拼音路由）：窗口切键盘时调用，
+     * T14/T18 推分组、其他键盘推 null 清除；缺省空实现（无紧凑键盘
+     * 的引擎恒走既有 T9/全拼路径）。
+     */
+    fun setCompactGrouping(grouping: CompactGrouping?) {}
     suspend fun schemasList(): List<EngineMessage.Schema>
     fun clear(service: InputMethodService)
     fun resetComposition()

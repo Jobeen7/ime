@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -291,6 +292,7 @@ fun RimeScreen(
             title = stringResource(R.string.rime_sync_folder_edit_title),
             body = {
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = text,
                     onValueChange = { text = it },
                     singleLine = true,
@@ -325,6 +327,7 @@ fun RimeScreen(
             title = stringResource(R.string.rime_sync_folder_path_edit_title),
             body = {
                 OutlinedTextField(
+                    shape = RoundedCornerShape(12.dp),
                     value = text,
                     onValueChange = { text = it },
                     singleLine = true,

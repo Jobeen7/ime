@@ -285,6 +285,44 @@ class ScriptRunnerTest {
     }
 
     @Test
+    fun run_variablesInjectedAsDollarKeyGlobals() = runBlocking {
+        val source = "async function output() { return [\$greeting + \" \" + \$who]; }"
+        val result = runner.run(
+            source = source,
+            inputs = ScriptInputs(
+                variables = mapOf("greeting" to "你好", "who" to "世界"),
+            ),
+            hostFactory = fakeFactory(),
+        )
+        assertEquals(listOf("你好 世界"), result.output)
+    }
+
+    @Test
+    fun run_invalidVariableKey_skippedAndLoggedWithoutBlocking() = runBlocking {
+        val source = "async function output() { return [\$ok]; }"
+        val prepared = ScriptVariableInjection.prepare(
+            listOf(
+                ScriptVariableInjection.VariableEntry("ok", "yes", false),
+                ScriptVariableInjection.VariableEntry("bad key", "no", false),
+                ScriptVariableInjection.VariableEntry("secret", "s3cr3t", true),
+            ),
+        )
+        val result = runner.run(
+            source = source,
+            inputs = ScriptInputs(
+                variables = prepared.values,
+                skippedVariableLogLines = ScriptVariableInjection.skipLogLines(prepared),
+            ),
+            hostFactory = fakeFactory(),
+        )
+        assertEquals(listOf("yes"), result.output)
+        assertEquals(
+            listOf("跳过变量 \$bad key：变量名非法", "跳过变量 \$secret：敏感变量不注入"),
+            result.logs,
+        )
+    }
+
+    @Test
     fun run_pendingPromise_cancelThrowsCancellation() = runBlocking {
         val started = System.nanoTime()
         val deferred = async {
