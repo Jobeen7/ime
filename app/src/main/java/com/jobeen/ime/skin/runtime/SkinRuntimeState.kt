@@ -70,6 +70,13 @@ object SkinRuntimeState {
     }
 
     /**
+     * 是否装了通知表（2026-11-16 性能 §6）：无通知表时按键分发
+     * 不必构造 NotificationEvent＋查 nameOf/valueOf——onEvent 内部
+     * 本就先判空返回，调用方先判一次即可省下每键的对象分配与查表。
+     */
+    val hasNotificationState: Boolean get() = notificationState != null
+
+    /**
      * 喂入一则通知事件。
      * @return 锁定表是否真正变化（失配／重复锁定返回 false）。
      * 变化判定由 [NotificationState.onEvent] 精确给出（清除或

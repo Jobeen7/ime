@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -203,7 +202,7 @@ fun UserDictScreen(
                         // WebDAV 表单：字段与保存逻辑不动，只收进分组卡片。
                         Column(Modifier.padding(vertical = 12.dp)) {
                             OutlinedTextField(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = MaterialTheme.shapes.medium,
                                 value = serverText,
                                 onValueChange = { serverText = it },
                                 label = { Text(stringResource(R.string.user_dict_server)) },
@@ -215,7 +214,7 @@ fun UserDictScreen(
                             )
                             Spacer(Modifier.height(4.dp))
                             OutlinedTextField(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = MaterialTheme.shapes.medium,
                                 value = usernameText,
                                 onValueChange = { usernameText = it },
                                 label = { Text(stringResource(R.string.user_dict_username)) },
@@ -225,7 +224,7 @@ fun UserDictScreen(
                             )
                             Spacer(Modifier.height(4.dp))
                             OutlinedTextField(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = MaterialTheme.shapes.medium,
                                 value = passwordText,
                                 onValueChange = { passwordText = it },
                                 label = { Text(stringResource(R.string.user_dict_password)) },
@@ -241,7 +240,7 @@ fun UserDictScreen(
                             )
                             Spacer(Modifier.height(4.dp))
                             OutlinedTextField(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = MaterialTheme.shapes.medium,
                                 value = syncPathText,
                                 onValueChange = { syncPathText = it },
                                 label = { Text(stringResource(R.string.user_dict_sync_path)) },

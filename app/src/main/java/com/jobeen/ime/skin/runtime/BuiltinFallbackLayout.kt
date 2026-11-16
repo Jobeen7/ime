@@ -47,7 +47,10 @@ object BuiltinFallbackLayout {
             alphabetKey("p", "0", id = KeyIds.Qwerty.KEY_P),
         ),
         listOf(
-            alphabetKey("a", "~", id = KeyIds.Qwerty.KEY_A),
+            // A 行：首尾键各 0.15、中间 7 键各 0.1，行和 1.0
+            // （与 QwertyKeyboard.buildLayout 同口径；旧实现 9 键各
+            // 0.1＝0.9，见 N4）。
+            alphabetKey("a", "~", id = KeyIds.Qwerty.KEY_A, percentWidth = 0.15f),
             alphabetKey("s", "!", id = KeyIds.Qwerty.KEY_S),
             alphabetKey("d", "@", id = KeyIds.Qwerty.KEY_D),
             alphabetKey("f", "#", id = KeyIds.Qwerty.KEY_F),
@@ -55,7 +58,7 @@ object BuiltinFallbackLayout {
             alphabetKey("h", "%", id = KeyIds.Qwerty.KEY_H),
             alphabetKey("j", "^", id = KeyIds.Qwerty.KEY_J, altTextTranslationY = 4),
             alphabetKey("k", "&", id = KeyIds.Qwerty.KEY_K),
-            alphabetKey("l", "*", id = KeyIds.Qwerty.KEY_L, altTextTranslationY = 4),
+            alphabetKey("l", "*", id = KeyIds.Qwerty.KEY_L, altTextTranslationY = 4, percentWidth = 0.15f),
         ),
         listOf(
             capsLockKey(id = KeyIds.Qwerty.KEY_CAPS),

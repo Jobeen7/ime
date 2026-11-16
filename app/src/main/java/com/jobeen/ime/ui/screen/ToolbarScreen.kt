@@ -1226,7 +1226,7 @@ private fun ToolbarCustomSlotRow(
         binding.action.valueRule == WhitelistAction.ValueRule.REQUIRED
     ) {
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = binding.value ?: "",
             onValueChange = onValueChange,
             label = { Text(text = requiredValueHint(binding.action)) },
@@ -1359,7 +1359,7 @@ private fun ToolbarCustomFormDialog(
                 }
                 if (kind != CustomDisplayKind.IMAGE) {
                     OutlinedTextField(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = MaterialTheme.shapes.medium,
                         value = display,
                         onValueChange = { display = it },
                         label = {
@@ -1798,7 +1798,7 @@ private fun ToolbarToolbarFormDialog(
         body = {
             Column {
                 OutlinedTextField(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.medium,
                     value = name,
                     onValueChange = { name = it },
                     label = { Text(text = stringResource(R.string.toolbar_toolbar_name)) },

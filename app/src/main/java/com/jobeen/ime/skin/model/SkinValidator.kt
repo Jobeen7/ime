@@ -1538,6 +1538,39 @@ object SkinValidator {
                 colors[field] = parsed
             }
         }
+        // 未知样式键分级（2026-11-16，MIE 式）：顶层未知键已是警告
+        // 透传（unknownNodes），但 styles 板内未知键此前静默丢弃——
+        // 拼错的字段名（如 keyBackgroud）用户无从发现。现逐条记
+        // FIELD_FALLBACK 警告（"unknown_style_field"），导入照常
+        // 通过（不拒包），明细进导入报告；嵌套 panel/pinner 内亦然。
+        // 合法键 = StyleField 全集首段＋surfaceStyle。
+        if (styles != null) {
+            val knownTop = StyleField.entries.map { it.path.substringBefore(".") }.toSet() +
+                "surfaceStyle"
+            for (key in styles.keys) {
+                if (key !in knownTop) {
+                    issues += SkinIssue(
+                        "$stylesKey.$key",
+                        SkinIssue.Kind.FIELD_FALLBACK, "unknown_style_field",
+                    )
+                }
+            }
+            for (nested in listOf("panel", "pinner")) {
+                val nestedObj = styles[nested] as? JsonObject ?: continue
+                val knownNested = StyleField.entries
+                    .filter { it.path.startsWith("$nested.") }
+                    .map { it.path.substringAfter(".") }
+                    .toSet()
+                for (key in nestedObj.keys) {
+                    if (key !in knownNested) {
+                        issues += SkinIssue(
+                            "$stylesKey.$nested.$key",
+                            SkinIssue.Kind.FIELD_FALLBACK, "unknown_style_field",
+                        )
+                    }
+                }
+            }
+        }
         var surfaceStyle: KeyboardColors.SurfaceStyle? = null
         val surfacePrimitive = styles?.get("surfaceStyle") as? JsonPrimitive
         if (surfacePrimitive != null) {

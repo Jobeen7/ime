@@ -142,6 +142,32 @@
     <string name="layout_editor_save">保存布局</string>
     <string name="layout_editor_modified">已修改，未保存</string>
     <string name="layout_editor_add_long_press">添加长按动作</string>
+    <!-- 可视化皮肤编辑器（2026-11-16）：预设／配色／几何三标签＋逐键编辑 -->
+    <string name="visual_editor_edit_appearance">编辑外观</string>
+    <string name="visual_editor_presets">预设</string>
+    <string name="visual_editor_colors">配色</string>
+    <string name="visual_editor_geometry">几何</string>
+    <string name="visual_editor_dark_preview">深色预览</string>
+    <string name="visual_editor_9key">9键</string>
+    <string name="visual_editor_26key">26键</string>
+    <string name="visual_editor_edit_key">编辑按键·%1$s</string>
+    <string name="visual_editor_reset_key">重置</string>
+    <string name="visual_editor_compose_actions">组字中</string>
+    <string name="visual_editor_compose_tap">组字中点按</string>
+    <string name="visual_editor_compose_swipe_up">组字中上滑</string>
+    <string name="visual_editor_compose_swipe_down">组字中下滑</string>
+    <string name="visual_editor_key_colors">逐键颜色</string>
+    <string name="visual_editor_key_text_color">文字颜色</string>
+    <string name="visual_editor_key_face_color">背景颜色</string>
+    <string name="visual_editor_key_shadow_color">阴影颜色</string>
+    <string name="visual_editor_advanced_json">高级／查看 JSON</string>
+    <string name="visual_editor_no_layout">该皮肤未绑定此布局</string>
+    <string name="visual_editor_skin_not_active">该皮肤未生效，请先在皮肤库中应用后再编辑</string>
+    <string name="visual_editor_applied">已保存并应用</string>
+    <string name="visual_editor_hex_invalid">颜色格式不对，用 #RRGGBB 或 #AARRGGBB</string>
+    <string name="visual_editor_key_face">按键底色</string>
+    <string name="visual_editor_key_special_face">特殊键底色</string>
+    <string name="visual_editor_key_accent_face">强调键底色</string>
     <string name="row_sub_skin_editor">编辑当前皮肤的布局文件</string>
     <!-- 应用级脚本管理 -->
     <string name="skin_script_title">皮肤脚本</string>
@@ -988,16 +1014,6 @@
     <string name="emoji_recent_note">点一个 Emoji 就会记进最近使用，拼在第一个分组前面。</string>
     <string name="emoji_search_hint">搜索 Emoji（中文／拼音／英文）</string>
     <string name="emoji_search_loading">正在加载 Emoji 索引…</string>
-    <!-- Emoji 自定义键盘（WO52 7.4） -->
-    <string name="emoji_custom_title">自定义 Emoji 键盘</string>
-    <string name="emoji_custom_desc">打开后，Emoji 面板改用这里的分组；恢复默认即回到内置分组／皮肤分组。</string>
-    <string name="emoji_custom_enable">使用自定义分组</string>
-    <string name="emoji_custom_restore">恢复默认</string>
-    <string name="emoji_custom_add_group">新建分组</string>
-    <string name="emoji_custom_group_name_hint">分组名称</string>
-    <string name="emoji_custom_add_symbol_hint">新增 Emoji</string>
-    <string name="emoji_custom_add">添加</string>
-    <string name="emoji_custom_delete_group">删除分组</string>
     <!-- 键盘菜单管理（WO52 12-⑨） -->
     <string name="keyboard_menu_title">键盘菜单设置</string>
     <string name="row_sub_keyboard_menu">键盘菜单选项自定义</string>

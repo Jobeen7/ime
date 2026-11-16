@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -69,7 +68,7 @@ fun BackupScreen(
             state.interruptedRestore?.let { info ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
                     ),
@@ -141,7 +140,7 @@ fun BackupScreen(
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
+                shape = MaterialTheme.shapes.large,
                 colors = CardDefaults.cardColors(
                     containerColor = LocalMonetCardColor.current,
                 ),
@@ -199,7 +198,7 @@ fun BackupScreen(
             body = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = MaterialTheme.shapes.medium,
                         value = pw,
                         onValueChange = { pw = it; error = null },
                         label = { Text(stringResource(R.string.backup_password)) },
@@ -209,7 +208,7 @@ fun BackupScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = MaterialTheme.shapes.medium,
                         value = pw2,
                         onValueChange = { pw2 = it; error = null },
                         label = { Text(stringResource(R.string.backup_password_confirm)) },
@@ -251,7 +250,7 @@ fun BackupScreen(
             title = stringResource(R.string.backup_restore_from_file),
             body = {
                 OutlinedTextField(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.medium,
                     value = pw,
                     onValueChange = { pw = it },
                     label = { Text(stringResource(R.string.backup_password)) },

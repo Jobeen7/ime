@@ -52,10 +52,10 @@ import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.panel.toolbar.ToolbarUserStore
+import com.jobeen.ime.engine.data.CandidateFrameGate
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.data.candidatesContentEqual
-import com.jobeen.ime.engine.data.shouldApplyCandidateFrame
 import com.jobeen.ime.skin.model.DynamicTextSource
 import com.jobeen.ime.input.keyboard.impl.EmojiKeyboard
 import com.jobeen.ime.skin.diag.DiagLog
@@ -2053,9 +2053,10 @@ class KeyboardWindowView(
     private var lastCandidatePageNo: Int = 0
     private var lastCandidateIsLastPage: Boolean = false
 
-    // 已应用的首屏候选帧版本号（-1 = 尚未应用任何版本化帧）：
-    // 窗口生命周期内 requestId 单调递增，迟到旧帧凭它丢弃。
-    private var lastAppliedCandidateRevision: Long = -1L
+    // 已应用的首屏候选帧代次门（松烟模型）：窗口生命周期内 requestId
+    // 单调递增；引擎重建后从头计，凭 epoch 检测＋浮动窗解散复位放行
+    // 新代次首帧（.2 案），见 CandidateFrameGate。
+    private val candidateFrameGate = CandidateFrameGate()
 
     fun setCandidates(
         list: List<EngineMessage.Candidate>,
@@ -2067,14 +2068,11 @@ class KeyboardWindowView(
         pagingMode: com.jobeen.ime.engine.CandidatePagingMode =
             com.jobeen.ime.engine.CandidatePagingMode.SWIPE,
     ) {
-        // 版本号先行：旧帧（revision <= 已应用）直接丢弃；revision 0
-        // = 未版本化（合成帧如清空、联想），恒放行且不推进版本号。
+        // 代次门先行：未版本化恒放行；同代次重投凭帧指纹放行／丢弃；
+        // 新引擎 epoch 首帧（revision 小于已应用）放行并复位基线。
         // 版本号通过后再比内容（P2）：内容等价帧同样丢弃。
-        if (!shouldApplyCandidateFrame(revision, lastAppliedCandidateRevision)) {
+        if (!candidateFrameGate.shouldApply(revision, pageNo, isLastPage, hasMore, list)) {
             return
-        }
-        if (revision > 0L) {
-            lastAppliedCandidateRevision = revision
         }
         // 无变化帧丢弃：同一候选表重复分发时跳过面板重绘（末尾无条件
         // invalidate）、动态文本推送与行内联想刷新——每键都有的开销。
@@ -2132,7 +2130,7 @@ class KeyboardWindowView(
      * 口径一致。
      */
     fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int, revision: Long = 0L) {
-        if (!shouldApplyCandidateAppend(revision, lastAppliedCandidateRevision)) return
+        if (!shouldApplyCandidateAppend(revision, candidateFrameGate.lastAppliedRevision)) return
         if (floatingWindow?.isShowing == true) {
             // 浮动窗只走整表替换（native 模式正常无追加）；有追加则并入浮动表。
             floatingWindow?.appendCandidates(list)
@@ -2197,6 +2195,11 @@ class KeyboardWindowView(
             return
         }
         window.dismiss()
+        // 实际解散即新代次边界（与网格 resetRevisionGate 同一点）：
+        // 浮动窗常驻复用，旧会话顶高的代次不得拦新会话首帧（.2 案）。
+        // 未显示时不复位——setCandidates 的内嵌分支每帧都走本方法，
+        // 在那里复位会让内嵌模式的门恒为初始态、迟到帧失去守卫。
+        candidateFrameGate.newGeneration()
         floatingController.onHidden()
         floatingFrameScreenRect = null
     }

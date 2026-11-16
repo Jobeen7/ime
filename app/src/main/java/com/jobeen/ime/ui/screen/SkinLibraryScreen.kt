@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -91,6 +90,7 @@ import com.jobeen.ime.skin.export.JimeExporter
 import com.jobeen.ime.skin.library.SkinCardMenuSupport
 import com.jobeen.ime.skin.library.SkinColorMode
 import com.jobeen.ime.skin.library.SkinCreator
+import com.jobeen.ime.skin.library.SkinEditorEntry
 import com.jobeen.ime.skin.library.SkinImportReasons
 import com.jobeen.ime.skin.library.SkinLibraryPrefs
 import com.jobeen.ime.skin.library.SkinMiniPreview
@@ -1013,6 +1013,9 @@ fun SkinLibraryScreen(
                                     }
                                 }
                             },
+                            onEditAppearance = {
+                                SkinEditorEntry.openVisualEditor(context, entry.id)
+                            },
                             onExport = {
                                 pendingExportSkinId = entry.id
                                 exportLauncher.launch("${entry.name.ifBlank { entry.id }}.jime")
@@ -1579,6 +1582,7 @@ private fun SkinLibraryCard(
     enabled: Boolean,
     onCardClick: () -> Unit,
     onApply: () -> Unit,
+    onEditAppearance: () -> Unit,
     onExport: () -> Unit,
     onShare: () -> Unit,
     onShareQr: () -> Unit,
@@ -1594,12 +1598,12 @@ private fun SkinLibraryCard(
     val borderColor = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
+            .clip(MaterialTheme.shapes.large)
             .background(LocalMonetCardColor.current)
             .border(
                 width = if (checked) 2.dp else 1.dp,
                 color = borderColor,
-                shape = RoundedCornerShape(20.dp),
+                shape = MaterialTheme.shapes.large,
             )
             .combinedClickable(
                 enabled = enabled,
@@ -1656,6 +1660,13 @@ private fun SkinLibraryCard(
                         text = { Text(stringResource(R.string.global_apply)) },
                         onClick = { showMenu = false; onApply() },
                         enabled = !isActive,
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.visual_editor_edit_appearance)) },
+                        onClick = { showMenu = false; onEditAppearance() },
+                        // 可视化编辑器只编生效皮肤（保存链以活动记录为准）：
+                        // 未生效的皮肤先应用再编辑，菜单项直接置灰。
+                        enabled = isActive,
                     )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.skin_lib_export)) },
@@ -1743,12 +1754,12 @@ private fun BuiltinThemeCard(
     val borderColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
+            .clip(MaterialTheme.shapes.large)
             .background(LocalMonetCardColor.current)
             .border(
                 width = if (isActive) 2.dp else 1.dp,
                 color = borderColor,
-                shape = RoundedCornerShape(20.dp),
+                shape = MaterialTheme.shapes.large,
             )
             .clickable(enabled = enabled, onClick = onClick),
     ) {

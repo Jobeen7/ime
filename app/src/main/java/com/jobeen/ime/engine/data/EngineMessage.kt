@@ -152,9 +152,89 @@ internal fun candidatesContentEqual(
 }
 
 /**
- * 候选帧版本号放行判定：revision 0 = 未版本化，恒放行（且调用方不
- * 推进已应用版本号）；其余仅当严格大于已应用版本号时放行——等于
- * （重复投递）与小于（迟到旧帧）一律丢弃。
+ * 候选帧代次门（松烟模型，2026-11-16 取代纯 revision 比较）：
+ * 纯状态机，不含 Android 依赖，可单测。窗口层 setCandidates 的
+ * 唯一版本守卫——网格层另有自己的 CandidateGridRevisionGate，
+ * 两道门各守各的入口，不互相推测。
+ *
+ * 为什么不用“revision 严格递增就丢弃”（.2 不能打字案的教训）：
+ * 引擎重建后 requestId 从头计，新帧 revision 小于窗口已应用值；
+ * 旧门把它当迟到旧帧丢掉，浮动窗网格永远等不到首帧，T9 "wo"
+ * 只剩组字栏。松烟式做法是显式代次：会话边界调 [newGeneration]
+ * 复位，复位后小 revision 是新代次的首帧、必须放行。
+ *
+ * 代次边界（调用方必须在这些点调 [newGeneration]）：
+ * - 浮动窗实际解散（与网格 resetRevisionGate 同一点）；
+ * - 其余会话边界若有显式信号，到时再接。
+ * 除显式复位外，revision 小于已应用值时也按新 epoch 放行并复位
+ * 基线——这是安全的：通道同类保序（EngineMessageChannel 同类
+ * 严格保序）＋发射门（RimeEngine:1691 仅当 requestId ==
+ * latestCandidateRequestId 才发 CandidatesReady），同一引擎
+ * epoch 内到达 setCandidates 的 revision 单调递增（0 与同代次
+ * 重投除外），更小值只可能是新引擎实例从头计数的首帧；把它丢
+ * 掉就是 .2 案。复位时记 DiagLog 可观测（调用方打）。
+ *
+ * 口径：
+ * - revision <= 0：未版本化合成帧（清空、联想），恒放行且不推进；
+ * - revision > 已应用：放行，推进并存帧指纹；
+ * - revision == 已应用：同代次重投——帧指纹（页号／末页／内容）
+ *   不同才放行（翻页、末页翻转、重发新内容），指纹完全相同是
+ *   幂等重投，丢弃（下游另有内容去重兜底，此处先省一次重绘）；
+ * - revision < 已应用：新 epoch 首帧，放行并把基线复位到该值。
  */
-internal fun shouldApplyCandidateFrame(revision: Long, lastAppliedRevision: Long): Boolean =
-    revision <= 0L || revision > lastAppliedRevision
+internal class CandidateFrameGate {
+
+    /** 已应用的最大代次（-1 = 尚未应用任何版本化帧）。 */
+    var lastAppliedRevision: Long = -1L
+        private set
+
+    private data class FrameFingerprint(
+        val pageNo: Int,
+        val isLastPage: Boolean,
+        val hasMore: Boolean,
+        val content: List<EngineMessage.Candidate>,
+    )
+
+    private var lastFrame: FrameFingerprint? = null
+
+    /** 新代次：复位已应用代次与帧指纹（浮动窗解散等会话边界用）。 */
+    fun newGeneration() {
+        lastAppliedRevision = -1L
+        lastFrame = null
+    }
+
+    /**
+     * 帧是否可应用：可应用时更新已应用代次与帧指纹并返回 true；
+     * 幂等重投不更新、不应用，返回 false。
+     */
+    fun shouldApply(
+        revision: Long,
+        pageNo: Int = 0,
+        isLastPage: Boolean = false,
+        hasMore: Boolean = false,
+        list: List<EngineMessage.Candidate> = emptyList(),
+    ): Boolean {
+        if (revision <= 0L) return true
+        if (revision < lastAppliedRevision) {
+            // 新引擎 epoch 首帧（见类注释的单调性证明）：放行并复位基线。
+            lastAppliedRevision = revision
+            lastFrame = FrameFingerprint(pageNo, isLastPage, hasMore, list.toList())
+            return true
+        }
+        if (revision > lastAppliedRevision) {
+            lastAppliedRevision = revision
+            lastFrame = FrameFingerprint(pageNo, isLastPage, hasMore, list.toList())
+            return true
+        }
+        // 同代次重投：指纹不同（翻页／末页翻转／内容更新）才放行。
+        val last = lastFrame
+        if (last == null ||
+            last.pageNo != pageNo || last.isLastPage != isLastPage ||
+            last.hasMore != hasMore || !candidatesContentEqual(last.content, list)
+        ) {
+            lastFrame = FrameFingerprint(pageNo, isLastPage, hasMore, list.toList())
+            return true
+        }
+        return false
+    }
+}

@@ -28,6 +28,13 @@ object RecentEmojiOps {
     const val KEY_RECENT_EMOJIS = "recentEmojis"
 
     /**
+     * 孤儿键（WO52 7.4 自定义 Emoji 键盘已删）：旧版 `customKeyboard`
+     * 键只存在于已升级用户的偏好文件里，代码里不再有任何读写；
+     * [SharedPrefsRecentEmojiStore] 首次构造即删一次。
+     */
+    const val KEY_CUSTOM_KEYBOARD_ORPHAN = "customKeyboard"
+
+    /**
      * 记一次：新项放首、旧位置去重、超上限截断；空串原样返回。
      * 顺序即最近使用顺序（首项最新）。
      */
@@ -103,6 +110,14 @@ class SharedPrefsRecentEmojiStore(context: Context) : RecentEmojiStore {
     private val prefs = context.getSharedPreferences(
         RecentEmojiOps.PREFS_NAME, Context.MODE_PRIVATE,
     )
+
+    init {
+        // 孤儿键清理（WO52 7.4 自定义 Emoji 键盘已删）：键不存在时
+        // contains 为 false，不写盘；存在时删一次，此后不再出现。
+        if (prefs.contains(RecentEmojiOps.KEY_CUSTOM_KEYBOARD_ORPHAN)) {
+            prefs.edit().remove(RecentEmojiOps.KEY_CUSTOM_KEYBOARD_ORPHAN).apply()
+        }
+    }
 
     override fun load(): List<String> =
         RecentEmojiOps.parse(prefs.getString(RecentEmojiOps.KEY_RECENT_EMOJIS, null))

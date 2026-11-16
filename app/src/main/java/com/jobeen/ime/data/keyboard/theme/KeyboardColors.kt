@@ -1,7 +1,6 @@
 package com.jobeen.ime.data.keyboard.theme
 
 import android.content.Context
-import android.content.res.Configuration
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.skin.library.SkinColorMode as LibraryColorMode
 import com.jobeen.ime.skin.library.SkinLibraryPrefs
@@ -241,8 +240,17 @@ object KeyboardColors {
     fun themeFor(context: Context): KeyboardTheme {
         // v3 快照分支在 resolve() 中优先于本函数；无快照时走下方
         // 颜色模式唯一决定逻辑（见 effectiveBuiltinThemeId）。
-        val isDark = context.resources.configuration.uiMode and
-            Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        //
+        // 深浅判定与快照路径同一口径（2026-11-16 debug 问题 4）：
+        // 旧实现直接读 configuration.uiMode，系统已切深色、回调仍
+        // 报旧值时首帧取浅色槽、快照到后（SkinColorMode.isDark，
+        // UiModeManager 显式值优先）翻成深色——首次浅色、重拉变深。
+        // 此处改传 SkinColorMode.isDark：SYSTEM 模式下它等于已解
+        // 决的系统夜间态（与 effectiveBuiltinThemeId 的 SYSTEM 分支
+        // 所需完全一致），LIGHT/DARK 模式下该参数本就不用，不存在
+        // 模式 double-apply。首帧即按同一决议取槽，快照到后刷新
+        // （KeyboardWindowView.refreshColorsIfChanged）不再翻色。
+        val isDark = SkinColorMode.isDark(context)
         val themeId = effectiveBuiltinThemeId(
             SkinLibraryPrefs.getColorMode(context),
             KeyboardManager.Keyboard.getThemeId(context),

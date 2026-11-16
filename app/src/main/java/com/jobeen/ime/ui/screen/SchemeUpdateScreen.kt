@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Button
@@ -316,7 +315,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                         grammarLanguage != null -> Button(
                             onClick = { downloadGrammar(grammarLanguage!!) },
                             enabled = !updating && !updatePending && !deployBusy,
-                            shape = RoundedCornerShape(20.dp),
+                            shape = MaterialTheme.shapes.large,
                         ) {
                             Text(stringResource(R.string.download), fontSize = rowSubFontSize)
                         }
@@ -447,7 +446,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                         )
                         Button(
                             onClick = { checkWanxiangUpdate() },
-                            shape = RoundedCornerShape(20.dp),
+                            shape = MaterialTheme.shapes.large,
                         ) {
                             Text(
                                 stringResource(R.string.schema_update_check),
@@ -464,7 +463,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     checkingUpdate -> Button(
                         onClick = {},
                         enabled = false,
-                        shape = RoundedCornerShape(20.dp),
+                        shape = MaterialTheme.shapes.large,
                     ) {
                         Text(
                             stringResource(R.string.schema_update_checking),
@@ -475,7 +474,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     info?.hasUpdate == true -> Button(
                         onClick = { startWanxiangUpdate(info) },
                         enabled = !grammarDownloading && !grammarPending && !deployBusy,
-                        shape = RoundedCornerShape(20.dp),
+                        shape = MaterialTheme.shapes.large,
                     ) {
                         Text(
                             stringResource(R.string.schema_update_start),
@@ -486,7 +485,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     updateSource !is WanxiangUpdateManager.UpdateSource.Wanxiang -> {}
                     else -> Button(
                         onClick = { checkWanxiangUpdate() },
-                        shape = RoundedCornerShape(20.dp),
+                        shape = MaterialTheme.shapes.large,
                     ) {
                         Text(
                             stringResource(R.string.schema_update_check),

@@ -22,6 +22,8 @@ fun alphabetKey(
     mainTextTranslationY: Int = -2,
     id: String? = null,
     hintText: String? = null,
+    /** 行宽占比（缺省 0.1f；26 键 A 行首尾键取 0.15f，见行和不变量）。 */
+    percentWidth: Float = 0.1f,
 ) = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.AltText(
@@ -30,7 +32,8 @@ fun alphabetKey(
         textSize = 22f,
         altTextTranslationY = altTextTranslationY,
         mainTextTranslationY = mainTextTranslationY,
-        variant = Variant.Normal
+        variant = Variant.Normal,
+        percentWidth = percentWidth,
     ), behaviors = setOf(
         KeyDef.Behavior.Press(KeyboardAction.KeySequenceAction(character)),
         KeyDef.Behavior.LongPress(KeyboardAction.CommitAction(punctuation))

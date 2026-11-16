@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -155,7 +154,7 @@ private fun KeySymbolKey(
                 } else {
                     MaterialTheme.colorScheme.outline
                 },
-                shape = RoundedCornerShape(8.dp),
+                shape = MaterialTheme.shapes.small,
             )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -192,7 +191,7 @@ private fun KeySymbolEditDialog(
         text = {
             Column {
                 OutlinedTextField(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.medium,
                     value = draft,
                     onValueChange = { if (it.codePointCount(0, it.length) <= 1) draft = it },
                     singleLine = true,

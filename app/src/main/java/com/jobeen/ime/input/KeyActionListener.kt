@@ -29,6 +29,7 @@ import com.jobeen.ime.skin.script.SkinScriptSandbox
 import com.jobeen.ime.skin.script.SkinScriptStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
@@ -76,13 +77,18 @@ class KeyActionListener(
         // 经回调以 post 重建键盘，不在分发中途同步重建）。
         // A5：事件带区分值（切方案／切类型／rime 选项取参数值，
         // 其余动作空），通知可按参数值匹配，不只按种类。
-        com.jobeen.ime.skin.runtime.SkinRuntimeState.onEvent(
-            com.jobeen.ime.skin.notify.NotificationEvent(
-                com.jobeen.ime.skin.notify.NotificationSource.KEYBOARD_ACTION,
-                com.jobeen.ime.skin.notify.NotificationActionNames.nameOf(action),
-                com.jobeen.ime.skin.notify.NotificationActionNames.valueOf(action),
-            ),
-        )
+        // 性能 §6：无通知表时不构造事件对象（nameOf／valueOf 查表
+        // ＋一次分配每键都在主线程）；onEvent 内部同样先判空，
+        // 此处只是把构造挪到判空之后。
+        if (com.jobeen.ime.skin.runtime.SkinRuntimeState.hasNotificationState) {
+            com.jobeen.ime.skin.runtime.SkinRuntimeState.onEvent(
+                com.jobeen.ime.skin.notify.NotificationEvent(
+                    com.jobeen.ime.skin.notify.NotificationSource.KEYBOARD_ACTION,
+                    com.jobeen.ime.skin.notify.NotificationActionNames.nameOf(action),
+                    com.jobeen.ime.skin.notify.NotificationActionNames.valueOf(action),
+                ),
+            )
+        }
         when (action) {
             is KeyboardAction.KeySequenceAction -> {
                 engine?.processKey(service, action.asKeyEvent())
@@ -184,14 +190,12 @@ class KeyActionListener(
 
             // 子动作间停顿（delay，combine 专用）：分发线程有界
             // 阻塞；毫秒上限解析期已钳（≤1000ms），此处不二次钳制。
+            // 2026-11-16 N8：单发 DelayAction 不再睡分发线程——
+            // combine 之外的裸 delay 后面没有待分发的动作，睡
+            // 眠只会白白阻塞主线程；combine 内的 delay 由
+            // dispatchCombine 改走 appScope 非阻塞延时（见下）。
             is KeyboardAction.DelayAction -> {
-                if (action.ms > 0) {
-                    try {
-                        Thread.sleep(action.ms.toLong())
-                    } catch (ex: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                    }
-                }
+                // No-op：combine 专用，见 dispatchCombine。
             }
 
             // 回车精简决策：软回车键不再经 processKey 的状态键
@@ -447,9 +451,13 @@ class KeyActionListener(
 
             // 组合动作（审计 E：combine）：直接分发路径按序递归；
             // 窗口路径由窗口包装先展开（子动作各经 transformed），
-            // 不会到达此处。
+            // 不会到达此处。delay 子动作改走 appScope 非阻塞延时
+            // （2026-11-16 N8）：旧实现在分发线程 Thread.sleep，
+            // 最长 1s 冻住主线程；现只同步分发 delay 之前的子动作，
+            // 余部延时后在主线程续分发（appScope 即 MainScope，
+            // 执行线程不变），延时中换输入框则门控丢弃余部。
             is KeyboardAction.CombineAction -> {
-                for (sub in action.actions) onKeyAction(sub)
+                dispatchCombine(action.actions)
             }
 
             // 打开链接（审计 E：openURL）：白名单外一律丢弃记日志。
@@ -733,6 +741,34 @@ class KeyActionListener(
         com.jobeen.ime.skin.perf.PerfMonitor.noteStage(
             com.jobeen.ime.skin.perf.PerfMonitor.Event.KEY_DISPATCH, dispatchStart,
         )
+    }
+
+    /**
+     * 组合动作分发（2026-11-16 N8）：同步分发首个 delay 之前的子动作；
+     * 遇 delay 时余部改走 appScope 挂起延时（delay，不睡线程），到期
+     * 后在主线程续分发；多 delay 递归同理。延时中换输入框（纪元推进）
+     * 时门控丢弃余部（与 RunScriptAction 的回切分发同口径），不向
+     * 旧框分发。delay ≤ 0 或余部为空时不启动协程，直接续分发／返回。
+     */
+    private fun dispatchCombine(actions: List<KeyboardAction>) {
+        val split = splitCombineAtDelay(actions)
+        for (sub in split.prefix) onKeyAction(sub)
+        val delayMs = split.delayMs ?: return
+        if (split.rest.isEmpty()) return
+        if (delayMs <= 0) {
+            dispatchCombine(split.rest)
+            return
+        }
+        val capturedEpoch = inputKeyGate.capture()
+        appScope.launch {
+            delay(delayMs.toLong())
+            if (inputKeyGate.check(capturedEpoch, "combine_delayed")
+                !is InputKeyGateResult.Allow
+            ) {
+                return@launch
+            }
+            dispatchCombine(split.rest)
+        }
     }
 
     /**
@@ -1038,3 +1074,24 @@ internal fun resolveSpanClearConnection(
     active: InputConnection?,
     current: InputConnection?,
 ): InputConnection? = active ?: current
+
+/** combine 在首个 delay 处的切分（纯函数，可单测）。 */
+internal data class CombineSplit(
+    /** delay 之前的子动作（同步分发）。 */
+    val prefix: List<KeyboardAction>,
+    /** 首个 delay 的毫秒数；无 delay 时为 null。 */
+    val delayMs: Int?,
+    /** delay 之后的子动作（延时后续分发）。 */
+    val rest: List<KeyboardAction>,
+)
+
+internal fun splitCombineAtDelay(actions: List<KeyboardAction>): CombineSplit {
+    val index = actions.indexOfFirst { it is KeyboardAction.DelayAction }
+    if (index < 0) return CombineSplit(actions, null, emptyList())
+    val delayMs = (actions[index] as KeyboardAction.DelayAction).ms
+    return CombineSplit(
+        prefix = actions.subList(0, index),
+        delayMs = delayMs,
+        rest = actions.subList(index + 1, actions.size),
+    )
+}

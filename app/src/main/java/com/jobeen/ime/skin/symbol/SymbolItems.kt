@@ -23,12 +23,17 @@ import kotlinx.serialization.json.JsonPrimitive
 sealed interface SymbolItem {
     val displayText: String
 
+    /** 提交文本：Plain 取文本，LabelValue 取值，动作项取标签。 */
+    val commitText: String
+
     data class Plain(val text: String) : SymbolItem {
         override val displayText: String get() = text
+        override val commitText: String get() = text
     }
 
     data class LabelValue(val label: String, val value: String) : SymbolItem {
         override val displayText: String get() = label
+        override val commitText: String get() = value
     }
 
     data class LabelActionStyle(
@@ -37,6 +42,7 @@ sealed interface SymbolItem {
         val styleName: String = "",
     ) : SymbolItem {
         override val displayText: String get() = label
+        override val commitText: String get() = label
     }
 }
 

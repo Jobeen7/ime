@@ -71,6 +71,25 @@ object KeyOverrideApplier {
             ?.second == T9_SYMBOLS_COLLECTION_STABLE_ID
 
     /**
+     * numericSymbols 集合键（Bin 皮肤数字键盘左竖栏 tall 键，源包
+     * .cskin 的 numericSymbols 类型节点）：转换器只产一个空键
+     * （label ""、tap none、rowSpan 3），集合内容在 skin.json 顶层
+     * numericSymbols（转换器 A③补发，App SkinValidator 解析进快照）。
+     * 有皮肤内容为准；皮肤未声明时按源包 13 项（"()" 是一整项，
+     * "*" 的提交字符就是 "*"，显示 "×" 只是源包前景写法）。
+     * 皮肤若自带前景层（覆写写了 foregroundLayers）则以皮肤为准，不合成。
+     */
+    const val NUMERIC_SYMBOLS_COLLECTION_STABLE_ID = "numericSymbolsCollection"
+    val NUMERIC_SYMBOLS_COLLECTION_DEFAULT = listOf(
+        "+", "-", "*", "/", "()", ".", "@", ",", "#", ":", "_", "?", "￥",
+    )
+
+    /** 逻辑 ID 的 stableId 是否为 numericSymbols 集合键。 */
+    fun isNumericSymbolsCollectionKey(def: KeyDef): Boolean =
+        com.jobeen.ime.skin.layout.LayoutModel.parseLogicalId(def.id ?: "")
+            ?.second == NUMERIC_SYMBOLS_COLLECTION_STABLE_ID
+
+    /**
      * 动态文字刷新取值（纯函数）：动态值非空取动态值，否则回退
      * 静态文本；动态值本身绝不记日志（调用方只传值、不记日志）。
      */
@@ -365,16 +384,27 @@ object KeyOverrideApplier {
         val hasT9SymbolsCollection = factoryLayout.any { row ->
             row.any { isT9SymbolsCollectionKey(it) }
         }
+        // numericSymbols 集合键同理：无触发项时也须进装配（合成 13 项
+        // 符号层＋分区标记），否则数字左栏永为空键。
+        val hasNumericSymbolsCollection = factoryLayout.any { row ->
+            row.any { isNumericSymbolsCollectionKey(it) }
+        }
         if (overrides.isEmpty() && !hasGlobalSound && snapshot.keyStyles.isEmpty() &&
             snapshot.keyGeometries.isEmpty() && snapshot.textSizes.isEmpty() &&
             notifications.isEmpty() &&
             keyAnim == null && spaceAnim == null &&
-            !hasInlineKeyStyle && !hasT9SymbolsCollection
+            !hasInlineKeyStyle && !hasT9SymbolsCollection && !hasNumericSymbolsCollection
         ) {
             return factoryLayout
         }
 
         val effectiveScheme = scheme ?: snapshot.colorScheme
+        // 数字集合键合成内容（构建期算一次，每键同值）：皮肤
+        // numericSymbols 为准，未声明时按源包 13 项。
+        val numericCollectionSymbols: List<String> =
+            snapshot.numericSymbols?.items?.map { it.commitText }
+                ?.takeIf { it.isNotEmpty() }
+                ?: NUMERIC_SYMBOLS_COLLECTION_DEFAULT
         // apply 缓存（性能 ③）：守卫已过（有触发项才到这里），命中直接复用。
         val cacheKey = ApplyCacheKey(
             layoutName = layoutName,
@@ -463,6 +493,7 @@ object KeyOverrideApplier {
                     style != null || geometry != null || animations != null ||
                     widthChanged || latched != null ||
                     animForKey != null || isT9SymbolsCollectionKey(def) ||
+                    isNumericSymbolsCollectionKey(def) ||
                     (snapshot.textSizes.isNotEmpty() &&
                         def.appearance is KeyDef.Appearance.Text)
                 if (!needsCopy) {
@@ -486,6 +517,7 @@ object KeyOverrideApplier {
                         layoutName = layoutName,
                         latched = latched,
                         keyAnimation = animForKey,
+                        numericSymbols = numericCollectionSymbols,
                     )
                 }
             }
@@ -846,6 +878,8 @@ object KeyOverrideApplier {
         latched: com.jobeen.ime.skin.notify.SkinNotification? = null,
         /** 按键动效（2026-10-29 item-1）：本键生效规格（null = 无动效）。 */
         keyAnimation: com.jobeen.ime.skin.model.KeyAnimationSpec? = null,
+        /** 数字集合键合成内容（apply() 构建期算一次，每键同值）。 */
+        numericSymbols: List<String> = NUMERIC_SYMBOLS_COLLECTION_DEFAULT,
     ): KeyDef {
         // ---- 主显文本：锁定通知 label > 动态快照 > 静态 label（占位替换） > 出厂 ----
         // 静态文本另存为动态回退（运行时刷新无值时回落此处）。
@@ -916,18 +950,26 @@ object KeyOverrideApplier {
             }
         }
 
-        // ---- t9Symbols 集合键：皮肤未给前景层时按 demo 合成四符号层 ----
-        // 层数 4 恰为 KeyForegroundLayer.MAX_LAYERS；颜色/字号不写，
-        // 走 resolveForeground 的默认回落（副文字色／SUB 档位）；
-        // biasY 四等分居中（0.125/0.375/0.625/0.875），与抬手分区同口。
-        // 装饰开关不压制此处合成——四符号是本键的功能内容，不是装饰。
-        val collectionSymbols = if (isT9SymbolsCollectionKey(def) &&
-            override?.foregroundLayers.isNullOrEmpty()
-        ) {
-            T9_SYMBOLS_COLLECTION_DEFAULT
-        } else {
-            null
-        }
+        // ---- 集合键合成（与 T9 同形）：皮肤未给前景层时按集合内容合成符号层 ----
+        // 仅文本外观键走此路：SidePannel 外观的集合键不合成——内容由侧栏
+        // 面板项供给（GenericLayoutKeyboard）；合成了会在抬手时与面板点选
+        // 双重提交（BaseKeyboard 的分区钩子对所有 KeyView 生效）。
+        // T9 层数 4 恰为 KeyForegroundLayer.MAX_LAYERS；数字 13 层走同一
+        // resolveForeground（解析期上限只卡 skin.json 覆写层，装配期合成
+        // 不受其限）；颜色/字号不写，走默认回落；biasY 按项数等分居中，
+        // 与抬手分区同口。装饰开关不压制此处合成——符号是本键的功能内容。
+        val collectionSymbols: List<String>? =
+            if (def.appearance !is KeyDef.Appearance.SidePannel &&
+                override?.foregroundLayers.isNullOrEmpty()
+            ) {
+                when {
+                    isT9SymbolsCollectionKey(def) -> T9_SYMBOLS_COLLECTION_DEFAULT
+                    isNumericSymbolsCollectionKey(def) -> numericSymbols
+                    else -> null
+                }
+            } else {
+                null
+            }
         val collectionLayers = collectionSymbols?.mapIndexed { index, symbol ->
             KeyForegroundLayer(
                 type = "text",
@@ -972,7 +1014,7 @@ object KeyOverrideApplier {
         // 精灵图引用槽（工具项 8）：渲染期按 sheet+子图裁剪，见 KeyView 面层。
         appearance.skinFaceSpriteRef = imageSpriteRef
 
-        // t9Symbols 集合键分区标记：渲染层按抬手 Y 落区提交符号。
+        // 集合键分区标记（t9Symbols／numericSymbols）：渲染层按抬手 Y 落区提交符号。
         if (collectionSymbols != null) {
             appearance.symbolZoneSymbols = collectionSymbols
         }

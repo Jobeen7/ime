@@ -145,7 +145,7 @@ internal fun SettingsLegend(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
+                .clip(MaterialTheme.shapes.medium)
                 .background(Color(style.background))
                 .padding(10.dp),
         ) {

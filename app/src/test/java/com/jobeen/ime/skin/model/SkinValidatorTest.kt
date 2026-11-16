@@ -532,4 +532,33 @@ class SkinValidatorTest {
         )
         assertEquals("topRight", result.skin.floatingCandidate.fallbackPosition)
     }
+
+    @Test
+    fun unknownStyleKey_warnsButDoesNotReject() {
+        // 导入校验分级（2026-11-16，MIE 式）：styles 板内未知键记警告、
+        // 导入照常通过（不拒包）；顶层未知键早已是同口径（透传＋issues）。
+        val result = valid(
+            """{"formatVersion": 3,
+                "styles": {"keyBackground": "#FFFFFFFF",
+                           "keyBackgroud": "#FF000000",
+                           "panel": {"candidateText": "#FF000000", "unknownKey": "#FF000000"}}}""",
+        )
+        val issues = result.issues
+        assertTrue(
+            issues.any {
+                it.path == "styles.keyBackgroud" &&
+                    it.kind == SkinIssue.Kind.FIELD_FALLBACK &&
+                    it.detail == "unknown_style_field"
+            },
+        )
+        assertTrue(
+            issues.any {
+                it.path == "styles.panel.unknownKey" &&
+                    it.kind == SkinIssue.Kind.FIELD_FALLBACK &&
+                    it.detail == "unknown_style_field"
+            },
+        )
+        // 已知键照常解析。
+        assertEquals(0xFFFFFFFF.toInt(), result.skin.styles.colors[StyleField.KEY_BACKGROUND])
+    }
 }

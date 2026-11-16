@@ -54,9 +54,9 @@ class BuiltinFallbackLayoutTest {
         val sums = BuiltinFallbackLayout.layout().map { row ->
             row.sumOf { it.appearance.percentWidth.toDouble() }.toFloat()
         }
-        // 行 1/3/4 和为 1.0；行 2 九键各 0.1，和为 0.9（出厂同款，
-        // BaseKeyboard 以 spanScale 归一，逐像素行为与出厂一致）。
-        val expected = listOf(1.0f, 0.9f, 1.0f, 1.0f)
+        // N4 行和不变量（2026-11-16）：四行和均为 1.0——旧口径
+        // 行 2 九键各 0.1＝0.9 是违反（与出厂 Qwerty 同修：A/L 0.15）。
+        val expected = listOf(1.0f, 1.0f, 1.0f, 1.0f)
         assertEquals(expected.size, sums.size)
         expected.zip(sums).forEach { (want, got) ->
             assertEquals(want, got, 0.001f)

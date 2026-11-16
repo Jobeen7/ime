@@ -182,9 +182,11 @@ class QwertyKeyboard(
                 altTextTranslationY: Int = 2,
                 mainTextTranslationY: Int = -2,
                 id: String? = null,
+                percentWidth: Float = 0.1f,
             ) = alphabetKey(
                 character, punctuation, altTextTranslationY, mainTextTranslationY, id,
                 hintText = if (shuangpinHint) ShuangpinHint.hintFor(character[0]) else null,
+                percentWidth = percentWidth,
             )
             return listOf(
                 listOf(
@@ -200,7 +202,10 @@ class QwertyKeyboard(
                     letter("p", "0", id = KeyIds.Qwerty.KEY_P),
                 ),
                 listOf(
-                    letter("a", "~", id = KeyIds.Qwerty.KEY_A),
+                    // A 行：首尾键各 0.15、中间 7 键各 0.1，行和 1.0
+                    // （元书口径，与皮肤 26 键 A② 同款；旧实现 9 键各
+                    // 0.1＝0.9，行内键被 spanScale 拉伸 11%，见 N4）。
+                    letter("a", "~", id = KeyIds.Qwerty.KEY_A, percentWidth = 0.15f),
                     letter("s", "!", id = KeyIds.Qwerty.KEY_S),
                     letter("d", "@", id = KeyIds.Qwerty.KEY_D),
                     letter("f", "#", id = KeyIds.Qwerty.KEY_F),
@@ -208,7 +213,7 @@ class QwertyKeyboard(
                     letter("h", "%", id = KeyIds.Qwerty.KEY_H),
                     letter("j", "^", id = KeyIds.Qwerty.KEY_J, altTextTranslationY = 4),
                     letter("k", "&", id = KeyIds.Qwerty.KEY_K),
-                    letter("l", "*", id = KeyIds.Qwerty.KEY_L, altTextTranslationY = 4),
+                    letter("l", "*", id = KeyIds.Qwerty.KEY_L, altTextTranslationY = 4, percentWidth = 0.15f),
                 ),
                 listOf(
                     capsLockKey(id = KeyIds.Qwerty.KEY_CAPS),

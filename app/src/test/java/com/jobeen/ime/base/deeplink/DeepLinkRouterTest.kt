@@ -52,12 +52,18 @@ class DeepLinkRouterTest {
     }
 
     @Test
-    fun `query key is decoded and value kept raw`() {
+    fun `query key and value are both decoded`() {
         val target = resolve("jime://com.jobeen.ime/phrase?id=42&name=a+b&x=%26")!!
         assertEquals("42", target.params["id"])
-        // 键里的 + 先换 %2B 再解码：name 的键仍是 name；值取 = 之后原文。
+        // 值与键同口径解码（2026-11-16 N9）：+ 先换 %2B 再解码，
+        // 故值里的 + 仍是字面加号；%26 解成 &。
         assertEquals("a+b", target.params["name"])
-        assertEquals("%26", target.params["x"])
+        assertEquals("&", target.params["x"])
+        // 值里的 %20 解成空格、中文 %XX 解成原文。
+        val target2 = resolve(
+            "jime://com.jobeen.ime/phrase?title=%E4%B8%AD%E6%96%87%20a",
+        )!!
+        assertEquals("中文 a", target2.params["title"])
     }
 
     @Test

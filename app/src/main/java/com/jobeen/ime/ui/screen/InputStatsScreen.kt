@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
@@ -265,7 +264,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                                     MaterialTheme.colorScheme.secondaryContainer,
                                 ),
                             ),
-                            RoundedCornerShape(20.dp),
+                            MaterialTheme.shapes.large,
                         )
                         .padding(16.dp),
                 ) {
@@ -279,7 +278,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                                 modifier = Modifier
                                     .background(
                                         onHero.copy(alpha = 0.2f),
-                                        RoundedCornerShape(12.dp),
+                                        MaterialTheme.shapes.medium,
                                     )
                                     .padding(horizontal = 10.dp, vertical = 4.dp),
                             ) {
@@ -401,7 +400,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 val t = stats.total
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -443,7 +442,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 // 不受方案过滤影响，与 hero 同口径）。
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -478,7 +477,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 val wlTotal = single + double + multi
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -527,7 +526,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 // 码长分布卡：无干净采集源，只留空态（不建脏近似采集）。
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -552,7 +551,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 val heatTotal = heat.values.sum()
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -849,7 +848,7 @@ private fun DistributionBar(fraction: Float, modifier: Modifier = Modifier) {
             .height(8.dp)
             .background(
                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
-                RoundedCornerShape(4.dp),
+                MaterialTheme.shapes.extraSmall,
             ),
     ) {
         if (fraction > 0f) {
@@ -859,7 +858,7 @@ private fun DistributionBar(fraction: Float, modifier: Modifier = Modifier) {
                     .height(8.dp)
                     .background(
                         MaterialTheme.colorScheme.primary,
-                        RoundedCornerShape(4.dp),
+                        MaterialTheme.shapes.extraSmall,
                     ),
             )
         }

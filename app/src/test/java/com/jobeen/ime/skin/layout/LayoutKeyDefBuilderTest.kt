@@ -373,4 +373,52 @@ class LayoutKeyDefBuilderTest {
         assertNull(plain.skinStyleRef)
         assertNull(plain.skinStyleOverrides)
     }
+
+    // ---- 2026-11-16 debug 问题 1/2：集合键转 SidePannel ----
+
+    @Test
+    fun collectionKeys_buildAsSidePanel() {
+        val layout = layoutOf(
+            listOf(
+                key(
+                    "t9SymbolsCollection", label = "", weight = 1.8, rowSpan = 3,
+                    tap = SkinAction.Command(WhitelistAction.NONE),
+                ),
+                key("t91", weight = 2.133),
+                key("t92", weight = 2.133),
+                key("t93", weight = 2.133),
+            ),
+        )
+        val built = LayoutKeyDefBuilder.build(layout, emptyMap())
+        val panel = built[0][0]
+        val appearance = panel.appearance as KeyDef.Appearance.SidePannel
+        assertEquals(3, appearance.rowSpan)
+        assertEquals(4, appearance.visableRow)
+        assertTrue(panel.behaviors.isEmpty())
+        assertEquals("lay-1:K-t9SymbolsCollection", panel.id)
+        // 普通键不受影响
+        assertTrue(built[0][1].appearance is KeyDef.Appearance.Text)
+    }
+
+    @Test
+    fun numericCollectionKey_buildsAsSidePanel() {
+        val layout = layoutOf(
+            listOf(
+                key(
+                    "numericSymbolsCollection", label = "", weight = 1.8, rowSpan = 3,
+                    tap = SkinAction.Command(WhitelistAction.NONE),
+                ),
+                key("one", weight = 2.133),
+                key("two", weight = 2.133),
+                key("three", weight = 2.133),
+            ),
+        )
+        val built = LayoutKeyDefBuilder.build(layout, emptyMap())
+        val panel = built[0][0]
+        val appearance = panel.appearance as KeyDef.Appearance.SidePannel
+        assertEquals(3, appearance.rowSpan)
+        assertEquals(4, appearance.visableRow)
+        assertTrue(panel.behaviors.isEmpty())
+        assertEquals("lay-1:K-numericSymbolsCollection", panel.id)
+    }
 }

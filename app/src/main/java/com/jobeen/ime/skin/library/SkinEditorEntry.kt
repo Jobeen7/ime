@@ -98,6 +98,38 @@ object SkinEditorEntry {
         )
     }
 
+    /** 打开可视化皮肤编辑器（皮肤库卡片 ⋮ 菜单“编辑外观”）。 */
+    fun openVisualEditor(context: Context, skinId: String? = null) {
+        scope.launch {
+            val saver = SkinEditorSaver(context.applicationContext)
+            val active = when (val resolved = saver.resolveActiveFiles()) {
+                is ResolveActiveResult.Unavailable -> {
+                    toastResolveFailed(context, resolved.reason)
+                    return@launch
+                }
+                is ResolveActiveResult.Ok -> resolved.files
+            }
+            // 可视化编辑器只编生效皮肤（保存链以活动记录为准）：
+            // 指定皮肤未生效时不静默改编别的皮肤，只提示。
+            if (skinId != null && skinId != active.skinId) {
+                ToastUtil.showToast(
+                    context,
+                    context.getString(R.string.visual_editor_skin_not_active),
+                )
+                return@launch
+            }
+            openVisualEditorActivity(context, active.skinId)
+        }
+    }
+
+    private fun openVisualEditorActivity(context: Context, skinId: String) {
+        val intent = SkinEditorActivity.visualIntent(context, skinId)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }.onFailure {
+            Timber.w(it, "skin editor: startActivity failed (visual)")
+        }
+    }
+
     private fun openEditor(context: Context, filePath: String) {
         val intent = SkinEditorActivity.intent(context, filePath)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

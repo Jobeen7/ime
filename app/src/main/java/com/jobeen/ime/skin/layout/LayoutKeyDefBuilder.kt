@@ -173,8 +173,24 @@ object LayoutKeyDefBuilder {
         // 空格键与出厂同待遇：viewId 供 BaseKeyboard 的空格文案
         // 下发命中（皮肤空格文案优先，无文案时回落方案名），边框走 Special
         val isSpace = tapAction is KeyboardAction.SpaceAction
-        return KeyDef(
-            appearance = KeyDef.Appearance.Text(
+        // 集合键（t9Symbols／numericSymbols 左竖栏 tall 键）：转 SidePannel
+        // 外观，复用出厂 SidePanelKeyView（可滑面板），不作静态文本键。
+        // 形态与出厂 sidePannelKey 同口径（rowSpan 取布局值、visableRow 4、
+        // Variant.Alternative、无行为）；内容由 GenericLayoutKeyboard
+        // 经 updateSidePanel 喂面板项，不由覆写装配器合成前景层——
+        // 合成了会在抬手时与面板点选双重提交。
+        val isCollectionKey =
+            key.stableId == KeyOverrideApplier.T9_SYMBOLS_COLLECTION_STABLE_ID ||
+                key.stableId == KeyOverrideApplier.NUMERIC_SYMBOLS_COLLECTION_STABLE_ID
+        val appearance = if (isCollectionKey) {
+            KeyDef.Appearance.SidePannel(
+                rowSpan = key.rowSpan,
+                visableRow = 4,
+                percentWidth = percentWidth,
+                variant = KeyDef.Appearance.Variant.Alternative,
+            )
+        } else {
+            KeyDef.Appearance.Text(
                 displayText = label,
                 textSize = TEXT_SIZE,
                 percentWidth = percentWidth,
@@ -189,8 +205,11 @@ object LayoutKeyDefBuilder {
                 alignSpanEnd = key.alignSpanEnd,
                 spanCol = key.spanCol,
                 spanColEnd = key.spanColEnd,
-            ),
-            behaviors = behaviors,
+            )
+        }
+        return KeyDef(
+            appearance = appearance,
+            behaviors = if (isCollectionKey) emptySet() else behaviors,
             popups = popups,
             id = LayoutModel.logicalId(layoutId, key.stableId),
         ).also {

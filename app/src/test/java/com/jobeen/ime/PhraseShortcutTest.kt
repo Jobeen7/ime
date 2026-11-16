@@ -46,6 +46,18 @@ class PhraseShortcutTest {
     }
 
     @Test
+    fun isEmptyShortcutCode_emptyOrSeparatorsOnly_isEmpty() {
+        // 空码不查库（2026-11-16 debug 问题 3）：空串／仅分隔符
+        // 归一化后为空，查库会命中全部 shortcut="" 的种子默认常用语。
+        assertTrue(PhraseManager.isEmptyShortcutCode(""))
+        assertTrue(PhraseManager.isEmptyShortcutCode(" "))
+        assertTrue(PhraseManager.isEmptyShortcutCode("'"))
+        assertTrue(PhraseManager.isEmptyShortcutCode(" ' "))
+        assertFalse(PhraseManager.isEmptyShortcutCode("rq"))
+        assertFalse(PhraseManager.isEmptyShortcutCode("ni hao"))
+    }
+
+    @Test
     fun validateShortcut_tooShortOrTooLong_errors() {
         assertEquals(
             R.string.phrase_shortcut_length_error,

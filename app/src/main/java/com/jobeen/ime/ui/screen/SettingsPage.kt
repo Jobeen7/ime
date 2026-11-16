@@ -28,7 +28,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -257,7 +256,7 @@ fun SettingsDialog(
 ) {
     Dialog(onDismissRequest = onDismissRequest) {
         Card(
-            shape = RoundedCornerShape(28.dp),
+            shape = MaterialTheme.shapes.extraLarge,
             colors = CardDefaults.cardColors(
                 // 弹出卡片面＝surfaceContainerHigh（缺省）；调用方可显式覆盖。
                 // 框内分区卡为 surface，两层色阶区分。
@@ -291,7 +290,7 @@ fun SettingsDialog(
                 sections.forEach { (sectionTitle, sectionContent) ->
                     Card(
                         modifier = Modifier.padding(horizontal = 24.dp),
-                        shape = RoundedCornerShape(20.dp),
+                        shape = MaterialTheme.shapes.large,
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.surface,
                         ),

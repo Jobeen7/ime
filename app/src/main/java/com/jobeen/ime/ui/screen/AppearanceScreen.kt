@@ -1338,7 +1338,7 @@ private fun GlobalStyleSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(MaterialTheme.shapes.large)
             .background(MaterialTheme.colorScheme.surface),
     ) {
         Row(
@@ -1533,7 +1533,7 @@ private fun GlobalStylePreview(style: GlobalStylePreviewStyle) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(MaterialTheme.shapes.large)
             .background(Color(style.background))
             .padding(16.dp),
     ) {

@@ -32,8 +32,6 @@ import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
 import com.jobeen.ime.skin.symbol.EmojiBoardBuilder
-import com.jobeen.ime.skin.symbol.EmojiCustomStore
-import com.jobeen.ime.skin.symbol.SharedPrefsEmojiCustomStore
 import com.jobeen.ime.skin.symbol.EmojiSearchIndex
 import com.jobeen.ime.skin.symbol.RecentEmojiOps
 import com.jobeen.ime.skin.symbol.RecentEmojiStore
@@ -128,14 +126,13 @@ class EmojiKeyboard(
         TextKeyView(context, colors, returnKeyDef.appearance as KeyDef.Appearance.Text)
 
     /**
-     * 二级面板数据源：用户自定义分组（7.4）＞ 皮肤二级表，否则既有一级表
+     * 二级面板数据源：皮肤二级表，否则既有一级表
      * 转二级（每父仅一“全部”子类，此时子条隐藏、行为与旧板一致）；
      * 最近使用（7.1）拼到首组前面（见 [EmojiBoardBuilder]）。
-     * 板在每次附着（reset）时重建：最近使用／自定义分组改了，
+     * 板在每次附着（reset）时重建：最近使用改了，
      * 下次打开面板即跟变。
      */
     private val recentStore: RecentEmojiStore = SharedPrefsRecentEmojiStore(context)
-    private val customStore: EmojiCustomStore = SharedPrefsEmojiCustomStore(context)
 
     private var twoStageSymbols: SubClassifiedSymbols =
         EmojiBoardBuilder.build(recentStore.load(), SkinSnapshotProvider.peek()?.subClassifiedSymbols)
@@ -301,13 +298,11 @@ class EmojiKeyboard(
         addView(rippleView, LayoutParams(matchParent, matchParent))
     }
 
-    /** 板重建（最近使用／自定义分组／皮肤表任一变了，下次附着即跟变）。 */
+    /** 板重建（最近使用／皮肤表任一变了，下次附着即跟变）。 */
     private fun rebuildBoard() {
         twoStageSymbols = EmojiBoardBuilder.build(
             recentStore.load(),
             SkinSnapshotProvider.peek()?.subClassifiedSymbols,
-            // 用户自定义分组（7.4）：有存档时面板改用自定义分组。
-            customGroups = customStore.load()?.groups?.map { it.label to it.symbols },
         )
         boardState = SubClassifiedBoardState(twoStageSymbols)
         boardState.selectParent(0)

@@ -282,21 +282,26 @@ class BinSkinFidelityTest {
     // ---------- ① 左侧符号栏（demo：tall 键四符号 `,.?!` 纵向排布） ----------
 
     @Test
-    fun t9SymbolsCollection_rendersFourSymbolsWithZones() {
+    fun t9SymbolsCollection_buildsAsSidePanel() {
+        // 任务 C（2026-11-16）：自创布局的集合键建 SidePannel 外观，
+        // 复用出厂 SidePanelKeyView（可滑面板），不再是静态文本键。
+        // 旧断言（文本键＋装配期合成四前景层）是 C 之前的机制：合成
+        // 只作用于文本外观键，SidePannel 的内容改由 GenericLayoutKeyboard
+        // 经 updateSidePanel 喂面板项（UserSymbolBar 17 项）；合成路径
+        // 本身仍在 KeyOverrideApplier 内（见 KeyOverrideApplierTest）。
         val entries = binJimeEntries()
         val snapshot = buildSnapshot(entries)
         val rows = assembled(entries, snapshot, "layouts/bin-pinyin.json")
         val tall = findKey(rows, "bin-pinyin:K-t9SymbolsCollection")
-        // 布局键本身仍是空键（label ""、tap none），符号由装配期按 demo
-        // 合成：四前景文字层纵向四等分居中 + 分区标记（渲染层按抬手 Y 落区提交）。
-        assertEquals("", textOf(tall))
-        val layers = layersOf(tall)
-        assertEquals(listOf(",", ".", "?", "!"), layers.map { it.text })
-        assertEquals(listOf(0.125f, 0.375f, 0.625f, 0.875f), layers.map { it.biasY })
-        assertEquals(
-            listOf(",", ".", "?", "!"),
-            tall.appearance.symbolZoneSymbols,
+        val appearance = tall.appearance
+        assertTrue(
+            "collection key must be SidePannel, got ${appearance.javaClass.simpleName}",
+            appearance is KeyDef.Appearance.SidePannel,
         )
+        appearance as KeyDef.Appearance.SidePannel
+        assertEquals(3, appearance.rowSpan)
+        assertEquals(4, appearance.visableRow)
+        assertEquals(KeyDef.Appearance.Variant.Alternative, appearance.variant)
         assertNull(snapshot.t9Symbols)
     }
 

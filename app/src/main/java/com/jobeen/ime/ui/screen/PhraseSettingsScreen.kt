@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -99,7 +98,7 @@ fun PhraseSettingsScreen(
         onBack = onBack,
     ) {
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = query,
             onValueChange = { query = it },
             singleLine = true,
@@ -291,7 +290,7 @@ private fun PhraseEditPage(
         onBack = onBack,
     ) {
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = text,
             onValueChange = { text = it },
             label = { Text(stringResource(R.string.phrase_text_hint)) },
@@ -301,7 +300,7 @@ private fun PhraseEditPage(
         )
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = label,
             onValueChange = { label = it },
             label = { Text(stringResource(R.string.phrase_label_hint)) },
@@ -310,7 +309,7 @@ private fun PhraseEditPage(
         )
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = shortcut,
             onValueChange = {
                 shortcut = it.lowercase()
@@ -326,7 +325,7 @@ private fun PhraseEditPage(
         )
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = category,
             onValueChange = { category = it },
             label = { Text(stringResource(R.string.phrase_category_label)) },
@@ -335,7 +334,7 @@ private fun PhraseEditPage(
         )
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = tags,
             onValueChange = { tags = it },
             label = { Text(stringResource(R.string.phrase_tags_label)) },
@@ -427,7 +426,7 @@ private fun VariableRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = draft.key,
             onValueChange = { draft.key = it },
             label = { Text("key") },
@@ -436,7 +435,7 @@ private fun VariableRow(
         )
         Spacer(Modifier.width(8.dp))
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = draft.value,
             onValueChange = { draft.value = it },
             label = { Text("value") },

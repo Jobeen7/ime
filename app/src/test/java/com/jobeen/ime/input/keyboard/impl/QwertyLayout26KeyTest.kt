@@ -43,9 +43,11 @@ class QwertyLayout26KeyTest {
 
     @Test
     fun defaultRowWidthsMatchFactory() {
-        // .19 原样：第 2 行 9 键 × 0.1 = 0.9，其余行和为 1.00。
+        // N4 行和不变量（2026-11-16）：第 2 行 A/L 各 0.15、中间 7 键
+        // 各 0.1，行和 1.0——旧口径 9 键各 0.1＝0.9 是违反（行内键被
+        // spanScale 拉伸 11%，A 行键比 Q 行宽），已按 A②／元书口径修。
         assertRowWidth(defaultLayout, 0, 1.0f)
-        assertRowWidth(defaultLayout, 1, 0.9f)
+        assertRowWidth(defaultLayout, 1, 1.0f)
         assertRowWidth(defaultLayout, 2, 1.0f)
         assertRowWidth(defaultLayout, 3, 1.0f)
     }

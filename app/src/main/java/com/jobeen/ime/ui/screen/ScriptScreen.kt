@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -120,7 +119,7 @@ fun ScriptScreen(
         onBack = onBack,
     ) {
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = query,
             onValueChange = { query = it },
             singleLine = true,
@@ -135,7 +134,7 @@ fun ScriptScreen(
                 modifier = Modifier.padding(vertical = 8.dp),
             )
             OutlinedTextField(
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
                 value = prefix,
                 onValueChange = {
                     prefix = it
@@ -318,7 +317,7 @@ private fun ScriptVariablesSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedTextField(
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
                 value = key,
                 onValueChange = { key = it },
                 label = { Text("key") },
@@ -327,7 +326,7 @@ private fun ScriptVariablesSection(
             )
             Spacer(Modifier.width(8.dp))
             OutlinedTextField(
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
                 value = value,
                 onValueChange = { value = it },
                 label = { Text("value") },
@@ -471,7 +470,7 @@ private fun ScriptEditPage(
         onBack = onBack,
     ) {
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = name,
             onValueChange = { name = it },
             label = { Text(stringResource(R.string.script_name_hint)) },
@@ -480,7 +479,7 @@ private fun ScriptEditPage(
         )
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = content,
             onValueChange = { content = it },
             label = { Text(stringResource(R.string.script_content_hint)) },
@@ -537,7 +536,7 @@ private fun ScriptEditPage(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedTextField(
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
                 value = newTagName,
                 onValueChange = { newTagName = it },
                 placeholder = { Text(stringResource(R.string.script_tags_hint)) },
@@ -565,7 +564,7 @@ private fun ScriptEditPage(
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.medium,
             value = runInput,
             onValueChange = { runInput = it },
             label = { Text(stringResource(R.string.script_run_input_hint)) },

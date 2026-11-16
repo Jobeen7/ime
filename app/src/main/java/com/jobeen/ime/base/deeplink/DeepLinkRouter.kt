@@ -134,14 +134,20 @@ object DeepLinkRouter {
             if (pair.isEmpty()) continue
             val eq = pair.indexOf('=')
             val rawKey = if (eq < 0) pair else pair.substring(0, eq)
-            val value = if (eq < 0) "" else pair.substring(eq + 1)
-            val key = runCatching {
-                URLDecoder.decode(rawKey.replace("+", "%2B"), Charsets.UTF_8.name())
-            }.getOrDefault(rawKey)
+            val rawValue = if (eq < 0) "" else pair.substring(eq + 1)
+            // 键与值同口径解码（2026-11-16 N9：旧实现只解键，值里的
+            // %XX／+ 原样进参数，含中文或空格的 query 值会错）。
+            // `+` 先换 %2B：值里的 `+` 是字面加号，不是空格。
+            val key = decodeQueryComponent(rawKey)
+            val value = decodeQueryComponent(rawValue)
             map[key] = value
         }
         return map
     }
+
+    private fun decodeQueryComponent(raw: String): String = runCatching {
+        URLDecoder.decode(raw.replace("+", "%2B"), Charsets.UTF_8.name())
+    }.getOrDefault(raw)
 }
 
 /**

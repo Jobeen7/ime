@@ -2,8 +2,6 @@
 
 package com.jobeen.ime.ui.screen
 
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,10 +19,9 @@ import com.jobeen.ime.R
 import com.jobeen.ime.skin.symbol.SharedPrefsRecentEmojiStore
 
 /**
- * Emoji 设置页（WO52 7.1／7.4）：
+ * Emoji 设置页（WO52 7.1）：
  *
- * - 7.1 最近使用：说明＋“重置常用 Emoji”按钮（清最近使用）；
- * - 7.4 自定义键盘：分组编辑区（见 [EmojiCustomSection]，本页内）。
+ * - 7.1 最近使用：说明＋“重置常用 Emoji”按钮（清最近使用）。
  * 改动下次打开 Emoji 面板时生效（面板每次附着重建数据源）。
  */
 @Composable
@@ -65,7 +62,5 @@ fun EmojiSettingsScreen(onBack: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp, top = 4.dp),
         )
-        Spacer(Modifier.height(20.dp))
-        EmojiCustomSection()
     }
 }

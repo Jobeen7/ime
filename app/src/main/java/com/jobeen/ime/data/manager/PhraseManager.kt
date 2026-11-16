@@ -144,9 +144,23 @@ object PhraseManager {
     fun normalizeShortcutCode(code: String): String =
         code.lowercase().replace(" ", "").replace("'", "")
 
+    /**
+     * 空码判定（纯函数，可单测）：归一化后为空即不查库——空码查库会
+     * 命中全部 shortcut="" 的种子默认常用语（2026-11-16 debug
+     * 问题 3）。与 validateShortcut 正交：空串是合法输入码，但
+     * 查库无意义。
+     */
+    internal fun isEmptyShortcutCode(code: String): Boolean =
+        normalizeShortcutCode(code).isEmpty()
+
     /** 输入码精确查询（WO52 6.1）：开关关着或输入码非法时直接返回空，不查库。 */
     suspend fun getByShortcut(context: Context, code: String): List<Phrase> {
         if (!isShortcutEnabled(context)) return emptyList()
+        // 空码（无组字／仅分隔符）直接返回空，不查库：空串是合法输入码
+        // （validateShortcut 不动——它判的是用户输入的合法性），但空
+        // 码查库会命中全部 shortcut="" 的种子默认常用语，导致没打字
+        // 候选栏却出词（2026-11-16 debug 问题 3）。
+        if (isEmptyShortcutCode(code)) return emptyList()
         // 多音节 preedit 含空格／' 分隔（全拼 "ni hao"、简拼 "d z"）：
         // 匹配前去掉分隔符再校验（"ni hao"→"nihao"，单音节行为不变；B-PH-1）。
         val normalized = normalizeShortcutCode(code)

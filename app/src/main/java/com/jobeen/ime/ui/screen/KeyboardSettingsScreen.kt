@@ -5,7 +5,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
@@ -279,7 +278,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                     Button(
                                         onClick = { soundPicker.launch(arrayOf("audio/*")) },
                                         enabled = keySoundEnabled && customSoundEnabled,
-                                        shape = RoundedCornerShape(20.dp),
+                                        shape = MaterialTheme.shapes.large,
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                     ) {
                                         Text(
@@ -300,7 +299,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                                 customSoundPath = ""
                                                 KeyboardManager.Keyboard.Feedback.setCustomSoundPath(context, "")
                                             },
-                                            shape = RoundedCornerShape(20.dp),
+                                            shape = MaterialTheme.shapes.large,
                                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                         ) {
                                             Text(
@@ -318,7 +317,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                     Button(
                                         onClick = { InputFeedbacks.previewSoundEffect(context) },
                                         enabled = keySoundEnabled,
-                                        shape = RoundedCornerShape(20.dp),
+                                        shape = MaterialTheme.shapes.large,
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                     ) {
                                         Text(

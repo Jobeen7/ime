@@ -62,6 +62,7 @@ class KeyOverrideApplierTest {
         keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap(),
         keyGeometries: Map<String, KeyStyleGeometry> = emptyMap(),
         keyAnimations: Map<String, KeyAnimationDef> = emptyMap(),
+        numericSymbols: com.jobeen.ime.skin.symbol.NumericSymbolsCollection? = null,
     ) = SkinSnapshot(
         ref = SkinGenRef("skin-1", "h".repeat(64), 1),
         name = "test",
@@ -76,6 +77,7 @@ class KeyOverrideApplierTest {
         keyStyles = keyStyles,
         keyGeometries = keyGeometries,
         keyAnimations = keyAnimations,
+        numericSymbols = numericSymbols,
     )
 
     private val noPlaceholders = emptyMap<String, String>()
@@ -1132,5 +1134,72 @@ class KeyOverrideApplierTest {
             KeyboardAction.AppKeyEventAction(61),
             result.swipeDownOf("X:K-q"),
         )
+    }
+
+    // ---------- 集合键合成（2026-11-16 debug 问题 1/2） ----------
+
+    private fun collectionKey(
+        stableId: String,
+        appearance: KeyDef.Appearance = KeyDef.Appearance.Text(
+            displayText = "", textSize = 18f, percentWidth = 0.1f,
+            variant = Variant.Normal, rowSpan = 3,
+        ),
+    ) = KeyDef(
+        appearance = appearance,
+        behaviors = emptySet(),
+        id = "bin-numeric:K-$stableId",
+    )
+
+    @Test
+    fun t9CollectionKey_textAppearance_synthesizesFourSymbols() {
+        val layout = listOf(listOf(collectionKey("t9SymbolsCollection")))
+        val result = KeyOverrideApplier.apply("bin-pinyin", layout, snapshot(), noPlaceholders)
+        assertEquals(
+            KeyOverrideApplier.T9_SYMBOLS_COLLECTION_DEFAULT,
+            result[0][0].appearance.symbolZoneSymbols,
+        )
+        assertEquals(4, result[0][0].appearance.skinForegroundLayers?.size)
+    }
+
+    @Test
+    fun numericCollectionKey_skinAbsent_fallsBackToSourceThirteen() {
+        val layout = listOf(listOf(collectionKey("numericSymbolsCollection")))
+        val result = KeyOverrideApplier.apply("bin-numeric", layout, snapshot(), noPlaceholders)
+        assertEquals(
+            KeyOverrideApplier.NUMERIC_SYMBOLS_COLLECTION_DEFAULT,
+            result[0][0].appearance.symbolZoneSymbols,
+        )
+        assertEquals(13, result[0][0].appearance.skinForegroundLayers?.size)
+    }
+
+    @Test
+    fun numericCollectionKey_skinContentWins() {
+        val snap = snapshot(
+            numericSymbols = com.jobeen.ime.skin.symbol.NumericSymbolsCollection(
+                items = listOf(
+                    com.jobeen.ime.skin.symbol.SymbolItem.Plain("A"),
+                    com.jobeen.ime.skin.symbol.SymbolItem.Plain("B"),
+                ),
+            ),
+        )
+        val layout = listOf(listOf(collectionKey("numericSymbolsCollection")))
+        val result = KeyOverrideApplier.apply("bin-numeric", layout, snap, noPlaceholders)
+        assertEquals(listOf("A", "B"), result[0][0].appearance.symbolZoneSymbols)
+        assertEquals(2, result[0][0].appearance.skinForegroundLayers?.size)
+    }
+
+    @Test
+    fun collectionKey_sidePanelAppearance_skipsSynthesis() {
+        // SidePannel 键的内容由面板项供给；合成了会在抬手时与面板点选双重提交。
+        val panelKey = collectionKey(
+            "numericSymbolsCollection",
+            appearance = KeyDef.Appearance.SidePannel(
+                rowSpan = 3, visableRow = 4, percentWidth = 0.1f,
+            ),
+        )
+        val layout = listOf(listOf(panelKey))
+        val result = KeyOverrideApplier.apply("bin-numeric", layout, snapshot(), noPlaceholders)
+        assertNull(result[0][0].appearance.symbolZoneSymbols)
+        assertNull(result[0][0].appearance.skinForegroundLayers)
     }
 }

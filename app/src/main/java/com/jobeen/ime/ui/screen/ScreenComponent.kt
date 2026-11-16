@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
@@ -94,7 +93,7 @@ object ScreenComponent {
                 // 与去定高后的 Button 同高（自然高、字号再大也不裁）：
                 // 最小 40dp（Material Button 自然高），内容更高时随内容长。
                 .defaultMinSize(minHeight = 40.dp)
-                .clip(RoundedCornerShape(20.dp))
+                .clip(MaterialTheme.shapes.large)
                 .background(containerColor)
                 // 进度条按比例绘制，不参与布局：此前内层 Box 用 fillMaxHeight，
                 // 在 wrap-content 父容器里取到最大约束，把整行撑到满屏高。
@@ -168,7 +167,7 @@ object ScreenComponent {
     ) {
         Card(
             modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
+            shape = MaterialTheme.shapes.large,
             colors = CardDefaults.cardColors(
                 // 分组卡片面＝莫奈色（2026-10-30 莫奈色轮，浅／深两模式皆然）。
                 containerColor = LocalMonetCardColor.current,
@@ -248,7 +247,7 @@ object ScreenComponent {
     ) {
         Card(
             modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
+            shape = MaterialTheme.shapes.large,
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.tertiaryContainer,
             ),
@@ -562,7 +561,7 @@ object ScreenComponent {
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(MaterialTheme.shapes.small)
                                 .clickable { onSelect(index) }
                                 .background(
                                     if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)

@@ -7,9 +7,9 @@ package com.jobeen.ime.input.panel.component
  * 依赖，可单测。由 [CandidateGridView.show] /
  * [CandidateGridView.updateCandidates] 在替换列表前调用。
  *
- * 背景：引擎→窗口层已有 revision 门（EngineMessage.Candidates
- * 的 revision ＋ shouldApplyCandidateFrame，窗口层 setCandidates
- * 凭它丢迟到旧帧），面板层亦有 candidateGeneration（KawaiiPanel
+ * 背景：引擎→窗口层已有代次门（EngineMessage.Candidates
+ * 的 revision ＋ CandidateFrameGate，窗口层 setCandidates
+ * 凭它丢幂等重投），面板层亦有 candidateGeneration（KawaiiPanel
  * 的 I-M4，延迟重投只执行仍是最新代次的帧）。但展开网格还有两
  * 条旁路不受这两道门约束——
  * 1. 同态复用分支（KawaiiPanel state setter）：新批次直接调
@@ -20,7 +20,7 @@ package com.jobeen.ime.input.panel.component
  * 迟到的旧 render／旧 state 经这两条旁路仍能覆盖新表。本门钉在
  * 网格入口：代次只进不退，旧帧直接丢弃。
  *
- * 口径（与窗口层 shouldApplyCandidateFrame 的区别是等号）：
+ * 口径（与窗口层 CandidateFrameGate 的区别是等号）：
  * - revision <= 0：未版本化合成帧（清空、联想、拖拽重排等旧调
  *   用点）恒放行，不推进已应用代次——与窗口层同口径；
  * - revision == 已应用代次：放行——同一批次的追加页合并与重

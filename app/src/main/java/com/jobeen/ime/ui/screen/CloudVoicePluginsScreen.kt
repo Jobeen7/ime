@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -875,7 +874,7 @@ fun CloudVoicePluginsScreen(
             scrollable = false,
             body = {
                 OutlinedTextField(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.medium,
                     value = textValue,
                     onValueChange = { textValue = it },
                     singleLine = true,
@@ -998,7 +997,7 @@ private fun SecretFieldRow(
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
                 value = text,
                 onValueChange = { text = it },
                 visualTransformation = PasswordVisualTransformation(),

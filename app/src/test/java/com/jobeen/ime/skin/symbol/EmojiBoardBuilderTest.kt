@@ -70,40 +70,6 @@ class EmojiBoardBuilderTest {
     }
 
     @Test
-    fun build_customGroups_winOverSkinAndBuiltin() {
-        val skin = SubClassifiedSymbols.fromSingleLevel(base())
-        val board = EmojiBoardBuilder.build(
-            emptyList(),
-            skinBoard = skin,
-            customGroups = listOf("我的" to listOf("😀", "😂")),
-        )
-        assertEquals(listOf("我的"), board.parents.map { it.label })
-        assertEquals(
-            listOf("😀", "😂"),
-            board.parents[0].subCategories[0].items.map { it.displayText },
-        )
-    }
-
-    @Test
-    fun build_customGroups_recentsPrependedToFirstCustomGroup() {
-        val board = EmojiBoardBuilder.build(
-            listOf("🥰"),
-            customGroups = listOf(
-                "我的" to listOf("😀", "😂"),
-                "动物" to listOf("🐶"),
-            ),
-        )
-        assertEquals(
-            listOf("🥰", "😀", "😂"),
-            board.parents[0].subCategories[0].items.map { it.displayText },
-        )
-        assertEquals(
-            listOf("🐶"),
-            board.parents[1].subCategories[0].items.map { it.displayText },
-        )
-    }
-
-    @Test
     fun prependRecents_emptyRecents_returnsSameBoard() {
         val skin = SubClassifiedSymbols.fromSingleLevel(base())
         assertTrue(EmojiBoardBuilder.prependRecents(skin, emptyList()) === skin)

@@ -2,6 +2,7 @@
 <!--
   数据提取规则（API 31+）：云备份与设备迁移都排除敏感内容：
   - WebDAV 配置（含明文密码）
+  - Wi-Fi 传输认证（web_server.xml，含密码哈希）
   - 剪贴板历史（独立库 clipboard_database）
   - 应用数据库（ime_database：常用语／脚本／AI／剪贴板等 Room 表；
     B-A-1：Auto Backup 不再恢复它，改走 Jime 自有备份全链）
@@ -17,6 +18,7 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="user_dict_sync.xml" />
+        <exclude domain="sharedpref" path="web_server.xml" />
         <exclude domain="sharedpref" path="speech_model_prefs.xml" />
         <exclude domain="sharedpref" path="wanxiang_update.xml" />
         <exclude domain="external" path="shared/" />
@@ -38,6 +40,7 @@
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="user_dict_sync.xml" />
+        <exclude domain="sharedpref" path="web_server.xml" />
         <exclude domain="sharedpref" path="speech_model_prefs.xml" />
         <exclude domain="sharedpref" path="wanxiang_update.xml" />
         <exclude domain="external" path="shared/" />

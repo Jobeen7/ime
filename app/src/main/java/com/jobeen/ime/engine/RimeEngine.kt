@@ -538,7 +538,51 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     //引擎相关配置监控
     private var prefs: SharedPreferences? = null
+
+    /**
+     * 热路径开关的内存缓存（2026-11-16 性能 §7）：restoreCandidates／
+     * requestPrediction 每批原来各读 5 次 SharedPreferences（带锁查表）。
+     * 现读一次缓存进 @Volatile 字段，热路径只读字段；既有 prefsListener
+     * 在键变化时刷新（同一 prefs 文件，设置页改动即时生效）。初值取
+     * CandidateManager 各 getter 的缺省值，引擎启动注册监听时再全量
+     * 刷新一次——注册前已有读到也是缺省口径，不错。
+     */
+    @Volatile
+    private var cachedRerankEnabled = true
+
+    @Volatile
+    private var cachedRareCharactersEnabled = true
+
+    @Volatile
+    private var cachedEmailSuffixEnabled = true
+
+    @Volatile
+    private var cachedPredictionEnabled = true
+
+    @Volatile
+    private var cachedTraditionalChineseEnabled = false
+
+    private fun refreshCachedCandidateFlags(context: Context) {
+        cachedRerankEnabled = CandidateManager.isRerankEnabled(context)
+        cachedRareCharactersEnabled = CandidateManager.isRareCharactersEnabled(context)
+        cachedEmailSuffixEnabled = CandidateManager.isEmailSuffixEnabled(context)
+        cachedPredictionEnabled = CandidateManager.isPredictionEnabled(context)
+        cachedTraditionalChineseEnabled = CandidateManager.isTraditionalChineseEnabled(context)
+    }
+
+    /** 热路径开关的偏好键（监听刷新口径，见 cached*Enabled）。 */
+    private val candidateFlagKeys = setOf(
+        CandidateManager.KEY_RERANK_ENABLED,
+        CandidateManager.KEY_RARE_CHARACTERS_ENABLED,
+        CandidateManager.KEY_EMAIL_SUFFIX_ENABLED,
+        CandidateManager.KEY_PREDICTION_ENABLED,
+        CandidateManager.KEY_TRADITIONAL_ENABLED,
+    )
+
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key in candidateFlagKeys) {
+            context?.let { refreshCachedCandidateFlags(it) }
+        }
         if (OptionsApplier.isOptionDependency(key)) {
             sendJob {
                 currentSchema().applyOptions(this)
@@ -795,6 +839,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         ).also {
             it.registerOnSharedPreferenceChangeListener(prefsListener)
         }
+        // 热路径开关缓存初值（性能 §7）：监听注册后全量读一次。
+        refreshCachedCandidateFlags(appContext)
         //以结束为号
         sendJob {
             EngineDeployState.setRunning(true)
@@ -2563,14 +2609,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     }
                 }.getOrDefault(emptyList())
 
-                /** 输入码候选拼到帧首：高亮下标后移，总数未知（-1）时保持，未知以外加条数。 */
+                /** 输入码候选拼到帧首：按 text 去重（输入码候选与 Rime 候选
+                 * 同文时只留一条，2026-11-16 debug 问题 3“辛苦了”重复）；
+                 * 高亮下标后移，总数未知（-1）时保持，未知以外加条数。 */
                 fun withPhrasePrefix(msg: EngineMessage.Candidates): EngineMessage.Candidates {
                     if (phrasePrefix.isEmpty()) return msg
+                    val deduped = phrasePrefix.filter { phrase ->
+                        msg.list.none { it.text == phrase.text }
+                    }
+                    if (deduped.isEmpty()) return msg
                     return EngineMessage.Candidates(
-                        phrasePrefix + msg.list,
-                        msg.highlighted + phrasePrefix.size,
+                        deduped + msg.list,
+                        msg.highlighted + deduped.size,
                         msg.page,
-                        total = if (msg.total < 0) msg.total else msg.total + phrasePrefix.size,
+                        total = if (msg.total < 0) msg.total else msg.total + deduped.size,
                         append = msg.append,
                         revision = msg.revision,
                         isLastPage = msg.isLastPage,
@@ -2618,12 +2670,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // “读到新组字”的错套，故不再验本批代次；迟到批次由
                 // CandidatesReady 的 requestId 门控丢弃。
                 val (rareSpellings, rareFirstRawInput) =
-                    if (CandidateManager.isRareCharactersEnabled(ctx)) {
+                    if (cachedRareCharactersEnabled) {
                         msg.composition.spellings to msg.composition.firstRawInput
                     } else {
                         emptyList<String>() to ""
                     }
-                val rerankEnabled = CandidateManager.isRerankEnabled(ctx)
+                val rerankEnabled = cachedRerankEnabled
                 if (rerankEnabled) {
                     // 隐私模式下不读光标前文（gramDb 为空时前文本来也不参与打分）；
                     // 非隐私模式走前文缓存，避免每次候选刷新都跨进程读一次
@@ -2883,20 +2935,24 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 门：组字码在 preedit 里、不在编辑器前文，正则对不
                 // 上自然落空；组字候选随后到达时会接管候选栏并取消
                 // 本 job，与普通预测路径同口径。
-                if (context?.let { CandidateManager.isEmailSuffixEnabled(it) } != false) {
+                if (cachedEmailSuffixEnabled) {
                     val emailBefore = peekTextBeforeCursor(
                         EmailSuffixes.CONTEXT_LENGTH, expectedGen = startFieldGen,
                     ) ?: return@launch
-                    val emailDomains = EmailSuffixes.suggestions(emailBefore)
-                    if (emailDomains.isNotEmpty()) {
-                        val emailCandidates = emailDomains.mapIndexed { index, domain ->
-                            Candidate(index, domain, type = Candidate.TYPE_EMAIL_SUFFIX)
+                    // §4：前文无 @（半角／全角）时不可能是邮箱，跳过
+                    // 后缀匹配（typedDomain 恒返回 null），直接走下方普通预测。
+                    if ('@' in emailBefore || '＠' in emailBefore) {
+                        val emailDomains = EmailSuffixes.suggestions(emailBefore)
+                        if (emailDomains.isNotEmpty()) {
+                            val emailCandidates = emailDomains.mapIndexed { index, domain ->
+                                Candidate(index, domain, type = Candidate.TYPE_EMAIL_SUFFIX)
+                            }
+                            actions.send(Action.PredictionReady(requestId, emailCandidates, startFieldGen))
+                            return@launch
                         }
-                        actions.send(Action.PredictionReady(requestId, emailCandidates, startFieldGen))
-                        return@launch
                     }
                 }
-                if (context?.let { !CandidateManager.isPredictionEnabled(it) } == true) {
+                if (!cachedPredictionEnabled) {
                     actions.send(Action.PredictionReady(requestId, emptyList(), startFieldGen))
                     return@launch
                 }
@@ -2928,7 +2984,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 ) {
                     candidates = predictionManager?.makePredictions(inputContext, userKey) ?: emptyList()
                 }
-                if (context?.let { CandidateManager.isTraditionalChineseEnabled(it) } == true) {
+                if (cachedTraditionalChineseEnabled) {
                     candidates = candidates.map {
                         it.copy(
                             text = TraditionalConverter.toTraditional(it.text),
