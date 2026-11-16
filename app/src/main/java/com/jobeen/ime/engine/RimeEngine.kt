@@ -700,6 +700,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      */
     @Volatile
     private var candidateRestoreJob: Job? = null
+
+    /**
+     * 候选还原的独立队（性能第 1 条）：还原任务（常用语输入码、排序还原、
+     * gram 重排、生僻字补字）不再跑在引擎 scope（Dispatchers.Default）上——
+     * scope 同时宿主 reduce 串行循环与 jobs 消费循环，还原的重活（Room、
+     * gram 查询）会与按键路径抢 Default 线程。独立单线程队与按键队彻底
+     * 隔离：按键从不排在还原后面，还原之间仍以前一 job 取消串行。
+     * 挂在 scope 下（scope.launch(dispatcher)）：finalize 取消 scope
+     * 时还原 job 一并取消，取消语义与原来一致；IO 池无需手动关闭。
+     */
+    private val candidateRestoreDispatcher: CoroutineDispatcher =
+        Dispatchers.IO.limitedParallelism(1)
     /** 分页补取的批次状态：已从引擎取到的原始候选条数（分页 start 必须用原始计数，不能用 UI 过滤后的条数） */
     @Volatile
     private var candidateBatchLoaded: Int = 0
@@ -2570,7 +2582,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         val fieldGen = predictionFieldGen.get()
         state.latestCandidateRequestId.accumulateAndGet(requestId) { a, b -> maxOf(a, b) }
         candidateRestoreJob?.cancel()
-        candidateRestoreJob = scope.launch {
+        candidateRestoreJob = scope.launch(candidateRestoreDispatcher) {
             // 过滤用户长按删除的词（Rime 墓碑不隐藏系统词，App 层过滤）；
             // 兜底分支也要用过滤后的列表，故在 try 外先算好
             val filtered = msg.list.filterNot { DeletedWordsStore.isDeleted(it.text) }
