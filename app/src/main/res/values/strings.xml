@@ -893,9 +893,9 @@
     <string name="symbol_bar_empty">未添加自定义符号</string>
     <string name="symbol_bar_note">修改在下次打开符号面板时生效。</string>
     <string name="symbol_bar_delete">删除</string>
-    <!-- Emoji（WO52 7.1 最近使用＋重置／7.4 自定义键盘） -->
+    <!-- Emoji（WO52 7.1 最近使用＋重置） -->
     <string name="emoji_title">Emoji</string>
-    <string name="row_sub_emoji">最近使用与自定义 Emoji 键盘</string>
+    <string name="row_sub_emoji">最近使用</string>
     <string name="emoji_reset_recent">重置常用 Emoji</string>
     <string name="emoji_reset_recent_desc">清空最近使用的 Emoji，首组恢复为默认内容。</string>
     <string name="emoji_reset_done">已重置常用 Emoji</string>
