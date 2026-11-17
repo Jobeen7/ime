@@ -401,6 +401,15 @@ class KeyboardWindowView(
     /** 内联自动填充会话有效标志：onStartInput 置真，onFinishInputView 置假。 */
     private var inlineFieldActive: Boolean = false
 
+    /**
+     * 内联自动填充待重放缓存（R-2）：组字中到达被门控拦掉的建议暂存于此，
+     * 组字结束时由 updateDynamicPreedit 重放一次。主线程独占：showInlineAutofill
+     * （服务经 mainHandler post）、updateDynamicPreedit（引擎消息流跑在服务
+     * Main 作用域）、onStartInput／onFinishInputView（输入法生命周期回调）、
+     * onDetach（窗口回调）全在主线程，故不加同步。
+     */
+    private var pendingInlineAutofill: Pair<List<View>, List<View>>? = null
+
     /** 当前窗口背景 GIF 动图（SDK≥28 时解原文件；无 GIF 时 null）。 */
     private var gifDrawable: android.graphics.drawable.AnimatedImageDrawable? = null
 
@@ -1177,21 +1186,37 @@ class KeyboardWindowView(
 
     /**
      * 内联自动填充：新建议到达（服务在主线程回调）。
-     * 仅当未组字且输入会话有效时显示，否则丢弃（不缓存旧建议，组字结束
-     * 后不复活）；显示时本层以窗口底色盖住条区，条区视图本身不动，
+     * 空列表到达（R-1：新一轮全部膨胀失败）时先清待重放缓存再隐藏，
+     * 不让旧胶囊继续显示过期内容；门控通过时显示并清缓存（新一轮取代
+     * 旧缓存）；门控拦掉时只缓存组字中的（组字中且会话有效），会话无效
+     * 拦掉的直接丢弃；缓存的建议在组字结束时由 updateDynamicPreedit
+     * 重放一次。显示时本层以窗口底色盖住条区，条区视图本身不动，
      * 隐藏即恢复正常条区。点击由系统直接填入，不走 commitText。
      */
     fun showInlineAutofill(pinned: List<View>, scrollable: List<View>) {
-        if (!inlineAutofillShouldShow(
-                pinned.isNotEmpty() || scrollable.isNotEmpty(),
-                lastComposing != null,
-                inlineFieldActive,
-            )
-        ) return
-        inlineAutofillBar.setBackgroundColor(cachedColors.background)
-        inlineAutofillBar.setSuggestions(pinned, scrollable)
-        inlineAutofillBar.visibility = View.VISIBLE
-        requestLayout()
+        when (inlineAutofillArrival(
+            pinned.isNotEmpty() || scrollable.isNotEmpty(),
+            lastComposing != null,
+            inlineFieldActive,
+        )) {
+            InlineAutofillArrival.HIDE -> {
+                pendingInlineAutofill = null
+                hideInlineAutofill()
+            }
+            InlineAutofillArrival.SHOW -> {
+                pendingInlineAutofill = null
+                inlineAutofillBar.setBackgroundColor(cachedColors.background)
+                inlineAutofillBar.setSuggestions(pinned, scrollable)
+                inlineAutofillBar.visibility = View.VISIBLE
+                requestLayout()
+            }
+            InlineAutofillArrival.CACHE -> {
+                pendingInlineAutofill = pinned to scrollable
+            }
+            InlineAutofillArrival.DISCARD -> {
+                // 会话无效拦掉的直接丢弃，不缓存。
+            }
+        }
     }
 
     /** 内联自动填充隐藏：清空胶囊、恢复正常条区；已隐藏时无操作。 */
@@ -1429,8 +1454,10 @@ class KeyboardWindowView(
         if ((fieldChanged || identityChanged) && cloudVoiceSession != null) {
             stopCloudVoice(discard = true)
         }
-        // 新输入会话：旧字段的内联胶囊过期，先清；会话标志随即置真。
+        // 新输入会话：旧字段的内联胶囊过期，先清；待重放缓存同属旧会话，一并清；
+        // 会话标志随即置真。
         hideInlineAutofill()
+        pendingInlineAutofill = null
         inlineFieldActive = true
         passwordField = com.jobeen.ime.base.util.InputFieldPolicy.isPasswordField(info)
         panel.suppressCopyBanner = passwordField
@@ -1445,8 +1472,10 @@ class KeyboardWindowView(
 
     /** 输入结束（服务 finishInputView 转发）。 */
     fun onFinishInputView() {
-        // 离开输入框：内联胶囊失效，会话标志置假，迟到的建议回调不再显示。
+        // 离开输入框：内联胶囊失效，会话标志置假，迟到的建议回调不再显示；
+        // 待重放缓存同属本会话，一并清。
         inlineFieldActive = false
+        pendingInlineAutofill = null
         hideInlineAutofill()
         // 浮动候选窗随输入框关闭（无内容关闭的另一路）。
         dismissFloatingWindow()
@@ -1950,7 +1979,8 @@ class KeyboardWindowView(
         // 藏态至此失效——不清会让下一次组字中下滑跳过藏步直走
         // 账本；重发本身不依赖文本是否变化，故无条件复位。
         TypedUndoLedger.clearComposingSpanHidden()
-        // 用户开始组字：内联胶囊隐藏，恢复正常候选；新建议须由服务重发。
+        // 用户开始组字：内联胶囊隐藏，恢复正常候选；组字中到达的新建议
+        // 暂存待重放缓存（R-2），不依赖服务重发。
         if (items.isNotEmpty()) hideInlineAutofill()
         // 内嵌输入模式：组字串直送应用输入框（纯文本、无 span），不显示悬浮药丸；
         // 关时走现有药丸路径。开关即时读偏好，下一次组字更新即生效。
@@ -1985,6 +2015,18 @@ class KeyboardWindowView(
         lastFedPreedit = joined
         lastComposing = items.joinToString("") { it.text }.takeIf { it.isNotEmpty() }
         pushDynamicTexts()
+        // R-2 重放：组字刚结束（items 为空 → lastComposing 变 null）时，
+        // 取出组字中缓存的建议重放一次（先清缓存，只重放一次，不循环）；
+        // 会话已失效则丢弃。showInlineAutofill 内会重检门控。
+        if (items.isEmpty()) {
+            val pending = pendingInlineAutofill
+            pendingInlineAutofill = null
+            if (inlineAutofillShouldReplay(pending != null, inlineFieldActive) &&
+                pending != null
+            ) {
+                showInlineAutofill(pending.first, pending.second)
+            }
+        }
     }
 
     private fun contentHeight(): Int {
@@ -2095,6 +2137,7 @@ class KeyboardWindowView(
         // 窗口隐藏 = 本轮输入结束：动态值清零，动态键回落静态文本。
         lastCandidateFirst = null
         lastComposing = null
+        pendingInlineAutofill = null
         pushDynamicTexts()
         dismissFloatingWindow()
         setEngineFloatingActive(false)

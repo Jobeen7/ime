@@ -19,6 +19,43 @@ internal fun inlineAutofillShouldShow(
     fieldActive: Boolean,
 ): Boolean = hasSuggestions && !isComposing && fieldActive
 
+/** 内联自动填充新建议到达时的处置（纯函数，供 JVM 测试）。 */
+internal enum class InlineAutofillArrival {
+    /** 门控通过，显示胶囊。 */
+    SHOW,
+    /** 空列表到达（R-1）：清待重放缓存并隐藏旧胶囊，不让过期内容残留。 */
+    HIDE,
+    /** 组字中且会话有效（R-2）：暂存建议，组字结束时重放一次。 */
+    CACHE,
+    /** 其余拦掉（会话无效等）：直接丢弃，不缓存。 */
+    DISCARD,
+}
+
+/**
+ * 新建议到达时如何处置（纯函数，供 JVM 测试）：空列表 → HIDE；
+ * 门控通过 → SHOW；组字中且会话有效 → CACHE；其余拦掉 → DISCARD。
+ */
+internal fun inlineAutofillArrival(
+    hasSuggestions: Boolean,
+    isComposing: Boolean,
+    fieldActive: Boolean,
+): InlineAutofillArrival = when {
+    !hasSuggestions -> InlineAutofillArrival.HIDE
+    inlineAutofillShouldShow(hasSuggestions, isComposing, fieldActive) ->
+        InlineAutofillArrival.SHOW
+    isComposing && fieldActive -> InlineAutofillArrival.CACHE
+    else -> InlineAutofillArrival.DISCARD
+}
+
+/**
+ * 组字结束时是否重放缓存的建议（纯函数，供 JVM 测试）：有缓存且输入
+ * 会话仍有效时才重放；会话已失效则丢弃缓存。
+ */
+internal fun inlineAutofillShouldReplay(
+    hasPending: Boolean,
+    fieldActive: Boolean,
+): Boolean = hasPending && fieldActive
+
 /**
  * 内联自动填充（Android 11+ IME Inline Autofill）条区覆盖层。
  *
