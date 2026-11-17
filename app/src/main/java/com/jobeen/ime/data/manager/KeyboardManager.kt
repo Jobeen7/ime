@@ -450,18 +450,6 @@ object KeyboardManager {
                     putBoolean("$PREFIX.hide_hint", hide)
                 }
             }
-
-            /** 双拼韵母提示：26 键字母键副标显示小鹤双拼韵母（只显示、不改动作）；默认关 */
-            fun isShuangpinHintEnabled(context: Context): Boolean {
-                return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .getBoolean("$PREFIX.shuangpin_hint", false)
-            }
-
-            fun setShuangpinHintEnabled(context: Context, enabled: Boolean) {
-                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-                    putBoolean("$PREFIX.shuangpin_hint", enabled)
-                }
-            }
         }
 
         object Gap {

@@ -11,9 +11,6 @@ import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 /**
  * 出厂 26 键字母键（.19 原样，施工单 4：默认分支恢复此口径）：
  * 小写显示、副标为标点、字号 22；长按直接提交标点。
- *
- * [hintText]（双拼韵母提示）：非空时只换副标显示（角标改韵母），
- * 长按提交仍是 [punctuation]，点按动作一字不动。
  */
 fun alphabetKey(
     character: String,
@@ -21,14 +18,13 @@ fun alphabetKey(
     altTextTranslationY: Int = 2,
     mainTextTranslationY: Int = -2,
     id: String? = null,
-    hintText: String? = null,
     /** 行宽占比（缺省 0.1f；26 键 A 行首尾键取 0.15f，见行和不变量）。 */
     percentWidth: Float = 0.1f,
 ) = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.AltText(
         displayText = character,
-        altText = hintText ?: punctuation,
+        altText = punctuation,
         textSize = 22f,
         altTextTranslationY = altTextTranslationY,
         mainTextTranslationY = mainTextTranslationY,

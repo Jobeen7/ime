@@ -1,12 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  紧凑布局（14/18 键）／双拼韵母提示的新增字符串。
+  紧凑布局（14/18 键）的新增字符串。
   与 strings.xml 分离：本批新增文案只放这里，不改 strings.xml。
 -->
 <resources>
     <string name="tag_layout_t14">14键</string>
     <string name="tag_layout_t18">18键</string>
-
-    <string name="shuangpin_hint_title">双拼韵母提示</string>
-    <string name="shuangpin_hint_note">26 键字母键的角标改为小鹤双拼韵母（如 Q 键显示 iu），只显示、不改按键动作；已有自定义角标的键仍显示自定义角标。</string>
 </resources>

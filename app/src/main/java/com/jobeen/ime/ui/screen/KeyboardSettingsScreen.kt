@@ -144,9 +144,6 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
     var hideHint by remember {
         mutableStateOf(KeyboardManager.Keyboard.Display.isHideHint(context))
     }
-    var shuangpinHint by remember {
-        mutableStateOf(KeyboardManager.Keyboard.Display.isShuangpinHintEnabled(context))
-    }
 
     // 自定义音效文件选择：复制进应用私有目录（不持有外部 uri 权限），≤5MB
     val soundPicker = rememberLauncherForActivityResult(
@@ -520,15 +517,6 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                 },
                                 showDivider = true,
                             )
-                            SwitchRow(
-                                title = stringResource(R.string.shuangpin_hint_title),
-                                checked = shuangpinHint,
-                                onCheckedChange = {
-                                    shuangpinHint = it
-                                    KeyboardManager.Keyboard.Display.setShuangpinHintEnabled(context, it)
-                                },
-                                showDivider = true,
-                            )
                             Text(
                                 text = stringResource(R.string.display_hide_symbol_note),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -536,11 +524,6 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             )
                             Text(
                                 text = stringResource(R.string.display_hide_hint_note),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Text(
-                                text = stringResource(R.string.shuangpin_hint_note),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

@@ -19,7 +19,6 @@ import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.StyleStatePriority
 import com.jobeen.ime.skin.runtime.SkinColorMode
-import com.jobeen.ime.input.keyboard.ShuangpinHint
 import com.jobeen.ime.input.keyboard.key.alphabetKey
 import com.jobeen.ime.input.keyboard.key.backspaceKey
 import com.jobeen.ime.input.keyboard.key.capsLockKey
@@ -65,13 +64,7 @@ class QwertyKeyboard(
          * 皮肤、无皮肤跟内置主题），覆写在其结果上做。
          */
         fun effectiveLayout(context: Context, returnVariant: Variant): List<List<KeyDef>> {
-            // 双拼韵母提示（开关在 KeyboardManager.Keyboard.Display）：
-            // 开时字母键副标换韵母（只显示、不改动作）；用户自定义角标
-            // 与皮肤显式 subLabel 在后套用，仍优先于提示。
-            val raw = buildLayout(
-                returnVariant,
-                shuangpinHint = com.jobeen.ime.data.manager.KeyboardManager.Keyboard.Display.isShuangpinHintEnabled(context),
-            )
+            val raw = buildLayout(returnVariant)
             return raw
         }
 
@@ -135,11 +128,9 @@ class QwertyKeyboard(
          * 出厂 26 键布局（.19 原样，施工单 4：默认分支恢复此口径）：
          * 小写字母＋副标、?123／!?#／方案名空格、实心图标。
          *
-         * @param shuangpinHint 为 true 时字母键副标显示小鹤双拼韵母
-         *   （只显示、不改动作；长按提交仍是标点）；默认 false。
          */
-        fun buildLayout(returnVariant: Variant, shuangpinHint: Boolean = false): List<List<KeyDef>> {
-            // 字母键统一入口：提示开时副标换韵母，其余一字不动。
+        fun buildLayout(returnVariant: Variant): List<List<KeyDef>> {
+            // 字母键统一入口。
             fun letter(
                 character: String,
                 punctuation: String,
@@ -149,7 +140,6 @@ class QwertyKeyboard(
                 percentWidth: Float = 0.1f,
             ) = alphabetKey(
                 character, punctuation, altTextTranslationY, mainTextTranslationY, id,
-                hintText = if (shuangpinHint) ShuangpinHint.hintFor(character[0]) else null,
                 percentWidth = percentWidth,
             )
             return listOf(
