@@ -821,8 +821,6 @@
     <string name="symbol_bar_empty">未添加自定义符号</string>
     <string name="symbol_bar_note">修改在下次打开符号面板时生效。</string>
     <string name="symbol_bar_delete">删除</string>
-    <string name="emoji_search_hint">搜索 Emoji（中文／拼音／英文）</string>
-    <string name="emoji_search_loading">正在加载 Emoji 索引…</string>
     <!-- 键盘菜单管理（WO52 12-⑨） -->
     <string name="keyboard_menu_title">键盘菜单设置</string>
     <string name="row_sub_keyboard_menu">键盘菜单选项自定义</string>
