@@ -67,10 +67,10 @@ object DeepLinkRouter {
         "ai" to "ai",
     )
 
-    /** 目录页键直配（22 个一级入口）。 */
+    /** 目录页键直配（21 个一级入口）。 */
     private val catalogPageKeys: Set<String> = setOf(
         "schema", "scheme_update", "rime", "candidates", "skin", "scripts",
-        "keyboard", "emoji", "keyboardMenu", "toolbar", "symbol_bar",
+        "keyboard", "keyboardMenu", "toolbar", "symbol_bar",
         "skin_editor", "appearance", "clipboard", "phrase",
         "ai", "voice", "stats", "userdict", "backup", "files",
         "about",

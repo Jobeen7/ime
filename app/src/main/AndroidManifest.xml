@@ -114,13 +114,6 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
-            android:name=".ui.EmojiSettingsActivity"
-            android:exported="false"
-            android:label="@string/emoji_title"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
             android:name=".ui.KeyboardMenuSettingsActivity"
             android:exported="false"
             android:label="@string/keyboard_menu_title"

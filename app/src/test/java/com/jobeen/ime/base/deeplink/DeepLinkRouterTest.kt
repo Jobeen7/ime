@@ -177,12 +177,12 @@ class DeepLinkRouterTest {
     fun `catalog keys route directly`() {
         val keys = listOf(
             "schema", "scheme_update", "rime", "candidates", "skin", "scripts",
-            "keyboard", "emoji", "keyboardMenu", "toolbar", "symbol_bar",
+            "keyboard", "keyboardMenu", "toolbar", "symbol_bar",
             "skin_editor", "appearance", "clipboard", "phrase",
             "ai", "voice", "stats", "userdict", "backup", "files",
             "about",
         )
-        assertEquals(22, keys.size)
+        assertEquals(21, keys.size)
         for (key in keys) {
             assertEquals(key, pageOf("jime://com.jobeen.ime/$key"))
         }

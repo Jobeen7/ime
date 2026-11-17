@@ -176,11 +176,6 @@ class MainActivity : ImeActivity() {
                     Intent(this@MainActivity, KeyboardSettingsActivity::class.java)
                 )
             },
-            onOpenEmoji = {
-                startActivity(
-                    Intent(this@MainActivity, EmojiSettingsActivity::class.java)
-                )
-            },
             onOpenKeyboardMenu = {
                 startActivity(
                     Intent(this@MainActivity, KeyboardMenuSettingsActivity::class.java)
