@@ -637,7 +637,10 @@ class ImeInputMethodService : InputMethodService() {
         val view = keyboardWindow?.view ?: return true
         val suggestions = response.inlineSuggestions
         if (suggestions.isEmpty()) {
-            mainHandler.post { view.hideInlineAutofill() }
+            // R-2 边角：空响应也走 showInlineAutofill（空到达 → HIDE 分支先清
+            // 待重放缓存再隐藏），不直接 hide——组字中缓存的建议若不
+            // 在此清掉，组字结束时会重放一次服务已撤回的过期建议。
+            mainHandler.post { view.showInlineAutofill(emptyList(), emptyList()) }
             return true
         }
         val generation = ++inlineAutofillGeneration

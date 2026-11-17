@@ -30,6 +30,15 @@ class InlineAutofillBarTest {
         assertEquals(InlineAutofillArrival.HIDE, inlineAutofillArrival(false, true, false))
     }
 
+    // R-2 边角（空响应清缓存）：组字中已缓存建议、随后收到服务空响应时，
+    // 空到达仍判 HIDE——服务侧空响应现走 showInlineAutofill(空, 空)，
+    // HIDE 分支先清待重放缓存再隐藏，组字结束时不再重放过期建议。
+    // 只看组字中＋会话有效这一条边角组合，其余组合见 arrival_emptyList_hides。
+    @Test
+    fun arrival_emptyResponseWhileComposing_hidesSoPendingCacheIsCleared() {
+        assertEquals(InlineAutofillArrival.HIDE, inlineAutofillArrival(false, true, true))
+    }
+
     // R-2：非空到达且门控通过 → 显示。
     @Test
     fun arrival_idleAndActive_shows() {
