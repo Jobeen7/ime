@@ -487,7 +487,7 @@ class UserDictMergeSafetyTest {
             "你好\tni hao\t2\n你好\tni hao\t9\n世界\tshi jie\t1\n",
         )
         var importedText: String? = null
-        val count = UserDictMergeSafety.mergeValidatedBatch(
+        val result = UserDictMergeSafety.mergeValidatedBatch(
             dictName = "wanxiang_lite",
             batchFile = file,
             batchLabel = file.name,
@@ -502,7 +502,8 @@ class UserDictMergeSafetyTest {
                 importedText!!.lineSequence().filter { it.isNotEmpty() }.count()
             },
         )
-        assertEquals(2, count)
+        assertEquals(2, result.importedCount)
+        assertEquals(0, result.skippedRows)
         assertEquals("你好\tni hao\t9\n世界\tshi jie\t1\n", importedText)
         val backup = UserDictMergeSafety.readBackupMeta(filesDir, "wanxiang_lite")
         assertEquals(listOf(UserDictMergeSafety.Entry("旧词", "jiu ci", 4)), backup!!.entries)
@@ -519,7 +520,7 @@ class UserDictMergeSafetyTest {
             "你好\tni hao\t2\n世界\tshi jie\t-1\n啦啦啦\t$longCode\t1\n你好\tni hao\t9\n",
         )
         var importedText: String? = null
-        val count = UserDictMergeSafety.mergeValidatedBatch(
+        val result = UserDictMergeSafety.mergeValidatedBatch(
             dictName = "wanxiang_lite",
             batchFile = file,
             batchLabel = file.name,
@@ -535,9 +536,48 @@ class UserDictMergeSafetyTest {
             },
         )
         // 负权重行被跳过，超长码行正常导入，好行去重后导入（你好取最大权重 9）。
-        assertEquals(2, count)
+        assertEquals(2, result.importedCount)
         assertEquals("你好\tni hao\t9\n啦啦啦\t$longCode\t1\n", importedText)
         assertTrue(UserDictMergeSafety.hasBeforeMergeBackup(filesDir, "wanxiang_lite"))
+    }
+
+    @Test
+    fun mergeValidatedBatchReturnsSkippedDetails() = runBlocking {
+        // 1.6：返回值带跳过明细（数量／行号／原因），供上层决定展示
+        // 或中止后续 PUT——只返回导入条数时坏行无声无息就没了。
+        val dir = createTempDir()
+        val filesDir = createTempDir()
+        val file = writeBatch(
+            dir, "batch.txt",
+            "你好\tni hao\t2\n世界\tshi jie\t-1\n只有一列\n你好\tni hao\t9\n",
+        )
+        var importedText: String? = null
+        val result = UserDictMergeSafety.mergeValidatedBatch(
+            dictName = "wanxiang_lite",
+            batchFile = file,
+            batchLabel = file.name,
+            filesDir = filesDir,
+            cacheDir = dir,
+            exportCurrent = { tmp ->
+                tmp.writeText("旧词\tjiu ci\t4\n", Charsets.UTF_8)
+                1
+            },
+            importFile = { f ->
+                importedText = f.readText(Charsets.UTF_8)
+                importedText!!.lineSequence().filter { it.isNotEmpty() }.count()
+            },
+        )
+        // 好行去重后导入（你好取最大权重 9）；第 2 行负权重、第 3 行
+        // 列数不对被跳过，行号与原因都在返回值里，不靠日志翻查。
+        assertEquals(1, result.importedCount)
+        assertEquals("你好\tni hao\t9\n", importedText)
+        assertEquals(2, result.skippedRows)
+        assertEquals(setOf(2, 3), result.skippedLineNumbers)
+        assertEquals(2, result.skipped.size)
+        assertEquals(2, result.skipped[0].lineNumber)
+        assertEquals(3, result.skipped[1].lineNumber)
+        assertTrue(result.skipped[0].detail.isNotEmpty())
+        assertTrue(result.skipped[1].detail.isNotEmpty())
     }
 
     @Test
@@ -548,7 +588,7 @@ class UserDictMergeSafetyTest {
         val file = writeBatch(dir, "en.userdict.txt", "# 只有注释\n\n")
         var exportCalled = false
         var importCalled = false
-        val count = UserDictMergeSafety.mergeValidatedBatch(
+        val result = UserDictMergeSafety.mergeValidatedBatch(
             dictName = "en",
             batchFile = file,
             batchLabel = file.name,
@@ -558,7 +598,8 @@ class UserDictMergeSafetyTest {
             importFile = { importCalled = true; 0 },
             allowEmpty = true,
         )
-        assertEquals(0, count)
+        assertEquals(0, result.importedCount)
+        assertEquals(0, result.skippedRows)
         assertFalse(exportCalled)
         assertFalse(importCalled)
         assertFalse(UserDictMergeSafety.hasBeforeMergeBackup(filesDir, "en"))

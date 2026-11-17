@@ -2592,7 +2592,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             val filtered = msg.list.filterNot { DeletedWordsStore.isDeleted(it.text) }
             val filteredMsg = if (filtered.size == msg.list.size) msg
                 else EngineMessage.Candidates(filtered, msg.highlighted, msg.page, total = msg.total,
-                    composition = msg.composition)
+                    isLastPage = msg.isLastPage, composition = msg.composition)
             try {
                 val ctx = context
                 if (ctx == null) {
@@ -2732,8 +2732,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         Action.CandidatesReady(
                             requestId,
                             withPhrasePrefix(
-                                supplementedCandidates(ordered, 0, filteredMsg.total, rareSpellings, rareFirstRawInput)
-                                    ?: EngineMessage.Candidates(ordered, 0, 0, total = filteredMsg.total)
+                                supplementedCandidates(
+                                    ordered, 0, filteredMsg.total, rareSpellings, rareFirstRawInput,
+                                    filteredMsg.page, filteredMsg.isLastPage,
+                                )
+                                    ?: EngineMessage.Candidates(
+                                        ordered, 0, filteredMsg.page,
+                                        total = filteredMsg.total,
+                                        isLastPage = filteredMsg.isLastPage,
+                                    )
                             )
                         )
                     )
@@ -2745,11 +2752,19 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                                     supplementedCandidates(
                                         filteredMsg.list, filteredMsg.highlighted, filteredMsg.total,
                                         rareSpellings, rareFirstRawInput,
+                                        filteredMsg.page, filteredMsg.isLastPage,
                                     ) ?: filteredMsg
                                 } else {
                                     val ordered = applySavedCandidateOrder(filteredMsg.list, savedOrder)
-                                    supplementedCandidates(ordered, 0, filteredMsg.total, rareSpellings, rareFirstRawInput)
-                                        ?: EngineMessage.Candidates(ordered, 0, 0, total = filteredMsg.total)
+                                    supplementedCandidates(
+                                        ordered, 0, filteredMsg.total, rareSpellings, rareFirstRawInput,
+                                        filteredMsg.page, filteredMsg.isLastPage,
+                                    )
+                                        ?: EngineMessage.Candidates(
+                                            ordered, 0, filteredMsg.page,
+                                            total = filteredMsg.total,
+                                            isLastPage = filteredMsg.isLastPage,
+                                        )
                                 }
                             )
                         )
@@ -2779,22 +2794,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         total: Int,
         spellings: List<String>,
         firstRawInput: String,
-    ): EngineMessage.Candidates? {
-        val outcome = RareCharPolicy.applySupplement(
-            list,
-            spellings,
-            firstRawInput,
-            enabled = true,
-            isDeleted = DeletedWordsStore::isDeleted,
-        )
-        if (outcome.insertedAt < 0) return null
-        return EngineMessage.Candidates(
-            outcome.list,
-            RareCharPolicy.remapHighlight(highlighted, outcome),
-            0,
-            total = RareCharPolicy.adjustedTotal(total, outcome),
-        )
-    }
+        page: Int,
+        isLastPage: Boolean,
+    ): EngineMessage.Candidates? = supplementedCandidateFrame(
+        list,
+        highlighted,
+        total,
+        spellings,
+        firstRawInput,
+        page,
+        isLastPage,
+        isDeleted = DeletedWordsStore::isDeleted,
+    )
 
     /** 取消在途的候选还原并推进代次：迟到的旧还原结果会被 CandidatesReady 门控丢弃。 */
     private fun invalidatePendingCandidates() {
@@ -3356,16 +3367,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         } else {
             false
         }
-        // H-1 自愈：门已过、作业未发之前，先探一次引擎是否已停
-        // （上次部署在 deploy() 内抛错、lifecycle 打回 STOPPED 后，
-        // 作业在 runOnReady 即被拒，本次部署本身也跑不起来——正是
-        // H-1“连下一次部署也被拒”的死锁）。探到 STOPPED 即先重启
-        // 再发作业；重启走 fullCheck=false 的普通启动（旧 .ocd2
-        // 可用，不因一本繁简词典损坏整机无键盘），随后本次部署照
-        // 常重编。探针是空 runOnReady：READY 时即时返回、STARTING
-        // 时等到就绪（与作业体本身的等待同一语义）、STOPPED 时立
-        // 即抛 RimeStoppedException；调用方取消原样重抛。
-        restartEngineIfStopped()
         // 等待方是否已放弃等待（超时/取消）：放弃后作业仍在跑，
         // 放闸归作业体收尾；未放弃时放闸归等待方 finally。
         val waitingGaveUp = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -3399,6 +3400,19 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // FAILED，不等作业体 native 收尾（见 awaitDeployOutcome）。
         val deathSignal = scopeDeathSignal
         try {
+            // H-1 自愈：门已过、作业未发之前，先探一次引擎是否已停
+            // （上次部署在 deploy() 内抛错、lifecycle 打回 STOPPED 后，
+            // 作业在 runOnReady 即被拒，本次部署本身也跑不起来——正是
+            // H-1“连下一次部署也被拒”的死锁）。探到 STOPPED 即先重启
+            // 再发作业；重启走 fullCheck=false 的普通启动（旧 .ocd2
+            // 可用，不因一本繁简词典损坏整机无键盘），随后本次部署照
+            // 常重编。探针是空 runOnReady：READY 时即时返回、STARTING
+            // 时等到就绪（与作业体本身的等待同一语义）、STOPPED 时立
+            // 即抛 RimeStoppedException；调用方取消原样重抛。
+            // 本调用必须在 try 内：之前在 try 外，取消／异常会泄漏
+            // 已持有的互斥／交叉闸／部署位／跨进程锁（与 P0-1 不同路）；
+            // 移进 try 后由下方的 catch／finally 统一释放。
+            restartEngineIfStopped()
             val deferred = CompletableDeferred<DeployAwaitResult>()
             sendDeployJob(
                 block = {
@@ -3859,6 +3873,39 @@ internal fun parseT9PinyinList(raw: String): List<String> =
  *   Selection）；第 0 页偏移为 0。
  * @return Triple(定帧后列表, 页号, 是否末页)
  */
+/**
+ * 生僻字补字帧（纯函数，RimeEngine.supplementedCandidates 的可测本体）：
+ * 未补时返回 null（调用方原样发出旧帧）；补字时新帧沿用入帧的页号／
+ * 末页——旧实现在此处硬编码页号 0、末页 false，翻页后的补字帧会把
+ * 面板打回首屏、末页判定也丢了（1.8）。
+ */
+internal fun supplementedCandidateFrame(
+    list: List<EngineMessage.Candidate>,
+    highlighted: Int,
+    total: Int,
+    spellings: List<String>,
+    firstRawInput: String,
+    page: Int,
+    isLastPage: Boolean,
+    isDeleted: (String) -> Boolean,
+): EngineMessage.Candidates? {
+    val outcome = RareCharPolicy.applySupplement(
+        list,
+        spellings,
+        firstRawInput,
+        enabled = true,
+        isDeleted = isDeleted,
+    )
+    if (outcome.insertedAt < 0) return null
+    return EngineMessage.Candidates(
+        outcome.list,
+        RareCharPolicy.remapHighlight(highlighted, outcome),
+        page,
+        total = RareCharPolicy.adjustedTotal(total, outcome),
+        isLastPage = isLastPage,
+    )
+}
+
 internal fun frameNativeCandidatePage(
     candidates: List<Candidate>,
     total: Int,

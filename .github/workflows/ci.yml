@@ -18,7 +18,9 @@
 # 与原生构建。签名用 CI 内现生成的临时 keystore（只验构建与 dex，
 # 不出可发包；正式签名 key 只在发布机上）；原生 deps 由 install-deps.sh
 # 拉取。verify_release.sh 只在发布机跑（它核对正式签名指纹与发布
-# 版本号），CI 改用等价 dex grep：onHostCall 在 dex 内有命中。
+# 版本号），CI 改用等价 dex grep：Rime.handleMessage 在 dex 内有命中
+# （onHostCall 已删，1.13 起改查 handleMessage；该方法是 JNI 反射
+# 入口，见 proguard-rules.pro 的 keep 规则与 Rime.kt 的 companion）。
 # 仪器测试（迁移/JNI 冒烟）走 android-test.yml 手动触发，不在每次推送跑。
 name: CI
 
@@ -70,11 +72,11 @@ jobs:
           keytool -genkeypair -keystore ci-debug.keystore -storepass ci-debug -keypass ci-debug -alias ci-debug -keyalg RSA -keysize 2048 -validity 1 -dname "CN=CI" -noprompt
           ./gradlew clean assembleRelease -PJIME_STORE_FILE=$PWD/ci-debug.keystore -PJIME_STORE_PASSWORD=ci-debug -PJIME_KEY_ALIAS=ci-debug -PJIME_KEY_PASSWORD=ci-debug
 
-      - name: Verify onHostCall survived R8 (dex grep)
+      - name: Verify Rime.handleMessage survived R8 (dex grep)
         run: |
           APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
           for DEX in $(unzip -l "$APK" | awk '/classes[0-9]*\.dex/ {print $4}'); do
-            unzip -p "$APK" "$DEX" | strings | grep -q onHostCall && exit 0
+            unzip -p "$APK" "$DEX" | strings | grep -q handleMessage && exit 0
           done
-          echo "onHostCall not found in dex" >&2
+          echo "handleMessage not found in dex" >&2
           exit 1

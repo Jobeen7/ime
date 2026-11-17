@@ -18,18 +18,23 @@ package com.jobeen.ime.input.panel.component
  *    .showExpand）：读 render 对象里原地更新的 var candidates
  *    调 candidateGrid.show(candidates)，同样不带代次。
  * 迟到的旧 render／旧 state 经这两条旁路仍能覆盖新表。本门钉在
- * 网格入口：代次只进不退，旧帧直接丢弃。
+ * 网格入口。
  *
- * 口径（与窗口层 CandidateFrameGate 的区别是等号）：
+ * 口径（与窗口层 CandidateFrameGate 统一，1.9）：更小代次不是
+ * 迟到旧帧，而是新引擎 epoch 的首帧——引擎重建后 requestId 从头
+ * 计，新帧代次小于旧门值；把它丢掉就是 .2 案（网格显空）。故更
+ * 小代次放行并把基线复位到该值，与窗口门一致；同代次的等号口径
+ * 仍保留（追加页与首屏同源代次，严格大于会把追加页误拦）。
  * - revision <= 0：未版本化合成帧（清空、联想、拖拽重排等旧调
  *   用点）恒放行，不推进已应用代次——与窗口层同口径；
  * - revision == 已应用代次：放行——同一批次的追加页合并与重
  *   显是同一代次的合法续写，严格大于会把追加页误拦（追加页
  *   与首屏同源代次，见 EngineMessage.Candidates.revision 注释）；
  * - revision > 已应用代次：放行并推进；
- * - revision < 已应用代次：迟到旧帧，丢弃。
+ * - revision < 已应用代次：新 epoch 首帧，放行并把基线复位到该值。
  * 重复同代次帧会重算一次布局（幂等内容，无可见副作用）；hide()
- * 不复位已应用代次——收起后迟到的旧展开重显仍被拦住。
+ * 不复位已应用代次——收起后迟到的旧展开重显仍被拦住（同一 epoch
+ * 内的迟到旧帧无更小代次可言，不会走到新 epoch 分支）。
  */
 internal class CandidateGridRevisionGate {
 
@@ -43,7 +48,9 @@ internal class CandidateGridRevisionGate {
      */
     fun tryApply(revision: Long): Boolean {
         if (revision <= 0L) return true
-        if (revision < lastAppliedRevision) return false
+        // 更小代次 = 新 epoch 首帧（与窗口层 CandidateFrameGate 同口径，
+        // 见类注释）：放行并把基线复位到该值；同一 epoch 内代次单调递增，
+        // 更小值只可能是新引擎实例从头计数的首帧。
         lastAppliedRevision = revision
         return true
     }

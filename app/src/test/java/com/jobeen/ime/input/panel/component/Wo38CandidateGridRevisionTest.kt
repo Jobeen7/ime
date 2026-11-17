@@ -9,7 +9,8 @@ import org.junit.Test
 
 /**
  * 候选网格代次门（WO38 E1-10/1）：状态空间分区——
- * 未版本化／首帧／新帧／同代次（追加与重显）／迟到旧帧／不回退。
+ * 未版本化／首帧／新帧／同代次（追加与重显）／新 epoch（更小代次
+ * 放行并复位基线，与窗口层 CandidateFrameGate 同口径，1.9）。
  * 门本身是纯状态机；网格／面板的接线（show／updateCandidates
  * 的 revision 参数、State 的 revision 透传）无 Robolectric，
  * 以编译＋对抗自审覆盖，见报告。
@@ -54,26 +55,36 @@ class Wo38CandidateGridRevisionTest {
     }
 
     @Test
-    fun olderFrame_dropped_withoutMovingBaseline() {
+    fun olderFrame_newEpoch_appliesAndResetsBaseline() {
+        // 1.9：更小代次不是迟到旧帧，而是新引擎 epoch 的首帧（引擎
+        // 重建后 requestId 从头计）——放行并把基线复位到该值，与窗口
+        // 门一致；旧口径（丢弃）会让新 epoch 首帧进不了网格、网格显空
+        // （.2 案的网格版）。
         val gate = CandidateGridRevisionGate()
         assertTrue(gate.tryApply(5L))
-        assertFalse(gate.tryApply(4L))
-        assertFalse(gate.tryApply(1L))
-        assertEquals(5L, gate.lastAppliedRevision)
-        // 丢弃后新帧仍正常放行
+        assertTrue(gate.tryApply(4L))
+        assertEquals(4L, gate.lastAppliedRevision)
+        assertTrue(gate.tryApply(1L))
+        assertEquals(1L, gate.lastAppliedRevision)
+        // 新 epoch 内代次继续递增仍正常放行
         assertTrue(gate.tryApply(6L))
+        assertEquals(6L, gate.lastAppliedRevision)
     }
 
 
     @Test
-    fun gate_neverRegresses_acrossInterleavedFrames() {
+    fun gate_newEpochResetsBaseline_acrossInterleavedFrames() {
         val gate = CandidateGridRevisionGate()
         assertTrue(gate.tryApply(2L))
-        assertFalse(gate.tryApply(1L))
+        // 更小代次开新 epoch：放行，基线复位到 1
+        assertTrue(gate.tryApply(1L))
+        assertEquals(1L, gate.lastAppliedRevision)
+        // 新 epoch 内递增放行
         assertTrue(gate.tryApply(2L))
         assertTrue(gate.tryApply(3L))
-        assertFalse(gate.tryApply(2L))
-        assertEquals(3L, gate.lastAppliedRevision)
+        // 再更小又是新 epoch 首帧：放行并复位
+        assertTrue(gate.tryApply(2L))
+        assertEquals(2L, gate.lastAppliedRevision)
     }
 
     @Test

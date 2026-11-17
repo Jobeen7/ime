@@ -1087,6 +1087,8 @@
     <string name="user_dict_importing">正在导入…</string>
     <string name="user_dict_no_words_in_file">文件中没有可导入的词</string>
     <string name="user_dict_imported_count">已导入 %1$d 个词</string>
+    <string name="user_dict_imported_count_skipped">已导入 %1$d 个词，跳过 %2$d 行不合格词条</string>
+    <string name="user_dict_imported_none_skipped">没有可导入的词，跳过 %1$d 行不合格词条</string>
     <string name="user_dict_not_configured">请先填写 WebDAV 服务器地址、用户名和密码并保存</string>
     <string name="user_dict_uploading">正在上传…</string>
     <string name="user_dict_uploaded_count">已上传 %1$d 个词到 %2$s</string>

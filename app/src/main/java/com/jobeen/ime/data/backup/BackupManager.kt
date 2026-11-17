@@ -115,6 +115,16 @@ object BackupManager {
     open class BackupException(message: String) : Exception(message)
 
     /**
+     * 载荷版本兼容（1.12）：只拒未来版。旧版备份（payloadVersion <
+     * CURRENT）照常还原——清单校验只核对清单里有的键、缺失的新键
+     * 不判不符（见 BackupManifestTest.legacy10KeyManifest）；未来
+     * 版（> CURRENT）才拒绝：新版可能写了旧版读不懂的字段，强行
+     * 还原会静默丢数据。纯函数，可单测。
+     */
+    internal fun isSupportedPayloadVersion(payloadVersion: Int): Boolean =
+        payloadVersion <= BackupManifest.CURRENT_PAYLOAD_VERSION
+
+    /**
      * 采集中途数据变了：逐文件改动检测（[BackupChangeGuard]）或
      * Room 快照读到一半失败时抛。消息直接面向用户（备份页 Toast
      * 原样显示），告诉用户重做一次即可。
@@ -1399,7 +1409,7 @@ object BackupManager {
                 }
                 val manifest = BackupManifest.fromJsonObject(manifestJson)
                     ?: throw BackupException(backupString(R.string.backup_manifest_corrupt))
-                if (manifest.payloadVersion != BackupManifest.CURRENT_PAYLOAD_VERSION) {
+                if (!isSupportedPayloadVersion(manifest.payloadVersion)) {
                     throw BackupException(backupString(R.string.backup_version_unsupported))
                 }
                 val mismatches = manifest.validate(countsFromPayload(root))

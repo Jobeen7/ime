@@ -14,6 +14,8 @@ package com.jobeen.ime.base.speech.cloud
  * error／ended 文本，无句子 id），句边界在本机内认：final 之后
  * 到达的 partial，若与已提交句互为前缀即同一句的迟到尾巴（B-S1，
  * 丢弃）；否则是新句开头，当前句 settled 清零、按新句预览。
+ * final 之后直接到达的 final 同口径：互为前缀是同一句迟到重发
+ * （丢弃），否则是新句的 final、开新句落屏（1.10）。
  * 会话级终态另有 ended／failed：onEnded／stop 之后一切结果丢弃，
  * 失败后后续 partial／final 一律丢弃。
  */
@@ -56,8 +58,18 @@ class CloudVoiceSettle(
     }
 
     fun onFinal(text: String) {
-        if (settled || failed || ended) return
+        if (failed || ended) return
         if (text.isEmpty()) return
+        if (settled) {
+            // 与 onPartial 同口径的新句检测（1.10）：final 之后直接到达
+            // 的 final，若与已提交句互为前缀即同一句的迟到重发（丢弃）；
+            // 否则是新句的 final（NLS 每句 SentenceEnd、腾讯每片发一次），
+            // 开新句、落屏。旧口径 settled 即返，把第二句起全丢掉。
+            val last = settledText
+            if (last == null || text.startsWith(last) || last.startsWith(text)) return
+            settled = false
+            settledText = null
+        }
         // final 即收尾当前句：此后迟到的 partial 一律丢弃，不再覆写
         // 已提交文本，onEnded 也不再把陈旧 partial 二次提交（B-S1）；
         // 但 settled 只管当前句，下一句的 final 仍可落屏。

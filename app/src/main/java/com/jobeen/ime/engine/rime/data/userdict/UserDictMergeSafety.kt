@@ -138,6 +138,22 @@ object UserDictMergeSafety {
     /** 合并被中止时抛出的异常：message 已是给用户看的中文说明，调用方直接展示。 */
     class UserDictMergeException(message: String) : IllegalStateException(message)
 
+    /**
+     * 一次安全合并的结果（1.6）：只返回导入条数时，跳过的坏行没有任何
+     * 返回值／UI 通道交给上层，同步随后无条件裸 PUT 会把远端坏行覆盖
+     * 掉。跳过明细随结果返回，由调用方决定是展示还是中止后续 PUT。
+     */
+    data class MergeResult(
+        /** 实际导入的词条数（去重后）。 */
+        val importedCount: Int,
+        /** 跳过的坏行总数（含未列出的）。 */
+        val skippedRows: Int = 0,
+        /** 全部跳过行的行号（不截断）。 */
+        val skippedLineNumbers: Set<Int> = emptySet(),
+        /** 跳过行的原因（只列前 MAX_ISSUES 条，其余只计总数）。 */
+        val skipped: List<Issue> = emptyList(),
+    )
+
     // ---- 校验 ----
 
     /**
@@ -880,6 +896,11 @@ object UserDictMergeSafety {
      * 可合”的正常状态，直接返回 0，不记失败、不跑导出/备份/导入；
      * 手动导入传 false（默认）：用户亲手选了个空文件，应报错告知。
      *
+     * 返回 [MergeResult]：导入条数＋跳过明细（数量／行号／原因）。
+     * 调用方不得只取条数丢弃跳过明细——同步上传路径有跳过行时必须
+     * 中止 PUT（见 WebDavSync.checkNoSkippedRowsForUpload），手动
+     * 导入成功后须展示跳过数。
+     *
      * [exportCurrent]/[importFile] 收到的是调用方准备好的临时文件路径，
      * 返回引擎的条数（<0 为失败）。临时文件由本函数负责清理；
      * [batchFile] 仍归调用方（暂存/下载的临时文件按原有 finally 删除）。
@@ -893,7 +914,7 @@ object UserDictMergeSafety {
         exportCurrent: suspend (File) -> Int,
         importFile: suspend (File) -> Int,
         allowEmpty: Boolean = false,
-    ): Int {
+    ): MergeResult {
         val valid = when (val validation = validateBatch(batchFile, batchLabel, dictName)) {
             is BatchValidation.Invalid -> {
                 if (allowEmpty && validation.issues.size == 1 &&
@@ -901,7 +922,7 @@ object UserDictMergeSafety {
                 ) {
                     // 空词典同步：无词可合不是失败（松烟同口径：空快照直接跳过）。
                     Timber.i("跳过空词典合并：$batchLabel（文件里没有任何词条）")
-                    return 0
+                    return MergeResult(0)
                 }
                 throw UserDictMergeException(validation.userMessage())
             }
@@ -943,7 +964,12 @@ object UserDictMergeSafety {
             if (count < 0) {
                 throw UserDictMergeException("导入用户词典失败")
             }
-            return count
+            return MergeResult(
+                importedCount = count,
+                skippedRows = valid.skippedRows,
+                skippedLineNumbers = valid.skippedLineNumbers,
+                skipped = valid.skipped,
+            )
         } finally {
             if (normalized != batchFile) normalized.delete()
         }

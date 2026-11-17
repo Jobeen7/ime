@@ -86,4 +86,44 @@ class NativeCandidateFrameTest {
         assertFalse(isLast)
         assertEquals((0 until 24).toList(), list.map { it.index })
     }
+
+    // 1.8：生僻字补字帧沿用入帧的页号／末页。旧实现硬编码页号 0、
+    // 末页 false，翻页后的补字帧会把面板打回首屏、末页判定也丢了。
+    @Test
+    fun supplementedFrame_keepsPageAndLastPage() {
+        val frame = supplementedCandidateFrame(
+            list = candidates(10),
+            highlighted = 0,
+            total = 30,
+            spellings = listOf("qu"),
+            firstRawInput = "qu",
+            page = 2,
+            isLastPage = true,
+            isDeleted = { false },
+        )
+        assertTrue(frame != null)
+        assertEquals(2, frame!!.page)
+        assertTrue(frame.isLastPage)
+        // 补字本身口径不变：佢插到第 10 位，总数 +1。
+        assertEquals(11, frame.list.size)
+        assertEquals("佢", frame.list[9].text)
+        assertEquals(31, frame.total)
+    }
+
+    @Test
+    fun supplementedFrame_noSupplement_returnsNull() {
+        assertEquals(
+            null,
+            supplementedCandidateFrame(
+                list = candidates(10),
+                highlighted = 0,
+                total = 30,
+                spellings = listOf("zzz"),
+                firstRawInput = "zzz",
+                page = 2,
+                isLastPage = true,
+                isDeleted = { false },
+            ),
+        )
+    }
 }

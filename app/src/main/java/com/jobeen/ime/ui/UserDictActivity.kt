@@ -446,7 +446,7 @@ class UserDictActivity : ImeActivity() {
                 // 副本、批内同词条取较大权重去重后再导入。经引擎线程串行
                 // 导入，不与引擎查词/学词并发访问同一个 LevelDB；大文件
                 // 分批导入，避免整段独占引擎线程导致导入期间按键卡顿
-                val count = try {
+                val result = try {
                     UserDictMergeSafety.mergeValidatedBatch(
                         dictName = dict,
                         batchFile = tempFile,
@@ -470,13 +470,19 @@ class UserDictActivity : ImeActivity() {
                 withContext(Dispatchers.Main) {
                     setIdle()
                     refreshBackupInfo()
+                    // 导入成功后展示跳过数（1.6）：行级坏行只跳过该行、其余
+                    // 照常导入，跳过几行必须让用户看见，不得静默丢行。
+                    val imported = result.importedCount
+                    val skipped = result.skippedRows
                     when {
-                        count < 0 -> {
-                            Timber.w("Import user dict failed: native returned $count")
-                            ToastUtil.showToast(getString(R.string.import_failed))
-                        }
-                        count == 0 -> ToastUtil.showToast(getString(R.string.user_dict_no_words_in_file))
-                        else -> ToastUtil.showToast(getString(R.string.user_dict_imported_count, count))
+                        imported == 0 && skipped == 0 ->
+                            ToastUtil.showToast(getString(R.string.user_dict_no_words_in_file))
+                        imported == 0 ->
+                            ToastUtil.showToast(getString(R.string.user_dict_imported_none_skipped, skipped))
+                        skipped == 0 ->
+                            ToastUtil.showToast(getString(R.string.user_dict_imported_count, imported))
+                        else ->
+                            ToastUtil.showToast(getString(R.string.user_dict_imported_count_skipped, imported, skipped))
                     }
                 }
             } catch (e: UserDictMergeSafety.UserDictMergeException) {

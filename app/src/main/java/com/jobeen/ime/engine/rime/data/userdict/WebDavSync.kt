@@ -326,6 +326,31 @@ object WebDavSync {
     }
 
     /**
+     * 有跳过行时停 PUT（1.6）：远端文件含无法解析的行时，下载合并已把
+     * 这些行丢了（只导入好行）；此时再把本地导出 PUT 回远端，会把远端
+     * 坏行永久覆盖掉、且下一轮备份也救不回来。初次下载与复读重合并都
+     * 先过本守卫，有跳过行即抛错中止本次上传、远端原样不动；用户修复
+     * 远端文件后下一轮同步再正常上传。纯函数，可单测；抛出的
+     * IllegalStateException 经 RemoteTransferRunner 原样进 FAILED
+     * state 的 error 文本、由调用方展示给用户。
+     */
+    internal fun checkNoSkippedRowsForUpload(
+        merge: UserDictMergeSafety.MergeResult,
+        dictName: String,
+    ) {
+        if (merge.skippedRows <= 0) return
+        val lines = merge.skippedLineNumbers.sorted()
+        val shown = lines.take(10).joinToString("、") { "第 $it 行" }
+        val lineText = if (lines.size > 10) "$shown 等共 ${lines.size} 行" else shown
+        val reasons = merge.skipped.take(3).joinToString("；") { "第 ${it.lineNumber} 行：${it.detail}" }
+        throw IllegalStateException(
+            "远端词典“$dictName”有 ${merge.skippedRows} 行无法解析（$lineText），" +
+                "本次上传已中止，未覆盖远端；请先修复远端文件再同步" +
+                if (reasons.isNotEmpty()) "（$reasons）" else "",
+        )
+    }
+
+    /**
      * PUT 前复读重试（纯决策循环，不直接碰网络与引擎，便于单测）：
      * 每次复读取当前远端哈希，与上次合并进本地的快照哈希比对；
      * 相等即 PUT，不等则重合并重导出（调用方负责，返回刚合并的
@@ -385,6 +410,10 @@ object WebDavSync {
             downloadResult.exceptionOrNull()?.let { e ->
                 if (!(e is WebDavHttpException && e.httpCode == 404)) throw e
             }
+            // 有跳过行时停 PUT（1.6）：初次下载合并已丢了远端坏行，
+            // 此时再 PUT 本地导出会把远端坏行永久覆盖掉——先中止
+            // 本次上传，远端原样不动（404 首次上传无下载结果，不拦）。
+            downloadResult.getOrNull()?.let { checkNoSkippedRowsForUpload(it.merge, dictName) }
             // 复读比较的基准：初次下载合并进本地的那份远端快照哈希；
             // 404（远端尚无文件）时基准为空，复读仍为空才算未变。
             val initialSnapshotHash: String? = downloadResult.getOrNull()?.snapshotHash
@@ -406,6 +435,9 @@ object WebDavSync {
                     fetchHash = { fetchRemoteDictHash(fileName) },
                     mergeAndReexport = {
                         val merged = downloadLocked(dictName, session).getOrThrow()
+                        // 复读重合并同样有跳过行时停 PUT（与初次下载同口径）：
+                        // 抛错后 putWithRereadRetry 直接向上传播、中止上传。
+                        checkNoSkippedRowsForUpload(merged.merge, dictName)
                         tempFile.delete()
                         val newCount = session.runOnReady {
                             exportUserDictLive(dictName, tempFile.absolutePath)
@@ -709,8 +741,14 @@ object WebDavSync {
      * 下载合并结果：导出的词条数加刚下载的远端裸字节哈希。
      * 哈希用于上传前复读比较（远端变没变），转换（.userdb.txt
      * 转置）不改哈希口径，比较的是远端文件本身。
+     * [merge] 带跳过明细：上传路径有跳过行时必须中止 PUT
+     * （见 [checkNoSkippedRowsForUpload]），不得只取条数丢弃。
      */
-    private data class DownloadedDict(val count: Int, val snapshotHash: String)
+    private data class DownloadedDict(
+        val count: Int,
+        val snapshotHash: String,
+        val merge: UserDictMergeSafety.MergeResult,
+    )
 
     private suspend fun downloadLocked(
         dictName: String,
@@ -781,7 +819,7 @@ object WebDavSync {
                 // 导入仍是合并操作：只增不减，不会删除本地已有词；
                 // 热导入直接写运行中引擎的词库，导入后立即生效，无需重启
                 // 大文件分批导入，避免整段独占引擎线程导致同步期间按键卡顿
-                val count = UserDictMergeSafety.mergeValidatedBatch(
+                val merge = UserDictMergeSafety.mergeValidatedBatch(
                     dictName = dictName,
                     batchFile = tempFile,
                     batchLabel = remoteFile,
@@ -811,8 +849,8 @@ object WebDavSync {
                 if (sameName) {
                     UserDictPrefs.setLastDownloadTime(remoteFile, System.currentTimeMillis())
                 }
-                Timber.i("User dict '$dictName' downloaded and imported: $count entries")
-                DownloadedDict(count, snapshotHash)
+                Timber.i("User dict '$dictName' downloaded and imported: ${merge.importedCount} entries")
+                DownloadedDict(merge.importedCount, snapshotHash, merge)
             } finally {
                 tempFile.delete()
             }
@@ -1706,6 +1744,8 @@ object WebDavSync {
                     // 合并前备份 before-merge.json→行级问题跳过该行、其余
                     // 照常导入→批内取较大权重去重后导入；空文件直接跳过
                     // （与 downloadLocked 同口径，见该处注释）。
+                    // 注意：本路的跳过明细暂未接停 PUT 守卫（1.6 只覆盖
+                    // upload() 的 PUT；目录同步的 PUT 在下方，待另定）。
                     UserDictMergeSafety.mergeValidatedBatch(
                         dictName = dict,
                         batchFile = tmpIn,

@@ -152,6 +152,38 @@ class CloudVoiceSettleTest {
         assertFalse(settle.hasPartial)
     }
 
+    // 1.10：final 之后直接到达的 final 同 onPartial 的新句检测——
+    // 与已提交句互为前缀是同一句迟到重发（丢弃），否则是新句的 final
+    // （NLS 每句 SentenceEnd、腾讯每片发一次），开新句落屏。旧口径
+    // settled 即返，中间无 partial 的第二句直接丢掉。
+    @Test
+    fun settle_secondFinalWithoutPartial_newSentenceCommits() {
+        val sink = RecordingSink()
+        val settle = CloudVoiceSettle(sink)
+        settle.onPartial("第一句")
+        settle.onFinal("第一句。")
+        // 第二句无 partial、直接 final：必须落屏，不能丢。
+        settle.onFinal("第二句。")
+        settle.onEnded()
+        assertEquals(
+            listOf("preview:第一句", "commit:第一句。", "commit:第二句。"),
+            sink.calls,
+        )
+    }
+
+    @Test
+    fun settle_secondFinalSameSentencePrefix_dropped() {
+        val sink = RecordingSink()
+        val settle = CloudVoiceSettle(sink)
+        settle.onPartial("你好")
+        settle.onFinal("你好世界")
+        // 同一句的迟到重发（与已提交句互为前缀）：丢弃，不二次提交。
+        settle.onFinal("你好世界！")
+        settle.onFinal("你好")
+        settle.onEnded()
+        assertEquals(listOf("preview:你好", "commit:你好世界"), sink.calls)
+    }
+
     // 空 final 不收尾（旧口径）：其后的 partial 仍有效，onEnded 照常结算。
     @Test
     fun settle_emptyFinalDoesNotSettle() {

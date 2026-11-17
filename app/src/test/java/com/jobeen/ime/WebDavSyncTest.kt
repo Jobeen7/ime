@@ -2,22 +2,33 @@
 
 package com.jobeen.ime
 
+import com.jobeen.ime.engine.rime.data.userdict.UserDictMergeSafety
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync.DictDownloadAction
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync.HttpGetResult
+import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.io.File
+import java.net.InetSocketAddress
 import java.nio.file.Files
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * WebDAV 同步的 JVM 可测部分：词典/方案下载四态映射与原子替换。
  * 旧目录同步（mtime 末写胜出、删除传播、骤减暂停）已随多目录
  * 改写退场，其纯函数与用例一并删除，不再覆盖。
+ * 1.6：远端有坏行时停 PUT（守卫＋模拟服务全流程，见文件末尾）。
  */
 class WebDavSyncTest {
 
@@ -255,5 +266,225 @@ class WebDavSyncTest {
             assertEquals("复读失败", e.message)
         }
         assertEquals(0, puts)
+    }
+
+    // ---- 1.6：远端有坏行时停 PUT ----
+
+    @Test
+    fun checkNoSkippedRowsForUpload_noSkips_passes() {
+        // 无跳过行不拦：正常上传不受影响。
+        WebDavSync.checkNoSkippedRowsForUpload(
+            UserDictMergeSafety.MergeResult(importedCount = 3),
+            "wanxiang_lite",
+        )
+    }
+
+    @Test
+    fun checkNoSkippedRowsForUpload_withSkips_throwsNamingRows() {
+        val error = assertThrows(IllegalStateException::class.java) {
+            WebDavSync.checkNoSkippedRowsForUpload(
+                UserDictMergeSafety.MergeResult(
+                    importedCount = 2,
+                    skippedRows = 2,
+                    skippedLineNumbers = setOf(2, 5),
+                    skipped = listOf(
+                        UserDictMergeSafety.Issue(2, "BAD_WEIGHT", "权重不是整数"),
+                        UserDictMergeSafety.Issue(5, "BAD_COLUMNS", "应为 2 或 3 列"),
+                    ),
+                ),
+                "wanxiang_lite",
+            )
+        }
+        val message = error.message ?: ""
+        assertTrue(message.contains("wanxiang_lite"))
+        assertTrue(message.contains("2 行"))
+        assertTrue(message.contains("第 2 行"))
+        assertTrue(message.contains("第 5 行"))
+        assertTrue(message.contains("未覆盖远端"))
+    }
+
+    /**
+     * 模拟 WebDAV 服务：内存里的远端词典文件，GET 读、PUT 写，
+     * 记下每次 PUT 的请求体。只供 1.6 全流程测试。
+     */
+    private class MockDictServer(initialContent: String) {
+        private val content = AtomicReference(initialContent)
+        val putBodies: MutableList<String> =
+            Collections.synchronizedList(mutableListOf())
+        private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/wanxiang_lite.userdict.txt") { exchange ->
+                when (exchange.requestMethod) {
+                    "GET" -> {
+                        val bytes = content.get().toByteArray(Charsets.UTF_8)
+                        exchange.sendResponseHeaders(200, bytes.size.toLong())
+                        exchange.responseBody.write(bytes)
+                        exchange.responseBody.close()
+                    }
+                    "PUT" -> {
+                        val body = exchange.requestBody.bufferedReader().readText()
+                        putBodies += body
+                        content.set(body)
+                        exchange.sendResponseHeaders(200, -1)
+                        exchange.close()
+                    }
+                    else -> {
+                        exchange.sendResponseHeaders(405, -1)
+                        exchange.close()
+                    }
+                }
+            }
+            start()
+        }
+
+        val url: String get() = "http://127.0.0.1:${server.address.port}/wanxiang_lite.userdict.txt"
+
+        fun stop() = server.stop(0)
+    }
+
+    private fun getRemote(client: OkHttpClient, url: String): String {
+        client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+            assertTrue(response.isSuccessful)
+            return response.body!!.string()
+        }
+    }
+
+    private fun putRemote(client: OkHttpClient, url: String, body: String) {
+        client.newCall(
+            Request.Builder().url(url)
+                .put(body.toRequestBody("text/plain".toMediaType())).build(),
+        ).execute().use { response -> assertTrue(response.isSuccessful) }
+    }
+
+    /** 词典文本里的词条集合（每行首列的词，空行与注释行除外）。 */
+    private fun entryPhrases(text: String): Set<String> =
+        text.lineSequence()
+            .filter { it.isNotBlank() && !it.startsWith("#") }
+            .map { it.substringBefore('\t') }
+            .toSet()
+
+    private suspend fun mergeDownloaded(
+        dir: File,
+        filesDir: File,
+        file: File,
+    ): Pair<UserDictMergeSafety.MergeResult, String?> {
+        var importedText: String? = null
+        val result = UserDictMergeSafety.mergeValidatedBatch(
+            dictName = "wanxiang_lite",
+            batchFile = file,
+            batchLabel = "wanxiang_lite.userdict.txt",
+            filesDir = filesDir,
+            cacheDir = dir,
+            allowEmpty = true,
+            exportCurrent = { tmp ->
+                tmp.writeText("旧词\tjiu ci\t4\n", Charsets.UTF_8)
+                1
+            },
+            importFile = { f ->
+                importedText = f.readText(Charsets.UTF_8)
+                importedText!!.lineSequence().filter { it.isNotEmpty() }.count()
+            },
+        )
+        return result to importedText
+    }
+
+    @Test
+    fun badRemoteRows_downloadMergesGoodRows_uploadStopsPut_remoteUnchanged() = runBlocking {
+        // 1.6 全流程（可测接缝级）：真 GET 下载 → 真合并（好行进、坏行
+        // 跳）→ 守卫中止上传 → 模拟服务上 PUT 零次、远端词条集合不变。
+        // 不经过 uploadLocked 本身——它要 Android appContext 与原生
+        // RimeSession，JVM 单测无此环境（无 Robolectric）；生产接线
+        // （downloadLocked→守卫→putWithRereadRetry）与本测试的组合
+        // 同构：初次下载后的守卫与复读重合并内的守卫各一处，见
+        // uploadLocked 内注释。
+        val remoteBefore = "你好\tni hao\t2\n世界\tshi jie\t-1\n啦啦啦\tla la\t1\n"
+        val server = MockDictServer(remoteBefore)
+        val client = OkHttpClient()
+        val dir = Files.createTempDirectory("webdav-bad-remote-test").toFile()
+        val filesDir = Files.createTempDirectory("webdav-bad-remote-files").toFile()
+        try {
+            val downloaded = File(dir, "download.txt")
+                .apply { writeText(getRemote(client, server.url), Charsets.UTF_8) }
+            val (result, importedText) = mergeDownloaded(dir, filesDir, downloaded)
+            // 下载合并：好行 2 条进本地，坏行（第 2 行负权重）只跳过该行。
+            assertEquals(2, result.importedCount)
+            assertEquals(1, result.skippedRows)
+            assertEquals(setOf(2), result.skippedLineNumbers)
+            assertEquals("你好\tni hao\t2\n啦啦啦\tla la\t1\n", importedText)
+            // 初次下载后的守卫（uploadLocked 第一处）：有跳过行即中止。
+            val error = assertThrows(IllegalStateException::class.java) {
+                WebDavSync.checkNoSkippedRowsForUpload(result, "wanxiang_lite")
+            }
+            assertTrue((error.message ?: "").contains("第 2 行"))
+            // 复读重合并内的守卫（uploadLocked 第二处）：远端又变了、
+            // 重合并仍有坏行时，putWithRereadRetry 不得 PUT。
+            var puts = 0
+            try {
+                WebDavSync.putWithRereadRetry(
+                    initialHash = "stale",
+                    fetchHash = { getRemote(client, server.url) },
+                    mergeAndReexport = {
+                        WebDavSync.checkNoSkippedRowsForUpload(result, "wanxiang_lite")
+                        "merged"
+                    },
+                    put = {
+                        puts++
+                        putRemote(client, server.url, "你好\tni hao\t2\n")
+                    },
+                )
+                fail("重合并有坏行应中止，不应 PUT")
+            } catch (e: IllegalStateException) {
+                assertTrue((e.message ?: "").contains("第 2 行"))
+            }
+            assertEquals(0, puts)
+            // 模拟服务验明：PUT 零次，远端词条集合前后一致（坏行未被覆盖）。
+            assertTrue(server.putBodies.isEmpty())
+            assertEquals(entryPhrases(remoteBefore), entryPhrases(getRemote(client, server.url)))
+        } finally {
+            server.stop()
+            dir.deleteRecursively()
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cleanRemoteRows_uploadPutsMergedEntries_remoteUpdated() = runBlocking {
+        // 对照：远端全是好行时守卫放行，PUT 正常发生，远端词条集合
+        // 按合并结果更新（旧行保留＋本地新增词写回）。
+        val remoteBefore = "你好\tni hao\t2\n啦啦啦\tla la\t1\n"
+        val mergedExport = "你好\tni hao\t2\n啦啦啦\tla la\t1\n本地词\tben di ci\t1\n"
+        val server = MockDictServer(remoteBefore)
+        val client = OkHttpClient()
+        val dir = Files.createTempDirectory("webdav-clean-remote-test").toFile()
+        val filesDir = Files.createTempDirectory("webdav-clean-remote-files").toFile()
+        try {
+            val downloaded = File(dir, "download.txt")
+                .apply { writeText(getRemote(client, server.url), Charsets.UTF_8) }
+            val (result, _) = mergeDownloaded(dir, filesDir, downloaded)
+            assertEquals(2, result.importedCount)
+            assertEquals(0, result.skippedRows)
+            // 无跳过行，守卫放行。
+            WebDavSync.checkNoSkippedRowsForUpload(result, "wanxiang_lite")
+            var puts = 0
+            WebDavSync.putWithRereadRetry(
+                initialHash = getRemote(client, server.url),
+                fetchHash = { getRemote(client, server.url) },
+                mergeAndReexport = { getRemote(client, server.url) },
+                put = {
+                    puts++
+                    putRemote(client, server.url, mergedExport)
+                },
+            )
+            assertEquals(1, puts)
+            assertEquals(1, server.putBodies.size)
+            assertEquals(mergedExport, server.putBodies.single())
+            assertEquals(
+                setOf("你好", "啦啦啦", "本地词"),
+                entryPhrases(getRemote(client, server.url)),
+            )
+        } finally {
+            server.stop()
+            dir.deleteRecursively()
+            filesDir.deleteRecursively()
+        }
     }
 }

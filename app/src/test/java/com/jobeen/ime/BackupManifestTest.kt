@@ -2,9 +2,11 @@
 
 package com.jobeen.ime
 
+import com.jobeen.ime.data.backup.BackupManager
 import com.jobeen.ime.data.backup.BackupManifest
 import com.jobeen.ime.data.backup.manifestCounts
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -128,6 +130,24 @@ class BackupManifestTest {
         )
         assertEquals(10, legacy.size)
         assertTrue(manifest(legacy).validate(fullCounts()).isEmpty())
+    }
+
+    // 1.12：备份清单向前兼容——只拒未来版，旧版照常还原。
+    // 旧版清单只有旧键时 validate 只核对清单里有的键（见上），
+    // 版本号本身不得再把旧版挡在门外。
+    @Test
+    fun payloadVersion_olderAndCurrent_supported() {
+        assertTrue(BackupManager.isSupportedPayloadVersion(1))
+        assertTrue(
+            BackupManager.isSupportedPayloadVersion(BackupManifest.CURRENT_PAYLOAD_VERSION),
+        )
+    }
+
+    @Test
+    fun payloadVersion_future_rejected() {
+        assertFalse(
+            BackupManager.isSupportedPayloadVersion(BackupManifest.CURRENT_PAYLOAD_VERSION + 1),
+        )
     }
 
     @Test

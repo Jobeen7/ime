@@ -111,12 +111,15 @@ interface ClipboardDao {
     suspend fun count(): Int
 
     /**
-     * 只数未置顶的有效行：保留上限只约束未置顶行（见
+     * 只数未置顶、未收藏的有效行：保留上限只约束未置顶行（见
      * ClipboardManager.trimExcess）——置顶行是用户显式保留的，
      * 占名额会把未置顶容量压成「上限－置顶数」，置顶数达到上限时
-     * 新复制内容一入库就会被当作超限行立刻删掉
+     * 新复制内容一入库就会被当作超限行立刻删掉；收藏行同理不计
+     * （与 deleteOldest／deleteOlderThan 的淘汰口径一致：淘汰
+     * 只删未置顶未收藏行，计数若含收藏行会虚增超限数、误删
+     * 未收藏的旧行）。
      */
-    @Query("SELECT COUNT(*) FROM clipboard_records WHERE deleted = 0 AND pinned = 0")
+    @Query("SELECT COUNT(*) FROM clipboard_records WHERE deleted = 0 AND pinned = 0 AND isFavorite = 0")
     suspend fun countUnpinned(): Int
 
     /** 只数置顶的有效行：置顶条数上限的计数口径（见 ClipboardManager.MAX_PINNED） */
