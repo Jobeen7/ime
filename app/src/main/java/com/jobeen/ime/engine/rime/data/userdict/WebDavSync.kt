@@ -152,7 +152,18 @@ object WebDavSync {
     // ---- 同步健壮性（2026-10-28 截图 6 项；WebDAV 范围不变，
     // 只加固现有词典/方案同步，皮肤不同步） ----
 
-    /** 本轮上传总量预算：512MB；超出即中止本轮并记日志（不静默截断）。 */
+    /**
+     * 本轮上传总量预算：512MB；超出即中止本轮并记日志（不静默截断）。
+     *
+     * 预算三档（全量口径见 UserDictMergeSafety 顶部）：
+     * - 64 MiB：单词典文件（手动导入落盘、单词典下载），
+     *   UserDictManager.MAX_DICT_FILE_BYTES；
+     * - 256 MiB：目录同步单文件（下载／复读哈希），MAX_SYNC_FILE_BYTES；
+     * - 512 MiB：本轮上传总量——一次同步入口内所有 PUT 共享（方案上传、
+     *   目录同步词典上传、单本上传各是独立的一“轮”，各建一个 SyncQuota；
+     *   轮内每次 PUT 前 tryAdd，超限即中止该次上传、不覆盖远端）。
+     *   下载不计入本轮上传配额，只受单文件上限约束。
+     */
     internal const val SYNC_RUN_MAX_BYTES = 512L * 1024 * 1024
 
     /** 下载限速：8MB/s（正常词典/方案下载不受影响，只压超大流）。 */
@@ -430,6 +441,9 @@ object WebDavSync {
                 // 合并结果，残余毫秒窗口（最终复读与 PUT 之间远端
                 // 又变了）接受。删除词表链不在此列：它有逐词时间
                 // 戳合并加下轮收敛的自有机制，见 syncDeletedWords。
+                // 本轮上传配额（512 MiB，SYNC_RUN_MAX_BYTES）：每次 PUT
+                // 前记账，超限即中止本次上传、不覆盖远端（与方案上传同口径）。
+                val quota = SyncQuota(SYNC_RUN_MAX_BYTES)
                 putWithRereadRetry(
                     initialHash = initialSnapshotHash,
                     fetchHash = { fetchRemoteDictHash(fileName) },
@@ -447,6 +461,12 @@ object WebDavSync {
                         merged.snapshotHash
                     },
                     put = {
+                        if (!quota.tryAdd(tempFile.length())) {
+                            throw IllegalStateException(
+                                "本轮上传总量超限（上限 512 MiB，已传 ${quota.usedBytes} 字节），" +
+                                    "本次上传已中止，未覆盖远端",
+                            )
+                        }
                         val builder = Request.Builder()
                             .url(remoteUrl(fileName))
                             .header("Authorization", authHeader())
@@ -1787,6 +1807,10 @@ object WebDavSync {
                 mkcolQuiet(uuidBase)
                 mkcolQuiet(base)
                 val failed = mutableListOf<String>()
+                // 本轮上传配额（512 MiB，SYNC_RUN_MAX_BYTES）：本轮所有词典
+                // 的 PUT 共享，超限的词典记 failed、其余词典继续（与本函数
+                // “单本失败不中止循环”的口径一致）。
+                val quota = SyncQuota(SYNC_RUN_MAX_BYTES)
                 val dicts = session.runOnReady { getUserDictList() }
                 for (dict in dicts) {
                     if (isSyncSkippedDict(dict)) {
@@ -1828,7 +1852,15 @@ object WebDavSync {
                                     }
                                     newHash
                                 },
-                                put = { httpPutFile(remoteDictUrl, tmpOut) },
+                                put = {
+                                    if (!quota.tryAdd(tmpOut.length())) {
+                                        throw IllegalStateException(
+                                            "本轮上传总量超限（上限 512 MiB），词典“$dict”本次上传已中止，" +
+                                                "未覆盖远端",
+                                        )
+                                    }
+                                    httpPutFile(remoteDictUrl, tmpOut)
+                                },
                             )
                         } finally {
                             tmpOut.delete()
@@ -1843,8 +1875,14 @@ object WebDavSync {
         }
     }
 
-    /** 单文件同步上限：与本地导入单条目上限同口径（256MB）。 */
-    private const val MAX_SYNC_FILE_BYTES = 256L * 1024 * 1024
+    /**
+     * 单文件同步上限：目录同步路径的单文件下载／复读哈希上限（256MB）。
+     * 与本地导入单文件上限（64MB，UserDictManager.MAX_DICT_FILE_BYTES）
+     * 分档：目录同步一次可拉多本词典，单本放宽到 256MB；整轮上传总量
+     * 另受 SYNC_RUN_MAX_BYTES（512MB）约束。三档全量口径见
+     * UserDictMergeSafety 顶部。
+     */
+    internal const val MAX_SYNC_FILE_BYTES = 256L * 1024 * 1024
 }
 
 

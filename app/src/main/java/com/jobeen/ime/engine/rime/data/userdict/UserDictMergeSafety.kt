@@ -8,6 +8,7 @@ import java.io.FileInputStream
 import java.io.InputStreamReader
 import java.nio.charset.CodingErrorAction
 import java.text.Normalizer
+import java.util.Locale
 import timber.log.Timber
 
 /**
@@ -42,6 +43,24 @@ import timber.log.Timber
  *   删标记、再按备份权重重写一条——删除标记行只允许这条用户
  *   确认的恢复流程内部产生，合并流程永远不产生。
  *
+ * 内存预算（2026-11-18，报告二 P2：大词典内存预算）：
+ * - 单文件三档：手动导入／单词典下载 64 MiB（UserDictManager.MAX_DICT_FILE_BYTES）；
+ *   目录同步单文件 256 MiB（WebDavSync.MAX_SYNC_FILE_BYTES）；整轮上传总量
+ *   512 MiB（WebDavSync.SYNC_RUN_MAX_BYTES，一次同步入口内所有 PUT 共享，
+ *   超限即中止该次上传、不覆盖远端）。下载不计入整轮上传配额，只受单文件上限约束。
+ * - 单批三上限（validateBatch 强制执行）：单行 ≤ MAX_LINE_CHARS 字、
+ *   检查行数 ≤ MAX_CHECKED_ROWS 行、合格词条 ≤ MAX_TOTAL_ENTRIES 条；
+ *   超行数／超词条数整批拒绝并说明原因（未读完无法确认余下行），超长行是行级问题、
+ *   只跳过该行。码本身不限长（librime 解析器不限），单行上限只拦整行病态长的文件。
+ * - 峰值：校验只记 64 位词条指纹（dictKeyFingerprint，不存词条对象），归一每键
+ *   只存权重（不另建 seen 集）；再大仍受 50 万条上限约束（每键约 200–300 字节，
+ *   50 万键约 100–150 MB 上限）——全量磁盘去重（有界
+ *   外部排序／磁盘索引）未做：它是同步预处理架构级改动，在安全合并路径上新写
+ *   数百行外排代码无法在主机侧证明与内存版逐字节一致，故停下、只留有界上限。
+ * - 测量：mergeValidatedBatch 在校验／归一／导入三阶段边界采样堆（sampleHeap，
+ *   logcat 搜 "DictMemory"）；复现方法见 UserDictMergeSafetyTest 的 heapSamples*
+ *   测试（超多短行档与单条巨长行档）。主机测不了真机低内存峰值，只保证采样点与方法。
+ *
  * 本文件只含纯函数与文件 IO，不直接碰引擎：导出/导入由调用方
  * 以 lambda 传入（沿用 [UserDictManager.importUserDictInChunks]
  * 的注入口径），调用方负责在引擎线程串行执行。
@@ -56,6 +75,31 @@ object UserDictMergeSafety {
 
     /** 词的长度上限：正常词条远小于此值，超限基本是选错文件或坏行。码不限长（与 librime 解析器一致）。 */
     const val MAX_PHRASE_CHARS = 128
+
+    /**
+     * 单行长度上限（字）：合法行最长约 1036 字（128 字词＋1 制表符＋约 896 字码，
+     * 128 音节×每音节约 7 字＋1 制表符＋≤10 位权重）；8192 字≈8 倍余量。
+     * 超长行是行级问题：只跳过该行（见 [IssueCode.LINE_TOO_LONG]），不拒绝整批；
+     * 有界按行读（[forEachBoundedLine]）保证超长行只占 8192 字内存、不整行物化。
+     * 码本身不限长（librime 解析器不限），本上限只拦“整行病态长”的文件。
+     */
+    const val MAX_LINE_CHARS = 8192
+
+    /**
+     * 单批检查行数上限：含跳过的坏行。是词条上限的 2 倍、他本人词典
+     * （19,234 条）的约 50 倍；同时约束扫描耗时与跳过行号集合的大小。
+     * 超限整批拒绝（校验未读完，无法确认余下行），见 [IssueCode.TOO_MANY_ROWS]。
+     */
+    const val MAX_CHECKED_ROWS = 1_000_000
+
+    /**
+     * 单批合格词条总数上限：去重前合格行数。去重后 distinct 键 ≤ 此数，
+     * 故归一映射表有界（按对象结构估算每键约 200–300 字节，50 万键约
+     * 100–150 MB 上限；校验的指纹集约 28 MB。边界采样受 GC 影响，单次
+     * 差值波动大，见 heapSamples* 测试输出）。他本人词典 19,234 条，
+     * 约 26 倍余量。超限整批拒绝，见 [IssueCode.TOO_MANY_ENTRIES]。
+     */
+    const val MAX_TOTAL_ENTRIES = 500_000
 
     /** 校验失败时最多向用户列出的行问题数（其余只计总数）。 */
     const val MAX_ISSUES = 20
@@ -73,6 +117,9 @@ object UserDictMergeSafety {
         const val BAD_WEIGHT = "bad_weight"
         const val NEGATIVE_WEIGHT = "negative_weight"
         const val COLUMN_ORDER = "column_order"
+        const val LINE_TOO_LONG = "line_too_long"
+        const val TOO_MANY_ROWS = "too_many_rows"
+        const val TOO_MANY_ENTRIES = "too_many_entries"
     }
 
     /** 一条词条：phrase⇥code，commits 为 null 表示该行无权重列。 */
@@ -152,7 +199,164 @@ object UserDictMergeSafety {
         val skippedLineNumbers: Set<Int> = emptySet(),
         /** 跳过行的原因（只列前 MAX_ISSUES 条，其余只计总数）。 */
         val skipped: List<Issue> = emptyList(),
+        /** 校验／归一／导入三阶段边界的堆采样（见 [sampleHeap]），供测量与诊断用。 */
+        val heapSamples: List<HeapSample> = emptyList(),
     )
+
+    /** 一次堆采样（阶段边界用，见 [sampleHeap]）：used = total - free。 */
+    data class HeapSample(
+        val stage: String,
+        val usedBytes: Long,
+        val totalBytes: Long,
+        val maxBytes: Long,
+    ) {
+        fun usedMiB(): Double = usedBytes / 1024.0 / 1024.0
+    }
+
+    /**
+     * 在 [stage] 采样当前堆并记日志（logcat 搜 "DictMemory"）。
+     *
+     * 测量方法（可复现）：跑 UserDictMergeSafetyTest 里 heapSamples* 的
+     * 两个测试——超多短行档与单条巨长行档；测试把四次边界采样打印到
+     * 标准输出，对比 validate-after / normalize-after 两档的 usedMiB。
+     * 注意这是边界采样、不是真峰值：GC 可能在采样之间回收；真机低内存
+     * 机上的真峰值需在同步大词典时看 logcat 的 DictMemory 行，或走
+     * Android Studio profiler。主机测不了真机低内存峰值，只保证采样点与方法。
+     */
+    fun sampleHeap(stage: String): HeapSample {
+        val runtime = Runtime.getRuntime()
+        val sample = HeapSample(
+            stage = stage,
+            usedBytes = runtime.totalMemory() - runtime.freeMemory(),
+            totalBytes = runtime.totalMemory(),
+            maxBytes = runtime.maxMemory(),
+        )
+        Timber.d(
+            "DictMemory stage=%s used=%.1fMiB total=%.1fMiB max=%.1fMiB",
+            stage,
+            sample.usedMiB(),
+            sample.totalBytes / 1024.0 / 1024.0,
+            sample.maxBytes / 1024.0 / 1024.0,
+        )
+        return sample
+    }
+
+    /**
+     * 有界按行读 [reader]：每行最多保留 [MAX_LINE_CHARS] 字，超长行只把
+     * 前 MAX_LINE_CHARS+1 字交给 [onLine] 并置 overlong=true，余下字符
+     * 直接丢弃（不进内存）；行号照常递增，超长行之后的行号不错位。
+     *
+     * 行尾口径与 BufferedReader.readLine 一致（\n、\r\n、\r 都是行尾；
+     * 末行无行尾也算一行）。[onLine] 返回 false 即提前停读。
+     * 调用方不得关闭 reader（由外层 use 负责）；编码异常直接抛给调用方。
+     */
+    internal fun forEachBoundedLine(
+        reader: BufferedReader,
+        onLine: (lineNumber: Int, text: String, overlong: Boolean) -> Boolean,
+    ) {
+        val buf = CharArray(8192)
+        val cur = StringBuilder()
+        var lineNumber = 0
+        var overlong = false
+        var skipLf = false
+        fun emit(): Boolean {
+            lineNumber++
+            val text = cur.toString()
+            cur.setLength(0)
+            val wasOverlong = overlong
+            overlong = false
+            return onLine(lineNumber, text, wasOverlong)
+        }
+        while (true) {
+            val read = reader.read(buf)
+            if (read < 0) break
+            var i = 0
+            while (i < read) {
+                val ch = buf[i++]
+                if (skipLf) {
+                    skipLf = false
+                    if (ch == '\n') continue
+                }
+                when (ch) {
+                    '\r' -> {
+                        if (!emit()) return
+                        skipLf = true
+                    }
+                    '\n' -> {
+                        if (!emit()) return
+                    }
+                    else -> {
+                        if (!overlong) {
+                            cur.append(ch)
+                            if (cur.length > MAX_LINE_CHARS) overlong = true
+                        }
+                    }
+                }
+            }
+        }
+        if (cur.isNotEmpty() || overlong) {
+            emit()
+        }
+    }
+
+    /**
+     * 词条指纹（FNV-1a 64 位，取 phrase + '\u0000' + code 的字符序列）：
+     * 校验只用它数 distinct（见 [BatchValidation.Valid.distinctKeys]），
+     * 不存词条对象——50 万 distinct 键时指纹集约 28 MB，原 HashSet<DictKey>
+     * 约 75 MB。碰撞只会让 distinctKeys 少计（50 万条时概率约 3e-8），
+     * 且 distinctKeys 只是上报数，不影响任何一行的接受／拒绝与导入内容。
+     * 分隔符 '\u0000' 是控制字符，校验通过的行里不可能出现（词／码都禁
+     * 控制字符），故指纹无歧义。
+     */
+    internal fun dictKeyFingerprint(phrase: String, code: String): Long {
+        // FNV-1a 64 位：offset basis 14695981039346656037（有符号值为下）、prime 1099511628211。
+        var hash = -3750763034362895579L
+        for (ch in phrase) {
+            hash = (hash xor ch.code.toLong()) * 1099511628211L
+        }
+        // 分隔符 '\u0000'：xor 0（值不变）再乘一次 prime，相当于多混入一个 0 字符。
+        hash *= 1099511628211L
+        for (ch in code) {
+            hash = (hash xor ch.code.toLong()) * 1099511628211L
+        }
+        return hash
+    }
+
+    /** 行数超限的整批拒绝（校验未读完，无法确认余下行，只能整批拒）。 */
+    private fun tooManyRows(batchLabel: String, lineNumber: Int, checkedRows: Int): BatchValidation.Invalid =
+        BatchValidation.Invalid(
+            batchLabel = batchLabel,
+            issues = listOf(
+                Issue(
+                    0,
+                    IssueCode.TOO_MANY_ROWS,
+                    "检查到第 $lineNumber 行时已超过单批上限 " +
+                        "${String.format(Locale.US, "%,d", MAX_CHECKED_ROWS)} 行，整批已拒绝，" +
+                        "一行未写；请把文件拆成每批不超过 " +
+                        "${String.format(Locale.US, "%,d", MAX_CHECKED_ROWS)} 行再导入",
+                ),
+            ),
+            badRows = 1,
+            checkedRows = checkedRows,
+        )
+
+    /** 词条总数超限的整批拒绝（去重前合格行数已超上限）。 */
+    private fun tooManyEntries(batchLabel: String, lineNumber: Int, validRows: Int): BatchValidation.Invalid =
+        BatchValidation.Invalid(
+            batchLabel = batchLabel,
+            issues = listOf(
+                Issue(
+                    0,
+                    IssueCode.TOO_MANY_ENTRIES,
+                    "检查到第 $lineNumber 行时合格词条已超过单批上限 " +
+                        "${String.format(Locale.US, "%,d", MAX_TOTAL_ENTRIES)} 条，整批已拒绝，" +
+                        "一行未写；请把文件拆成每批不超过 " +
+                        "${String.format(Locale.US, "%,d", MAX_TOTAL_ENTRIES)} 条再导入",
+                ),
+            ),
+            badRows = 1,
+            checkedRows = validRows,
+        )
 
     // ---- 校验 ----
 
@@ -168,8 +372,14 @@ object UserDictMergeSafety {
      * - 文件里没有任何词条（只有空行或注释行）：整批拒绝——手动导入
      *   时用户选错了空文件应被告知；同步路径（allowEmpty）下空文件
      *   是“无词可合”的正常状态，由 [mergeValidatedBatch] 直接跳过。
+     * - 单批上限（内存预算，2026-11-18）：检查行数超过 [MAX_CHECKED_ROWS]
+     *   行、或合格词条超过 [MAX_TOTAL_ENTRIES] 条时整批拒绝（校验未读完，
+     *   无法确认余下行，只能整批拒、不能只取前 N 行）；超限说明点名上限数值，
+     *   由调用方原样展示给用户。
      *
      * 行级问题（只跳过该行、其余照常导入，见 [BatchValidation.Valid.skipped]）：
+     * - 单行超过 [MAX_LINE_CHARS] 字：只跳过该行（有界读行保证超长行不整行
+     *   物化）；其余行照常导入。码本身不限长，本上限只拦整行病态长的文件。
      * - 每行（空行与 `#` 注释行除外）必须是 `词⇥码` 或 `词⇥码⇥权重`，
      *   列数不对跳过该行。
      * - 词非空、≤128 字、无控制字符；码非空、无控制字符、
@@ -205,21 +415,46 @@ object UserDictMergeSafety {
         var validRows = 0
         var codeFirstVotes = 0
         var phraseFirstVotes = 0
-        val keys = HashSet<DictKey>()
+        // distinct 只记 64 位指纹（dictKeyFingerprint），不存词条对象：
+        // 50 万 distinct 键时约 28 MB，原 HashSet<DictKey> 约 75 MB。
+        val keyFingerprints = HashSet<Long>()
         var maxCommits: Int? = null
+        // 超限即整批拒绝（校验未读完，无法确认余下行）：停读后在循环外返回。
+        var limitRejection: BatchValidation.Invalid? = null
         try {
-            strictUtf8Reader(file).useLines { lines ->
-                var lineNumber = 0
-                for (raw in lines) {
-                    lineNumber++
+            strictUtf8Reader(file).use { reader ->
+                forEachBoundedLine(reader) { lineNumber, raw, overlong ->
                     var line = raw
                     // 首行 BOM：Windows 记事本存的 UTF-8 自带 BOM，首词会被
                     // 粘上 \uFEFF 而永远查不到；校验时容忍，归一化时去掉。
                     if (lineNumber == 1 && line.startsWith("\uFEFF")) {
                         line = line.substring(1)
                     }
-                    if (line.isBlank() || line.startsWith("#")) continue
+                    // 超长行：行级问题，只跳过该行（不 split、不进指纹集）。
+                    if (overlong) {
+                        checkedRows++
+                        if (checkedRows > MAX_CHECKED_ROWS) {
+                            limitRejection = tooManyRows(batchLabel, lineNumber, checkedRows)
+                            return@forEachBoundedLine false
+                        }
+                        skippedRows++
+                        skippedLineNumbers += lineNumber
+                        if (skipped.size < MAX_ISSUES) {
+                            skipped += Issue(
+                                lineNumber,
+                                IssueCode.LINE_TOO_LONG,
+                                "单行超过 $MAX_LINE_CHARS 字，已跳过（单行上限 $MAX_LINE_CHARS 字，" +
+                                    "合法行最长约 1036 字）；请检查该行是否选错文件或行尾缺失",
+                            )
+                        }
+                        return@forEachBoundedLine true
+                    }
+                    if (line.isBlank() || line.startsWith("#")) return@forEachBoundedLine true
                     checkedRows++
+                    if (checkedRows > MAX_CHECKED_ROWS) {
+                        limitRejection = tooManyRows(batchLabel, lineNumber, checkedRows)
+                        return@forEachBoundedLine false
+                    }
                     val cols = line.split('\t')
                     // 列序投票：先于逐行校验——码在前的行逐行校验必报
                     // BAD_CODE（第 2 列是汉字），若等校验通过再投票，
@@ -240,15 +475,20 @@ object UserDictMergeSafety {
                         skippedRows++
                         skippedLineNumbers += lineNumber
                         if (skipped.size < MAX_ISSUES) skipped += issue
-                        continue
+                        return@forEachBoundedLine true
                     }
                     validRows++
+                    if (validRows > MAX_TOTAL_ENTRIES) {
+                        limitRejection = tooManyEntries(batchLabel, lineNumber, validRows)
+                        return@forEachBoundedLine false
+                    }
                     val phrase = cols[0]
                     val code = cols[1].trim()
                     val commits = cols.getOrNull(2)?.trim()
                         ?.takeIf { it.isNotEmpty() }?.toIntOrNull()
-                    keys += DictKey(phrase, code)
+                    keyFingerprints += dictKeyFingerprint(phrase, code)
                     if (commits != null) maxCommits = maxOf(maxCommits ?: commits, commits)
+                    true
                 }
             }
         } catch (e: java.nio.charset.CharacterCodingException) {
@@ -261,6 +501,7 @@ object UserDictMergeSafety {
                 checkedRows = checkedRows,
             )
         }
+        limitRejection?.let { return it }
         if (checkedRows == 0) {
             return BatchValidation.Invalid(
                 batchLabel = batchLabel,
@@ -292,7 +533,7 @@ object UserDictMergeSafety {
         val sourceDict = sourceDictFromLabel(batchLabel)
         return BatchValidation.Valid(
             entryCount = validRows,
-            distinctKeys = keys.size,
+            distinctKeys = keyFingerprints.size,
             maxCommits = maxCommits,
             sourceDict = sourceDict,
             crossDict = sourceDict != null && sourceDict != dictName,
@@ -423,70 +664,76 @@ object UserDictMergeSafety {
      * 调用方负责删除返回的文件（与入参不同时）。
      */
     fun normalizeBatchFile(input: File, workDir: File, skipLines: Set<Int> = emptySet()): File {
-        val merged = LinkedHashMap<DictKey, Entry>()
+        // 每键只存权重（Int?，null = 无权重行），不存 Entry 对象：
+        // 写出时词/码取当前行自身的列——同键各行的词/码按定义相等，
+        // 输出与旧版存 Entry 逐字节一致，省掉一份 Entry 对象。
+        // 第二遍不另建 seen 集：首现行写出后即从表里删掉该键，后续
+        // 重复行查不到键即跳过——与旧版 seen 集逐行等价。
+        // 两遍都走有界读行：超长行不参与去重计算；触发重写时被丢弃，
+        // 绝不写出截断行（无重写时直接返回原文件）。
+        val weights = LinkedHashMap<DictKey, Int?>()
         var hasDuplicate = false
         var hasBom = false
-        strictUtf8Reader(input).useLines { lines ->
-            var lineNumber = 0
-            for (raw in lines) {
-                lineNumber++
+        strictUtf8Reader(input).use { reader ->
+            forEachBoundedLine(reader) { lineNumber, raw, overlong ->
                 var line = raw
                 if (lineNumber == 1 && line.startsWith("\uFEFF")) {
                     line = line.substring(1)
                     hasBom = true
                 }
-                if (line.isBlank() || line.startsWith("#")) continue
-                if (lineNumber in skipLines) continue
+                if (overlong) return@forEachBoundedLine true
+                if (lineNumber in skipLines) return@forEachBoundedLine true
+                if (line.isBlank() || line.startsWith("#")) return@forEachBoundedLine true
                 val cols = line.split('\t')
-                if (cols.size < 2 || cols.size > 3) continue
+                if (cols.size < 2 || cols.size > 3) return@forEachBoundedLine true
                 val key = DictKey(cols[0], cols[1].trim())
                 val commits = cols.getOrNull(2)?.trim()
                     ?.takeIf { it.isNotEmpty() }?.toIntOrNull()
-                val prev = merged[key]
-                if (prev != null) {
+                if (key in weights) {
                     hasDuplicate = true
+                    val prev = weights.getValue(key)
                     val best = when {
-                        prev.commits == null -> commits
-                        commits == null -> prev.commits
-                        else -> maxOf(prev.commits, commits)
+                        prev == null -> commits
+                        commits == null -> prev
+                        else -> maxOf(prev, commits)
                     }
-                    merged[key] = Entry(key.phrase, key.code, best)
+                    weights[key] = best
                 } else {
-                    merged[key] = Entry(key.phrase, key.code, commits)
+                    weights[key] = commits
                 }
+                true
             }
         }
         if (!hasDuplicate && !hasBom && skipLines.isEmpty()) return input
         val out = File(workDir, "${input.name}.normalized-${System.nanoTime()}")
-        val seen = HashSet<DictKey>()
         out.bufferedWriter(Charsets.UTF_8).use { writer ->
-            strictUtf8Reader(input).useLines { lines ->
-                var lineNumber = 0
-                for (raw in lines) {
-                    lineNumber++
+            strictUtf8Reader(input).use { reader ->
+                forEachBoundedLine(reader) { lineNumber, raw, overlong ->
                     var line = raw
                     if (lineNumber == 1 && line.startsWith("\uFEFF")) {
                         line = line.substring(1)
                     }
+                    if (overlong) return@forEachBoundedLine true
+                    if (lineNumber in skipLines) return@forEachBoundedLine true
                     if (line.isBlank() || line.startsWith("#")) {
                         writer.write(line)
                         writer.newLine()
-                        continue
+                        return@forEachBoundedLine true
                     }
-                    if (lineNumber in skipLines) continue
                     val cols = line.split('\t')
-                    if (cols.size < 2 || cols.size > 3) continue
+                    if (cols.size < 2 || cols.size > 3) return@forEachBoundedLine true
                     val key = DictKey(cols[0], cols[1].trim())
-                    if (!seen.add(key)) continue
-                    val entry = merged.getValue(key)
-                    writer.write(entry.phrase)
+                    if (key !in weights) return@forEachBoundedLine true
+                    val commits = weights.remove(key)
+                    writer.write(cols[0])
                     writer.write("\t")
-                    writer.write(entry.code)
-                    if (entry.commits != null) {
+                    writer.write(cols[1].trim())
+                    if (commits != null) {
                         writer.write("\t")
-                        writer.write(entry.commits.toString())
+                        writer.write(commits.toString())
                     }
                     writer.newLine()
+                    true
                 }
             }
         }
@@ -896,7 +1143,8 @@ object UserDictMergeSafety {
      * 可合”的正常状态，直接返回 0，不记失败、不跑导出/备份/导入；
      * 手动导入传 false（默认）：用户亲手选了个空文件，应报错告知。
      *
-     * 返回 [MergeResult]：导入条数＋跳过明细（数量／行号／原因）。
+     * 返回 [MergeResult]：导入条数＋跳过明细（数量／行号／原因）＋
+     * 校验／归一／导入三阶段边界的堆采样（[HeapSample]，供测量与诊断）。
      * 调用方不得只取条数丢弃跳过明细——同步上传路径有跳过行时必须
      * 中止 PUT（见 WebDavSync.checkNoSkippedRowsForUpload），手动
      * 导入成功后须展示跳过数。
@@ -915,6 +1163,9 @@ object UserDictMergeSafety {
         importFile: suspend (File) -> Int,
         allowEmpty: Boolean = false,
     ): MergeResult {
+        // 三阶段边界堆采样（内存预算测量点）：校验前→校验后→归一后→导入后。
+        val heapSamples = ArrayList<HeapSample>()
+        heapSamples += sampleHeap("validate-before")
         val valid = when (val validation = validateBatch(batchFile, batchLabel, dictName)) {
             is BatchValidation.Invalid -> {
                 if (allowEmpty && validation.issues.size == 1 &&
@@ -922,7 +1173,8 @@ object UserDictMergeSafety {
                 ) {
                     // 空词典同步：无词可合不是失败（松烟同口径：空快照直接跳过）。
                     Timber.i("跳过空词典合并：$batchLabel（文件里没有任何词条）")
-                    return MergeResult(0)
+                    heapSamples += sampleHeap("validate-after")
+                    return MergeResult(0, heapSamples = heapSamples)
                 }
                 throw UserDictMergeException(validation.userMessage())
             }
@@ -944,6 +1196,7 @@ object UserDictMergeSafety {
                 validation
             }
         }
+        heapSamples += sampleHeap("validate-after")
         val exportTmp = File(cacheDir, "before-merge-export-$dictName-${System.nanoTime()}.txt")
         try {
             val exported = exportCurrent(exportTmp)
@@ -959,16 +1212,19 @@ object UserDictMergeSafety {
             exportTmp.delete()
         }
         val normalized = normalizeBatchFile(batchFile, cacheDir, valid.skippedLineNumbers)
+        heapSamples += sampleHeap("normalize-after")
         try {
             val count = importFile(normalized)
             if (count < 0) {
                 throw UserDictMergeException("导入用户词典失败")
             }
+            heapSamples += sampleHeap("import-after")
             return MergeResult(
                 importedCount = count,
                 skippedRows = valid.skippedRows,
                 skippedLineNumbers = valid.skippedLineNumbers,
                 skipped = valid.skipped,
+                heapSamples = heapSamples,
             )
         } finally {
             if (normalized != batchFile) normalized.delete()

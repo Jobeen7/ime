@@ -25,7 +25,9 @@ internal fun InputStream.copyToWithLimit(out: OutputStream, maxBytes: Long): Lon
 object UserDictManager {
 
     /** 词典文本/快照文件的大小上限：正常用户词典远小于此值，
-     *  超限基本是选错文件或服务器返回异常内容，直接拒绝避免撑爆磁盘/内存 */
+     *  超限基本是选错文件或服务器返回异常内容，直接拒绝避免撑爆磁盘/内存。
+     *  三档预算全量口径（64 MiB 本档／目录同步 256 MiB／整轮上传 512 MiB）
+     *  见 UserDictMergeSafety 顶部。 */
     const val MAX_DICT_FILE_BYTES = 64L * 1024 * 1024
 
     /**

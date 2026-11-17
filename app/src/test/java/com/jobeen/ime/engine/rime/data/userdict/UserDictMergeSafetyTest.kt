@@ -690,6 +690,287 @@ class UserDictMergeSafetyTest {
         assertFalse(importCalled)
     }
 
+    // ---- 内存预算上限（2026-11-18，报告二 P2） ----
+    //
+    // 复现测量方法：heapSamples* 两个测试分别跑超多短行档与单条巨长行档，
+    // 把校验／归一／导入三阶段边界的四次堆采样打印到标准输出；跑法：
+    // ./gradlew :app:testDebugUnitTest --tests
+    //   "com.jobeen.ime.engine.rime.data.userdict.UserDictMergeSafetyTest.heapSamples*"
+    // 真机低内存峰值主机测不了：采样点加好、方法写清即可，真机看 logcat 的
+    // DictMemory 行。
+
+    private fun readBoundedLines(text: String): List<Triple<Int, String, Boolean>> {
+        val out = ArrayList<Triple<Int, String, Boolean>>()
+        val reader = java.io.BufferedReader(java.io.StringReader(text))
+        reader.use {
+            UserDictMergeSafety.forEachBoundedLine(it) { lineNumber, line, overlong ->
+                out += Triple(lineNumber, line, overlong)
+                true
+            }
+        }
+        return out
+    }
+
+    private fun writeRows(dir: File, name: String, count: Int, row: (Int) -> String): File {
+        val file = File(dir, name)
+        file.bufferedWriter(Charsets.UTF_8).use { writer ->
+            for (i in 0 until count) {
+                writer.write(row(i))
+                writer.newLine()
+            }
+        }
+        return file
+    }
+
+    private fun mergeWithFakes(
+        dir: File,
+        filesDir: File,
+        file: File,
+    ): UserDictMergeSafety.MergeResult = runBlocking {
+        UserDictMergeSafety.mergeValidatedBatch(
+            dictName = "wanxiang_lite",
+            batchFile = file,
+            batchLabel = file.name,
+            filesDir = filesDir,
+            cacheDir = dir,
+            exportCurrent = { tmp ->
+                tmp.writeText("旧词\tjiu ci\t4\n", Charsets.UTF_8)
+                1
+            },
+            importFile = { f ->
+                f.readText(Charsets.UTF_8).lineSequence().filter { it.isNotEmpty() }.count()
+            },
+        )
+    }
+
+    private fun printHeapSamples(tag: String, samples: List<UserDictMergeSafety.HeapSample>) {
+        println("DictMemory $tag: " + samples.joinToString(" | ") {
+            "${it.stage}=${"%.1f".format(it.usedMiB())}MiB"
+        })
+    }
+
+    @Test
+    fun boundedLineReaderMatchesReadLine() {
+        // 行尾口径与 BufferedReader.readLine 一致（\n、\r\n、\r 都是行尾；
+        // 末行无行尾也算一行；空文件无行）。
+        assertEquals(emptyList<Triple<Int, String, Boolean>>(), readBoundedLines(""))
+        assertEquals(listOf(Triple(1, "", false)), readBoundedLines("\n"))
+        assertEquals(listOf(Triple(1, "a", false)), readBoundedLines("a\n"))
+        assertEquals(
+            listOf(Triple(1, "a", false), Triple(2, "", false)),
+            readBoundedLines("a\n\n"),
+        )
+        assertEquals(
+            listOf(Triple(1, "a", false), Triple(2, "b", false), Triple(3, "c", false)),
+            readBoundedLines("a\r\nb\rc"),
+        )
+        assertEquals(listOf(Triple(1, "a", false)), readBoundedLines("a\r"))
+        assertEquals(
+            listOf(Triple(1, "a", false), Triple(2, "", false), Triple(3, "b", false)),
+            readBoundedLines("a\r\rb\n"),
+        )
+        assertEquals(listOf(Triple(1, "ab", false)), readBoundedLines("ab"))
+    }
+
+    @Test
+    fun boundedLineReaderKeepsLineNumbersAfterGiantLine() {
+        // 超长行只保留前 8193 字、余下丢弃；之后的行号不错位。
+        val giant = "x".repeat(9000)
+        val lines = readBoundedLines("好\thao\n$giant\n世\tshi\n")
+        assertEquals(3, lines.size)
+        assertEquals(Triple(1, "好\thao", false), lines[0])
+        assertEquals(2, lines[1].first)
+        assertTrue(lines[1].third)
+        assertEquals(UserDictMergeSafety.MAX_LINE_CHARS + 1, lines[1].second.length)
+        assertEquals(Triple(3, "世\tshi", false), lines[2])
+    }
+
+    @Test
+    fun overlongLineIsSkippedRowNotBatchReject() {
+        val dir = createTempDir()
+        val longCode = "a".repeat(8190) // 整行 2+1+8190=8193 字，超 8192 上限
+        val file = writeBatch(
+            dir, "batch.txt",
+            "你好\tni hao\t2\n你好\t$longCode\t1\n世界\tshi jie\t1\n",
+        )
+        val result = valid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(2, result.entryCount)
+        assertEquals(1, result.skippedRows)
+        assertEquals(setOf(2), result.skippedLineNumbers)
+        assertEquals(1, result.skipped.size)
+        assertEquals(UserDictMergeSafety.IssueCode.LINE_TOO_LONG, result.skipped[0].code)
+        assertTrue(result.skipped[0].detail.contains("8192"))
+        // 归一同样丢掉超长行、好行照常去重后写出。
+        val normalized = UserDictMergeSafety.normalizeBatchFile(file, dir, result.skippedLineNumbers)
+        assertEquals("你好\tni hao\t2\n世界\tshi jie\t1\n", normalized.readText(Charsets.UTF_8))
+    }
+
+    @Test
+    fun lineExactlyAtCapPasses() {
+        val dir = createTempDir()
+        // 整行恰好 8192 字：128 字词＋1 制表符＋8061 字码＋1 制表符＋1 位权重，
+        // 不超限、应通过。
+        val phrase = "你".repeat(128)
+        val code = "a".repeat(8192 - 128 - 1 - 1 - 1)
+        val file = writeBatch(dir, "batch.txt", "$phrase\t$code\t1\n")
+        val result = valid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(1, result.entryCount)
+        assertEquals(0, result.skippedRows)
+    }
+
+    @Test
+    fun singleGiantLineIsSkippedWithoutBlowingUp() {
+        val dir = createTempDir()
+        val file = writeBatch(dir, "batch.txt", "x".repeat(1024 * 1024))
+        val result = valid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(0, result.entryCount)
+        assertEquals(1, result.skippedRows)
+        assertEquals(UserDictMergeSafety.IssueCode.LINE_TOO_LONG, result.skipped[0].code)
+        // 直接调归一（不传 skipLines）：好行有重复触发重写时，巨行被丢弃、
+        // 绝不写出截断行。
+        val dupFile = writeBatch(
+            dir, "batch2.txt",
+            "你好\tni hao\t2\n" + "x".repeat(1024 * 1024) + "\n你好\tni hao\t9\n",
+        )
+        val normalized = UserDictMergeSafety.normalizeBatchFile(dupFile, dir)
+        assertEquals("你好\tni hao\t9\n", normalized.readText(Charsets.UTF_8))
+    }
+
+    @Test
+    fun tooManyRowsRejectsWholeBatch() {
+        val dir = createTempDir()
+        val filesDir = createTempDir()
+        // 全是坏列行：只涨检查行数、不涨合格词条，单独测行数上限。
+        val file = writeRows(dir, "batch.txt", UserDictMergeSafety.MAX_CHECKED_ROWS + 1) { "只有一列" }
+        val rejected = invalid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(1, rejected.issues.size)
+        assertEquals(UserDictMergeSafety.IssueCode.TOO_MANY_ROWS, rejected.issues[0].code)
+        assertTrue(rejected.issues[0].detail.contains("1,000,000"))
+        assertEquals(UserDictMergeSafety.MAX_CHECKED_ROWS + 1, rejected.checkedRows)
+        // 合并入口同样整批拒绝：不导出、不备份、不导入。
+        var exportCalled = false
+        var importCalled = false
+        try {
+            runBlocking {
+                UserDictMergeSafety.mergeValidatedBatch(
+                    dictName = "wanxiang_lite",
+                    batchFile = file,
+                    batchLabel = file.name,
+                    filesDir = filesDir,
+                    cacheDir = dir,
+                    exportCurrent = { exportCalled = true; 0 },
+                    importFile = { importCalled = true; 0 },
+                )
+            }
+            fail("expected UserDictMergeException")
+        } catch (e: UserDictMergeSafety.UserDictMergeException) {
+            assertTrue(e.message!!.contains("1,000,000"))
+        }
+        assertFalse(exportCalled)
+        assertFalse(importCalled)
+    }
+
+    @Test
+    fun tooManyEntriesRejectsWholeBatch() {
+        val dir = createTempDir()
+        val filesDir = createTempDir()
+        // 500,001 条互不相同的合格行：单独测词条总数上限。
+        val file = writeRows(dir, "batch.txt", UserDictMergeSafety.MAX_TOTAL_ENTRIES + 1) {
+            "词$it\ta$it\t1"
+        }
+        val rejected = invalid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(1, rejected.issues.size)
+        assertEquals(UserDictMergeSafety.IssueCode.TOO_MANY_ENTRIES, rejected.issues[0].code)
+        assertTrue(rejected.issues[0].detail.contains("500,000"))
+        var exportCalled = false
+        var importCalled = false
+        try {
+            runBlocking {
+                UserDictMergeSafety.mergeValidatedBatch(
+                    dictName = "wanxiang_lite",
+                    batchFile = file,
+                    batchLabel = file.name,
+                    filesDir = filesDir,
+                    cacheDir = dir,
+                    exportCurrent = { exportCalled = true; 0 },
+                    importFile = { importCalled = true; 0 },
+                )
+            }
+            fail("expected UserDictMergeException")
+        } catch (e: UserDictMergeSafety.UserDictMergeException) {
+            assertTrue(e.message!!.contains("500,000"))
+        }
+        assertFalse(exportCalled)
+        assertFalse(importCalled)
+    }
+
+    @Test
+    fun highDuplicateRateDoesNotGrowDistinctSet() {
+        val dir = createTempDir()
+        // 20 万行全是同一词条（权重轮换 0..9）：distinct 应为 1，不撑大指纹集。
+        val file = writeRows(dir, "batch.txt", 200_000) { "你好\tni hao\t${it % 10}" }
+        val result = valid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(200_000, result.entryCount)
+        assertEquals(1, result.distinctKeys)
+        val normalized = UserDictMergeSafety.normalizeBatchFile(file, dir)
+        assertEquals("你好\tni hao\t9\n", normalized.readText(Charsets.UTF_8))
+    }
+
+    @Test
+    fun distinctKeysCountsDistinctPairsAtScale() {
+        val dir = createTempDir()
+        val file = writeRows(dir, "batch.txt", 10_000) { "词$it\ta$it\t1" }
+        val result = valid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(10_000, result.entryCount)
+        assertEquals(10_000, result.distinctKeys)
+    }
+
+    @Test
+    fun heapSamplesCoverThreeStages() {
+        val dir = createTempDir()
+        val filesDir = createTempDir()
+        val file = writeBatch(dir, "batch.txt", "你好\tni hao\t2\n世界\tshi jie\t1\n")
+        val result = mergeWithFakes(dir, filesDir, file)
+        assertEquals(2, result.importedCount)
+        assertEquals(
+            listOf("validate-before", "validate-after", "normalize-after", "import-after"),
+            result.heapSamples.map { it.stage },
+        )
+        for (sample in result.heapSamples) {
+            assertTrue(sample.usedBytes >= 0)
+            assertTrue(sample.maxBytes > 0)
+        }
+        printHeapSamples("small-batch", result.heapSamples)
+    }
+
+    @Test
+    fun heapSamplesManyShortRows() {
+        // 测量档 A：超多短行（20 万条互不相同的短行）。
+        val dir = createTempDir()
+        val filesDir = createTempDir()
+        val file = writeRows(dir, "batch.txt", 200_000) { "词$it\ta$it\t1" }
+        val result = mergeWithFakes(dir, filesDir, file)
+        assertEquals(200_000, result.importedCount)
+        assertEquals(4, result.heapSamples.size)
+        printHeapSamples("many-short-rows", result.heapSamples)
+    }
+
+    @Test
+    fun heapSamplesSingleGiantLine() {
+        // 测量档 B：单条巨长行（1 MiB 单行＋两行好行）。
+        val dir = createTempDir()
+        val filesDir = createTempDir()
+        val file = writeBatch(
+            dir, "batch.txt",
+            "你好\tni hao\t2\n" + "x".repeat(1024 * 1024) + "\n世界\tshi jie\t1\n",
+        )
+        val result = mergeWithFakes(dir, filesDir, file)
+        assertEquals(2, result.importedCount)
+        assertEquals(1, result.skippedRows)
+        assertEquals(4, result.heapSamples.size)
+        printHeapSamples("single-giant-line", result.heapSamples)
+    }
+
     @Test
     fun restoreBeforeMergeDeletesAddedAndRestoresRaised() = runBlocking {
         val dir = createTempDir()
