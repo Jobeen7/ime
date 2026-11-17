@@ -18,7 +18,8 @@ import org.junit.Test
 
 /**
  * AppDatabase 迁移链单测（WO52 6.1 v14→15；9.1 v15→16；L-33 v17→18；
- * 脚本功能删除：v16→17 与 v18→19 为空迁移，库版本现为 19）。
+ * 脚本功能删除：v16→17 与 v18→19 为空迁移；AI apiToken 加密：
+ * v19→20 为空迁移（列名／类型不变，身份哈希与 v19 相同），库版本现为 20）。
  *
  * 本文件只验静态面：Room 编译期生成的 schema JSON（app/schemas
  * 下，用 kotlinx.serialization 解析——org.json 在主机单测里是桩）、
@@ -77,15 +78,27 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrationChain_covers14to19() {
+    fun databaseVersion_is20() {
+        // 2.4：apiToken 改密文列只改落盘形态，列名／类型不变，
+        // schema JSON 与 v19 除版本号外一字相同（含身份哈希）。
+        assertEquals(20, schemaDb(20)["version"]!!.jsonPrimitive.int)
+        assertEquals(
+            schemaDb(19)["identityHash"]!!.jsonPrimitive.content,
+            schemaDb(20)["identityHash"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun migrationChain_covers14to20() {
         val pairs = migrationPairs()
         assertTrue("迁移链应含 14→15（WO52 6.1），实际：$pairs", pairs.contains(14 to 15))
         assertTrue("迁移链应含 15→16（WO52 9.1），实际：$pairs", pairs.contains(15 to 16))
         assertTrue("迁移链应含 16→17（脚本删除后为空迁移），实际：$pairs", pairs.contains(16 to 17))
         assertTrue("迁移链应含 17→18（L-33），实际：$pairs", pairs.contains(17 to 18))
         assertTrue("迁移链应含 18→19（脚本功能删除，空迁移），实际：$pairs", pairs.contains(18 to 19))
-        // 链连续：1→19 每一步都有迁移（无断链、无跳号）
-        for (v in 1 until 19) {
+        assertTrue("迁移链应含 19→20（AI apiToken 加密，空迁移），实际：$pairs", pairs.contains(19 to 20))
+        // 链连续：1→20 每一步都有迁移（无断链、无跳号）
+        for (v in 1 until 20) {
             assertTrue("迁移链缺 $v→${v + 1}", pairs.contains(v to v + 1))
         }
     }

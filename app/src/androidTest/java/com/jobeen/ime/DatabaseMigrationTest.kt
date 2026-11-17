@@ -5,6 +5,8 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.jobeen.ime.base.util.SecretStore
+import com.jobeen.ime.data.ai.AiRepository
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.ClipboardDatabase
 import com.jobeen.ime.data.database.ClipboardRecord
@@ -39,6 +41,10 @@ import org.junit.runner.RunWith
  * 本机未跑（需真机/模拟器）；CI 的 android-test.yml 为手动触发，
  * 已改用 google_apis/x86_64/API 31 转译镜像，但至今尚未实际运行，
  * 本测试尚未在 CI 执行过。
+ *
+ * 19→20 一例（2.4，AI apiToken 加密）：v19 库里一行旧明文 token
+ * 经生产构建器打开（空迁移）后，[AiRepository] 读出仍是旧明文、
+ * 且落盘值已转为 `enc:v1:` 密文（Keystore 在真机／模拟器上可用）。
  */
 @RunWith(AndroidJUnit4::class)
 class DatabaseMigrationTest {
@@ -128,12 +134,57 @@ class DatabaseMigrationTest {
         }
     }
 
+    /**
+     * 19→20（2.4，AI apiToken 加密）：v19 库里一行旧明文 token 经生产
+     * 构建器打开（19→20 为空迁移，列名／类型不变）后，仓库读出仍是
+     * 旧明文、落盘值已转为 `enc:v1:` 密文且能解密回原值；再读一次仍
+     * 是明文（不二次加密）。本机未跑（需真机/模拟器，Keystore 只在
+     * 真机／模拟器上可用；见 android-test.yml 手动触发说明）。
+     */
+    @Test
+    fun appDatabase_migrates19To20_aiTokenReadableAndStoredEncrypted() {
+        createOldDatabase(
+            name = IME_DB_NAME_19_20,
+            version = 19,
+            identityHash = "62ca3dd02e97368dafa6e5224f1bf57e",
+            createSqls = V19_CREATE_SQLS,
+            seedClipboard = false,
+            extraSeedSqls = listOf(AI_PROVIDER_LEGACY_TOKEN_SQL),
+        )
+        val roomDb = AppDatabase.createWithName(context, IME_DB_NAME_19_20)
+        try {
+            val repository = AiRepository(roomDb)
+            val providers = runBlocking { repository.getProviders() }
+            assertEquals(1, providers.size)
+            // 读侧：旧明文 token 原样可读，不丢配置
+            assertEquals("sk-legacy-token", providers.single().apiToken)
+            // 落盘：首次访问已加密回写为密文，且能解密回原值
+            val stored = runBlocking { roomDb.aiProviderDao().getById("prov-1") }
+                ?.apiToken.orEmpty()
+            assertTrue("stored token should be encrypted, was: $stored", stored.startsWith("enc:v1:"))
+            assertEquals("sk-legacy-token", SecretStore.decrypt(stored))
+            // 再读一次仍是明文（密文读侧解密，不二次加密）
+            assertEquals(
+                "sk-legacy-token",
+                runBlocking { repository.getProviderById("prov-1") }?.apiToken,
+            )
+        } finally {
+            roomDb.close()
+            context.deleteDatabase(IME_DB_NAME_19_20)
+        }
+    }
+
     /** 按旧版 schema 建库、写旧版 identity、灌种子后关闭，等生产构建器接手迁移。 */
     private fun createOldDatabase(
         name: String,
         version: Int,
         identityHash: String,
         createSqls: List<String>,
+        // v14 起主库已无 clipboard_records（清点 D20）：v19 旧库不灌
+        // 剪贴板种子行，否则建库即失败。旧版调用默认仍灌。
+        seedClipboard: Boolean = true,
+        // 建库后追加的种子 SQL（如 v19 的 AI 服务商旧明文 token 行）。
+        extraSeedSqls: List<String> = emptyList(),
     ) {
         context.deleteDatabase(name)
         val callback = object : SupportSQLiteOpenHelper.Callback(version) {
@@ -161,7 +212,10 @@ class DatabaseMigrationTest {
                 .callback(callback)
                 .build()
         )
-        helper.writableDatabase.use { db -> seedClipboardRows(db) }
+        helper.writableDatabase.use { db ->
+            if (seedClipboard) seedClipboardRows(db)
+            extraSeedSqls.forEach { db.execSQL(it) }
+        }
         helper.close()
     }
 
@@ -230,6 +284,31 @@ class DatabaseMigrationTest {
     private companion object {
         const val CLIPBOARD_DB_NAME = "clipboard_database_test"
         const val IME_DB_NAME = "ime_database_test"
+        const val IME_DB_NAME_19_20 = "ime_database_migration_19_20_test"
+
+        // v19 建表 SQL 逐字摘自 app/schemas 导出（AppDatabase/19.json
+        // 的 createSql，占位符已替换为表名；索引不在此列，与 12→14
+        // 一例同口径——Room 开库只比对 room_master_table 的身份哈希）。
+        val V19_CREATE_SQLS = listOf(
+            "CREATE TABLE IF NOT EXISTS `candidate_sorting_v2` (`sorting_key` TEXT NOT NULL, `candidateIds` TEXT NOT NULL, PRIMARY KEY(`sorting_key`))",
+            "CREATE TABLE IF NOT EXISTS `candidate_prefers` (`text` TEXT NOT NULL, `click_count` INTEGER NOT NULL, `context` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`text`))",
+            "CREATE TABLE IF NOT EXISTS `phrase_records` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `text` TEXT NOT NULL, `label` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL, `pinned` INTEGER NOT NULL, `shortcut` TEXT NOT NULL, `category` TEXT NOT NULL, `tags` TEXT NOT NULL, `variables` TEXT NOT NULL, `lastUsedAt` INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS `AIProvider` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `type` TEXT NOT NULL, `sort` INTEGER NOT NULL, `isDefault` INTEGER NOT NULL, `isEnabled` INTEGER NOT NULL, `isBuiltIn` INTEGER NOT NULL, `builtInCanBeDelete` INTEGER NOT NULL, `baseURL` TEXT NOT NULL, `apiPath` TEXT NOT NULL, `apiToken` TEXT NOT NULL, `requestTimeout` REAL NOT NULL, `maxOutputTokens` INTEGER NOT NULL, `contextWindow` INTEGER NOT NULL, `temperature` REAL, `presencePenalty` REAL, `frequencyPenalty` REAL, `customParametersJSON` TEXT, `defaultModelId` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`defaultModelId`) REFERENCES `AIProviderModel`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED)",
+            "CREATE TABLE IF NOT EXISTS `AIProviderModel` (`id` TEXT NOT NULL, `providerId` TEXT, `displayName` TEXT NOT NULL, `modelID` TEXT NOT NULL, `sort` INTEGER NOT NULL, `isEnabled` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`providerId`) REFERENCES `AIProvider`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)",
+            "CREATE TABLE IF NOT EXISTS `AISystemPrompt` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `iconName` TEXT NOT NULL, `purpose` TEXT NOT NULL, `body` TEXT NOT NULL, `generationOverridesJSON` TEXT, `sort` INTEGER NOT NULL, `isDefault` INTEGER NOT NULL, `isEnabled` INTEGER NOT NULL, `isBuiltIn` INTEGER NOT NULL, `builtInCanBeDelete` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+            "CREATE TABLE IF NOT EXISTS `AIUserPrompt` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `iconName` TEXT NOT NULL, `purpose` TEXT NOT NULL, `templateBody` TEXT NOT NULL DEFAULT '{{input}}', `sort` INTEGER NOT NULL, `isDefault` INTEGER NOT NULL, `isEnabled` INTEGER NOT NULL, `isBuiltIn` INTEGER NOT NULL, `builtInCanBeDelete` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+            "CREATE TABLE IF NOT EXISTS `AIInstruction` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `detail` TEXT NOT NULL, `systemPromptID` TEXT, `userPromptID` TEXT, `providerID` TEXT, `sort` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+            "CREATE TABLE IF NOT EXISTS `AIConversation` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isTitleUserEdited` INTEGER NOT NULL, `systemPromptID` TEXT, `providerID` TEXT, `modelID` TEXT, `snapshotJSON` TEXT, PRIMARY KEY(`id`))",
+            "CREATE TABLE IF NOT EXISTS `AIMessage` (`id` TEXT NOT NULL, `conversationId` TEXT, `role` TEXT NOT NULL, `status` TEXT NOT NULL, `sequence` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `originalInput` TEXT, `renderedRequest` TEXT, `userPromptName` TEXT, `content` TEXT NOT NULL, `tokenEstimate` INTEGER NOT NULL, `usageJSON` TEXT, `errorCategory` TEXT, `requestID` TEXT, `regenerationOfID` TEXT, `isSuperseded` INTEGER NOT NULL, `configSnapshotJSON` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`conversationId`) REFERENCES `AIConversation`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)",
+        )
+
+        /** v19 服务商行：旧明文 token（升级前用户自填的值）。 */
+        const val AI_PROVIDER_LEGACY_TOKEN_SQL =
+            "INSERT INTO `AIProvider` (`id`,`name`,`type`,`sort`,`isDefault`," +
+                "`isEnabled`,`isBuiltIn`,`builtInCanBeDelete`,`baseURL`,`apiPath`," +
+                "`apiToken`,`requestTimeout`,`maxOutputTokens`,`contextWindow`) " +
+                "VALUES ('prov-1','DeepSeek','openai',0,1,1,1,1," +
+                "'https://api.deepseek.com','v1','sk-legacy-token',60.0,0,64000)"
 
         // 以下建表 SQL 逐字摘自 app/schemas 导出（占位符已替换为表名）：
         // ClipboardDatabase/3.json 与 AppDatabase/12.json 的 clipboard_records；

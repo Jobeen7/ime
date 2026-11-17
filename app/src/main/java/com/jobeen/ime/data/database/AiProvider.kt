@@ -16,6 +16,9 @@ import androidx.room.PrimaryKey
  *
  * `type`：OpenAI 兼容类型，种子未给值，Jime 侧默认 `"openai"`。
  * `apiToken`：使用者在服务商行里自填；种子中无此字段、无内置密钥；
+ *   落盘形态是密文（`enc:v1:…`，见 `AiTokenCodec`；v20 前的旧明文行
+ *   读侧直通、首次访问时由 `AiRepository` 加密回写）；内存形态（明文）
+ *   只在 `AiRepository` 读写边界与 `AiChatClient` 请求构造里出现；
  *   token 永不进备份文件（见 AiBackupCodec）。
  * `maxOutputTokens`／`contextWindow` 为 0＝未设定（请求时不发该字段）；
  *   种子只给了 contextWindow 64000，maxOutputTokens 未给。

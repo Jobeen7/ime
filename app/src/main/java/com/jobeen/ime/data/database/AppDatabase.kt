@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AIProvider::class, AIProviderModel::class, AISystemPrompt::class, AIUserPrompt::class,
         AIInstruction::class, AIConversation::class, AIMessage::class,
     ],
-    version = 19,
+    version = 20,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -65,7 +65,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun build(context: Context, name: String): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
                 .addCallback(VACUUM_CALLBACK)
                 .addCallback(AI_SEED_CALLBACK)
                 .build()
@@ -461,6 +461,19 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_18_19: Migration = Migration(
             startVersion = 18,
             endVersion = 19,
+        ) { _ -> }
+
+        // v20：AI apiToken 改密文列（2.4）。列名／类型不变（仍为
+        // TEXT NOT NULL），Room 身份哈希与 v19 相同——本段是空迁移
+        // （只升版，见 MIGRATION_7_8 口径）。真正的形态转换不在
+        // 迁移里做：迁移只有 SupportSQLiteDatabase，读行要 db.query()，
+        // 主机迁移执行测试的 CliSupportSQLiteDatabase 不支持 query
+        // （见其 KDoc），且 Keystore 在升级事务里不可靠；改由
+        // AiRepository 在首次读到旧明文时加密回写（CAS 防覆盖），读侧
+        // 对旧明文直通、写侧一律加密，任一步失败都不丢配置。
+        private val MIGRATION_19_20: Migration = Migration(
+            startVersion = 19,
+            endVersion = 20,
         ) { _ -> }
     }
 }

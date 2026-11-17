@@ -31,6 +31,10 @@ import org.junit.Test
  *
  * 脚本功能删除后：16→17 与 18→19 均为空迁移（只保链连续／只升
  * 版）；10→19 全链不再新建脚本四表，18→19 后旧库里的四表成孤表。
+ * AI apiToken 加密：19→20 同为空迁移（列名／类型不变），见
+ * [migrate_19to20_aiTokenPlaintextPreserved]——旧明文行原样保留，
+ * 形态转换由 AiRepository 在首次访问时做（主机无 Keystore，迁移
+ * 本身不断言加密）。
  */
 class AppDatabaseMigrationExecTest {
 
@@ -302,6 +306,31 @@ class AppDatabaseMigrationExecTest {
         val db = buildDbAtVersion(18)
         migrate(db, 18, 19)
         assertEquals(4, db.tableNames().count { it.startsWith("Script") })
+        assertTrue(db.isDatabaseIntegrityOk)
+    }
+
+    @Test
+    fun migrate_19to20_aiTokenPlaintextPreserved() {
+        // 2.4：19→20 为空迁移（apiToken 列名／类型不变，只改落盘
+        // 形态）：v19 库里的旧明文 token 行必须原样保留——迁移本身
+        // 不丢配置；加密回写由 AiRepository 在首次访问时做（主机无
+        // Keystore，此处不断言密文，只断旧值一字不动＋结构与 20.json
+        // 一致）。真机端到端（读出明文＋落盘变密文）见仪器测试
+        // DatabaseMigrationTest 的 19→20 一例。
+        val db = buildDbAtVersion(19)
+        db.execSQL(
+            "INSERT INTO `AIProvider` (`id`,`name`,`type`,`sort`,`isDefault`," +
+                "`isEnabled`,`isBuiltIn`,`builtInCanBeDelete`,`baseURL`,`apiPath`," +
+                "`apiToken`,`requestTimeout`,`maxOutputTokens`,`contextWindow`) " +
+                "VALUES ('prov-1','DeepSeek','openai',0,1,1,1,1," +
+                "'https://api.deepseek.com','v1','sk-legacy-token',60.0,0,64000)",
+        )
+        migrate(db, 19, 20)
+        assertEquals(
+            "sk-legacy-token",
+            db.scalar("SELECT `apiToken` FROM `AIProvider` WHERE `id`='prov-1';"),
+        )
+        assertSchemaMatches(db, 20)
         assertTrue(db.isDatabaseIntegrityOk)
     }
 

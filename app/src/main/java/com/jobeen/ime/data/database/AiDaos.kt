@@ -28,6 +28,14 @@ interface AiProviderDao {
     @Update
     suspend fun update(provider: AIProvider): Int
 
+    /**
+     * 旧明文 token 一次性转密文的 CAS 回写（2.4）：仅当落盘值仍是读到
+     * 的旧明文时才替换，防并发保存的新 token 被旧密文覆盖。返回受影响
+     * 行数（0＝已被他人改写，本次不写）。
+     */
+    @Query("UPDATE AIProvider SET apiToken = :encrypted WHERE id = :id AND apiToken = :expectedLegacy")
+    suspend fun updateTokenIfUnchanged(id: String, expectedLegacy: String, encrypted: String): Int
+
     @Query("DELETE FROM AIProvider WHERE id = :id")
     suspend fun deleteById(id: String): Int
 
