@@ -23,12 +23,6 @@ interface PanelListener {
 
     fun onClipboardItemDelete(entry: ClipboardManager.Entry) {}
 
-    /**
-     * 打开分词页（WO52 1.9）：剪贴板长按菜单 "Split words" 与行内
-     * Split 钮的入口。缺省空实现。
-     */
-    fun onOpenSplitWords(text: String) {}
-
     fun onCopyTextCommit(text: String) {}
 
     fun onCandidateGridDragComplete(candidates: List<EngineMessage.Candidate>) {}

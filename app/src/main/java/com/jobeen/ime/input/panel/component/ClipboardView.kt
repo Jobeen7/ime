@@ -15,7 +15,6 @@ import com.jobeen.ime.R
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.ClipboardManager
-import com.jobeen.ime.data.manager.VerificationCodeExtractor
 import com.jobeen.ime.data.database.ClipboardGroup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,11 +35,6 @@ class ClipboardView(
 
     var onItemClick: ((ClipboardManager.Entry) -> Unit)? = null
     var onItemLongClick: ((ClipboardManager.Entry, Float, Float) -> Unit)? = null
-    /** WO52 5.3 行内三钮：Split 打开分词页；Copy 写系统剪贴板。 */
-    var onRowSplit: ((String) -> Unit)? = null
-    var onRowCopy: ((String) -> Unit)? = null
-    /** WO52 5.3 编辑页（详情页）内 URL 点按：走系统浏览器。 */
-    var onEditLinkClick: ((String) -> Unit)? = null
     /** 排序模式下一次拖动结束（顺序确有变化）时回调：剪贴板给文本序、常用语给 id 序。 */
     var onClipboardReordered: ((List<String>) -> Unit)? = null
     var onPhrasesReordered: ((List<Long>) -> Unit)? = null
@@ -906,30 +900,11 @@ class ClipboardView(
         val cloud: Boolean,
         val pinned: Boolean = false,
         val selected: Boolean = false,
-        /** WO52 5.3：行内三钮条（仅剪贴板页普通浏览态）。 */
-        val actions: Boolean = false,
-        /** WO52 5.3：已展开（文本全显）还是折叠（2 行）。 */
-        val expanded: Boolean = false,
     )
 
     private var rowLayouts = listOf<RowLayout>()
 
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    // WO52 5.3 行内三钮专用画笔（不复用 trackPaint/pressPaint 等他用画笔）。
-    private val rowActionBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val rowActionBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val rowActionTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER
-    }
-    /** WO52 5.3 行内三钮：每帧 onDraw 重建的视图坐标命中矩形（行下标，动作 0=Split/1=Copy/2=展开）。 */
-    private val actionHitRects = ArrayList<Triple<RectF, Int, Int>>()
-    /** WO52 5.3 行内三钮：按下命中的 (矩形，行下标，动作），整趟手势归它。 */
-    private var actionDownHit: Triple<RectF, Int, Int>? = null
-    /** WO52 5.3 已展开的行（按文本标识；条目删了残留无害）。 */
-    private val expandedTexts = HashSet<String>()
-    /** WO52 5.3 行内三钮条高／钮间距。 */
-    private val rowStripH = 28f * density
-    private val rowStripGap = 6f * density
     private val segPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
     }
@@ -1131,12 +1106,6 @@ class ClipboardView(
 
         emptyPaint.color = panel.candidateIndex
         cloudDrawable?.setTint(panel.candidateIndex)
-        // WO52 5.3 行内三钮：药丸底＝键底、描边＝键边框、文字＝行文字色
-        rowActionBgPaint.color = scheme.keyBackground
-        rowActionBorderPaint.color = scheme.keyBorderStroke
-        rowActionBorderPaint.strokeWidth = 1f * density
-        rowActionTextPaint.color = scheme.specialKeyText
-        rowActionTextPaint.textSize = 12f * density
     }
 
     private fun computeRowLayouts() {
@@ -1183,28 +1152,16 @@ class ClipboardView(
             // 排序模式行尾让出拖动手柄的位置
             val handleReserve = if (reorderActive) 26f * density else 0f
             val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - cloudIconSize - 2f * density - checkReserve - handleReserve
-            // WO52 5.3 行内三钮：仅普通浏览态；折叠 2 行、展开不限行
-            // （多选／排序态沿用旧 4 行口径、保原有行为；常用语页不动）。
-            val showActions = !multiSelectActive && !reorderActive
             entriesToLayout.map { entry ->
-                val expanded = entry.text in expandedTexts
-                val lines = breakText(
-                    tp, entry.text, maxTextW,
-                    if (showActions) {
-                        if (expanded) Int.MAX_VALUE else 2
-                    } else 4
-                )
+                val lines = breakText(tp, entry.text, maxTextW, 4)
                 RowLayout(
-                    height = lh * lines.size + pillPad * 2 +
-                        if (showActions) rowStripH + rowStripGap else 0f,
+                    height = lh * lines.size + pillPad * 2,
                     indexLabel = "",
                     primaryLines = lines,
                     secondaryLines = emptyList(),
                     cloud = entry.cloud,
                     pinned = entry.pinned,
                     selected = multiSelectActive && entry.text in selectedTexts,
-                    actions = showActions,
-                    expanded = expanded,
                 )
             }
         } else {
@@ -1277,8 +1234,6 @@ class ClipboardView(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (width <= 0 || height <= 0) return
-        // WO52 5.3 行内三钮命中矩形每帧重建：旧帧残留会错指新位置
-        actionHitRects.clear()
 
         if (editDisplayActive) {
             drawEditContent(canvas)
@@ -1449,77 +1404,7 @@ class ClipboardView(
                     canvas.drawLine(hx - 7f * density, ly, hx + 7f * density, ly, checkPaint)
                 }
             }
-            if (row.actions && clipTab == ClipboardTab.CLIPBOARD) {
-                drawRowActions(canvas, i, row, y, right)
-            }
         }
-    }
-
-    /**
-     * WO52 5.3 行内三钮：行底一条 28dp 药丸带，右对齐、左→右
-     * Split／Copy／Expand-or-Collapse；命中矩形记视图坐标
-     * （drawRow 的 y 是列表内容坐标：视图 y = 内容 y + headerH + topPad - scrollOffsetY）。
-     * Jime 剪贴板只有文本条目，Split 无图片可隐藏，恒显示。
-     */
-    private fun drawRowActions(canvas: Canvas, i: Int, row: RowLayout, y: Float, right: Float) {
-        val stripTop = y + row.height - pillPad - rowStripH
-        val labels = arrayOf(
-            0 to context.getString(R.string.clipboard_row_split),
-            1 to context.getString(R.string.clipboard_row_copy),
-            2 to context.getString(
-                if (row.expanded) R.string.clipboard_row_collapse
-                else R.string.clipboard_row_expand
-            ),
-        )
-        val widths = labels.map { (_, label) ->
-            rowActionTextPaint.measureText(label) + 16f * density
-        }
-        val radius = rowStripH / 2f
-        var x = right - pillPad
-        for (k in labels.indices.reversed()) {
-            val w = widths[k]
-            val leftEdge = x - w
-            canvas.drawRoundRect(leftEdge, stripTop, x, stripTop + rowStripH, radius, radius, rowActionBgPaint)
-            canvas.drawRoundRect(leftEdge, stripTop, x, stripTop + rowStripH, radius, radius, rowActionBorderPaint)
-            val fm = rowActionTextPaint.fontMetrics
-            val textY = stripTop + rowStripH / 2f - (fm.ascent + fm.descent) / 2f
-            canvas.drawText(labels[k].second, (leftEdge + x) / 2f, textY, rowActionTextPaint)
-            actionHitRects += Triple(
-                RectF(
-                    leftEdge,
-                    stripTop + headerH + topPad - scrollOffsetY,
-                    x,
-                    stripTop + rowStripH + headerH + topPad - scrollOffsetY,
-                ),
-                i,
-                labels[k].first,
-            )
-            x = leftEdge - rowStripGap
-        }
-    }
-
-    /** WO52 5.3 行内三钮命中：仅普通浏览态的剪贴板页有效（他态矩形残留不认）。 */
-    private fun actionHitAt(x: Float, y: Float): Triple<RectF, Int, Int>? {
-        if (clipTab != ClipboardTab.CLIPBOARD) return null
-        if (multiSelectActive || reorderActive || editDisplayActive) return null
-        return actionHitRects.firstOrNull { (rect, _, _) -> rect.contains(x, y) }
-    }
-
-    /** WO52 5.3 行内三钮触发（0=Split 分词页，1=Copy 写剪贴板，2=展开／折叠）。 */
-    private fun fireRowAction(rowIndex: Int, action: Int) {
-        val text = displayedEntries.getOrNull(rowIndex)?.text ?: return
-        when (action) {
-            0 -> onRowSplit?.invoke(text)
-            1 -> onRowCopy?.invoke(text)
-            2 -> toggleRowExpanded(text)
-        }
-    }
-
-    /** WO52 5.3 展开／折叠切换：只重建行布局（行高变），不重载数据。 */
-    private fun toggleRowExpanded(text: String) {
-        if (!expandedTexts.remove(text)) expandedTexts.add(text)
-        computeRowLayouts()
-        invalidate()
     }
 
     /** 编辑模式绘制：全文逐行 + 光标竖线；空文本画提示。 */
@@ -1593,45 +1478,11 @@ class ClipboardView(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            // WO52 5.3 行内三钮：按下即归钮，整趟手势不进列表
-            // （不挂长按、不滚动、不点选上屏）。
-            actionHitAt(event.x, event.y)?.let { hit ->
-                removeCallbacks(longPressRunnable)
-                longPressPending = false
-                pressedIndex = -1
-                actionDownHit = hit
-                invalidate()
-                return true
-            }
-        }
         if (editDisplayActive) return onEditTouchEvent(event)
         if (multiSelectActive && clipTab == ClipboardTab.CLIPBOARD) return onMultiTouchEvent(event)
         if (reorderActive) return onReorderTouchEvent(event)
         // 分组条在列表区之上：落在其内的手势归药丸（点选／横拖／长按），不进列表
         if (headerH > 0f && event.y < headerH) return onGroupStripTouchEvent(event)
-        // WO52 5.3 行内三钮手势：MOVE 悬空（不滚动），UP 在钮内才触发，
-        // CANCEL 清掉；整趟不走长按／点选／甩动。
-        val downHit = actionDownHit
-        if (downHit != null) {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_MOVE -> return true
-                MotionEvent.ACTION_UP -> {
-                    val (rect, idx, action) = downHit
-                    actionDownHit = null
-                    if (rect.contains(event.x, event.y)) fireRowAction(idx, action)
-                    pressedIndex = -1
-                    invalidate()
-                    return true
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    actionDownHit = null
-                    pressedIndex = -1
-                    invalidate()
-                    return true
-                }
-            }
-        }
         velocityTracker?.addMovement(event)
 
         when (event.actionMasked) {
@@ -1781,13 +1632,9 @@ class ClipboardView(
                 velocityTracker?.recycle()
                 velocityTracker = null
                 if (!isScrolling) {
-                    // WO52 5.3 编辑页（详情页）内 URL 可点：落在 URL 内走
-                    // 系统浏览器，不移光标；落在他处仍按落点定位光标。
                     val index = editIndexAt(event.x, event.y)
-                    val url = VerificationCodeExtractor.findUrlAt(editText, index)
                     InputFeedbacks.hapticFeedback(this)
-                    if (url != null) onEditLinkClick?.invoke(url)
-                    else onEditCursorMoved?.invoke(index)
+                    onEditCursorMoved?.invoke(index)
                 }
                 isScrolling = false
             }

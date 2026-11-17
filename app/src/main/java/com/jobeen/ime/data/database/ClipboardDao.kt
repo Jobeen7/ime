@@ -83,10 +83,6 @@ interface ClipboardDao {
     @Query("UPDATE clipboard_records SET pinned = :pinned WHERE text = :text AND deleted = 0")
     suspend fun setPinnedByText(text: String, pinned: Boolean)
 
-    /** WO52 5.3 收藏：与置顶并存（独立列，不复用 pinned）。 */
-    @Query("UPDATE clipboard_records SET isFavorite = :favorite WHERE text = :text AND deleted = 0")
-    suspend fun setFavoriteByText(text: String, favorite: Boolean)
-
     @Query("SELECT isFavorite FROM clipboard_records WHERE text = :text AND deleted = 0 LIMIT 1")
     suspend fun favoriteByText(text: String): Boolean?
 

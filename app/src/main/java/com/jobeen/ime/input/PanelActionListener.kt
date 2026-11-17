@@ -2,7 +2,6 @@ package com.jobeen.ime.input
 
 import android.content.Intent
 import com.jobeen.ime.data.manager.CandidateManager
-import com.jobeen.ime.data.manager.ClipboardLockPolicy
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.PhraseManager
@@ -17,7 +16,6 @@ import com.jobeen.ime.input.panel.PanelListener
 import com.jobeen.ime.input.panel.component.TextEditView
 import com.jobeen.ime.ui.AboutActivity
 import com.jobeen.ime.ui.MainActivity
-import com.jobeen.ime.ui.SplitWordsActivity
 import com.jobeen.ime.ui.SchemaSettingsActivity
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.launch
@@ -126,17 +124,9 @@ class PanelActionListener(
             entry.text, ClipboardManager.getOutputRule(service)
         )
         service.keyActionListener?.onKeyAction(KeyboardAction.CommitAction(text))
-        // WO52 5.4 面板锁定：锁定 → 刷新列表、面板停留（搜索态保持）；
-        // 未锁定 → 走现有 clipboard.return_after_paste 口径（开才回键盘），
-        // 不另写返回逻辑。
-        val locked = ClipboardManager.isViewLocked(service)
-        if (ClipboardLockPolicy.shouldReturnToKeyboard(
-                locked, ClipboardManager.isReturnAfterPasteEnabled(service),
-            )
-        ) {
+        // 粘贴后返回：收起剪贴板面板回键盘（默认关，不动旧行为）
+        if (ClipboardManager.isReturnAfterPasteEnabled(service)) {
             service.keyboardWindow?.panel?.returnToKeyboard()
-        } else if (locked) {
-            service.keyboardWindow?.panel?.refreshClipboardList()
         }
     }
 
@@ -183,19 +173,6 @@ class PanelActionListener(
         ) {
             service.engine?.deleteCandidate(candidate.index)
         }
-    }
-
-    override fun onOpenSplitWords(text: String) {
-        service.startActivity(
-            Intent(service, SplitWordsActivity::class.java).apply {
-                putExtra(SplitWordsActivity.EXTRA_TEXT, text)
-                addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP
-                )
-            }
-        )
     }
 
     override fun onEnterAddPhraseMode() {

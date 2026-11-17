@@ -129,28 +129,4 @@ class VerificationCodeExtractorTest {
         assertNull(state.displayText)
     }
 
-    @Test
-    fun findUrl_firstUrlOnly() {
-        assertEquals(
-            "https://example.com/x",
-            VerificationCodeExtractor.findUrl("see https://example.com/x and www.test.org"),
-        )
-        assertEquals(
-            "www.test.org",
-            VerificationCodeExtractor.findUrl("visit www.test.org now"),
-        )
-        assertNull(VerificationCodeExtractor.findUrl("no link here"))
-    }
-
-    @Test
-    fun findUrlAt_insideVsOutside() {
-        val text = "see https://example.com/x end"
-        // URL 占 4..24，落在其内（含紧贴末尾）返回该 URL
-        assertEquals("https://example.com/x", VerificationCodeExtractor.findUrlAt(text, 10))
-        assertEquals("https://example.com/x", VerificationCodeExtractor.findUrlAt(text, 25))
-        assertNull(VerificationCodeExtractor.findUrlAt(text, 0))
-        assertNull(VerificationCodeExtractor.findUrlAt(text, 3))
-        assertNull(VerificationCodeExtractor.findUrlAt(text, 27))
-        assertNull(VerificationCodeExtractor.findUrlAt(text, -1))
-    }
 }

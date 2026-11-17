@@ -217,12 +217,7 @@ class ToolbarRenderer(
         val closeRight = width - hPad
         val closeLeft = closeRight - btnW
         val actionRight = closeLeft - btnGap
-        // 动作槽数：剪贴板页常态 3 槽（搜索／清空／溢出 ⋮，WO52 5.4），
-        // 其余态（搜索／编辑／多选／排序／常用语页）保持 2 槽，几何不动。
-        val slots = if (clipTab == ClipboardTab.CLIPBOARD &&
-            !clipSearchMode && !clipEditMode && !clipMultiMode && !clipReorderMode
-        ) 3 else 2
-        val actionLeft = actionRight - btnW * slots - btnGap * (slots - 1)
+        val actionLeft = actionRight - btnW * 2f - btnGap
         val rightZone = actionLeft
         val leftZone = menuRight + centerHorizontalPaddingDp * density
         val availW = (rightZone - 8f * density - leftZone).coerceAtLeast(0f)
@@ -602,8 +597,6 @@ class ToolbarRenderer(
     private var searchEllipsizeKey: Triple<String, Float, Float>? = null
     private var searchEllipsizeValue: String = ""
     private val addPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
-    // 溢出 ⋮ 三点（WO52 5.4）：无 drawable，直接画三圆点
-    private val overflowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     // 复制药丸截断缓存：（源文本, 可用宽, 字号）→ 截断结果
     private var ellipsizeCacheKey: Triple<String, Float, Float>? = null
     private var ellipsizeCacheValue: String? = null
@@ -897,8 +890,7 @@ class ToolbarRenderer(
             )
         }
 
-        // 操作按钮：剪切板分页为「搜索（slot1）+清空（slot0）+溢出 ⋮（slot2）」，
-        // 常用语分页为「新增」和「全部删除」
+        // 操作按钮：剪切板分页为「搜索（左槽）+清空」，常用语分页为「新增」和「全部删除」
         val actionCy = height / 2f
         if (clipTab == ClipboardTab.CLIPBOARD) {
             resources.search?.let { d ->
@@ -906,13 +898,6 @@ class ToolbarRenderer(
             }
             resources.clear?.let { d ->
                 drawActionIcon(canvas, d, actionSlotCenter(g, 0, density), actionCy, paints, density)
-            }
-            // 溢出 ⋮（WO52 5.4）：三圆点纵排，无 drawable
-            overflowPaint.color = dimColor(paints.toolbarIconColor)
-            val dotCx = actionSlotCenter(g, 2, density)
-            val dotR = 1.8f * density
-            for (k in -1..1) {
-                canvas.drawCircle(dotCx, actionCy + k * 6f * density, dotR, overflowPaint)
             }
         } else {
             addPaint.textSize = 22f * density
@@ -1224,15 +1209,9 @@ class ToolbarRenderer(
             if (x in g.actionLeft..g.actionRight) {
                 val action = if (clipTab == ClipboardTab.CLIPBOARD) {
                     val btnW = 30f * density
-                    val gap = 6f * density
-                    // 三槽自右向左：0 清空／1 搜索／2 溢出 ⋮（WO52 5.4）
-                    val slot = ((g.actionRight - x) / (btnW + gap)).toInt().coerceIn(0, 2)
+                    val slot = if (x > g.actionRight - btnW) 0 else 1
                     setPress(actionSlotCenter(g, slot, density))
-                    when (slot) {
-                        0 -> PanelAction.ClearClipboard
-                        1 -> PanelAction.ClipSearch
-                        else -> PanelAction.ClipOverflow
-                    }
+                    if (slot == 0) PanelAction.ClearClipboard else PanelAction.ClipSearch
                 } else {
                     val btnW = 30f * density
                     val slot = if (x > g.actionRight - btnW) 0 else 1

@@ -34,8 +34,6 @@ sealed class PanelAction {
     data object ClipSearch : PanelAction()
     data object ClipSearchExit : PanelAction()
     data object ClipSearchClear : PanelAction()
-    /** 剪贴板面板溢出菜单（WO52 5.4）：剪贴板页工具栏 ⋮ 钮。 */
-    data object ClipOverflow : PanelAction()
     data object ClipEditSave : PanelAction()
     data object ClipEditCancel : PanelAction()
     data object ClipMultiExit : PanelAction()

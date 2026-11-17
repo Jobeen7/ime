@@ -214,13 +214,6 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
-            android:name=".ui.SplitWordsActivity"
-            android:exported="false"
-            android:label="@string/split_words_title"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
             android:name=".ui.WordCreationActivity"
             android:exported="false"
             android:label="@string/word_creation_title"

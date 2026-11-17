@@ -83,25 +83,6 @@
     <string name="clipboard_auto_extract_code_requires_banner">需先开启剪贴板提示条。</string>
     <string name="clipboard_tap_to_copy">点按条目复制，长按多选。</string>
     <string name="verification_code_copied">验证码已复制</string>
-    <string name="split_words_title">拆词</string>
-    <string name="split_words_copy">复制</string>
-    <string name="split_words_done">完成</string>
-    <string name="split_words_empty">没有可拆分的文字</string>
-    <string name="split_words_loading">分词中…</string>
-    <string name="clipboard_lock_panel">锁定面板</string>
-    <string name="clipboard_unlock_panel">解锁面板</string>
-    <!-- WO52 5.3 长按菜单与行内三钮 -->
-    <string name="clipboard_open_link">打开链接</string>
-    <string name="clipboard_extract_code">提取验证码</string>
-    <string name="clipboard_split_words">分词</string>
-    <string name="clipboard_save_as_phrase">存为常用语</string>
-    <string name="clipboard_favorite">收藏</string>
-    <string name="clipboard_remove_favorite">取消收藏</string>
-    <string name="clipboard_delete_result">已删除</string>
-    <string name="clipboard_row_split">分词</string>
-    <string name="clipboard_row_copy">复制</string>
-    <string name="clipboard_row_expand">展开</string>
-    <string name="clipboard_row_collapse">收起</string>
     <string name="clipboard_return_note">粘贴后收起剪贴板面板回键盘</string>
     <!-- 批量第 5 项：主题诊断 -->
     <string name="layout_editor_unparseable">布局无法解析，请先在文本编辑器里修正</string>
