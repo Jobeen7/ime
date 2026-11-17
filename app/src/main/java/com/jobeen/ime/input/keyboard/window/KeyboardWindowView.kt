@@ -2000,20 +2000,14 @@ class KeyboardWindowView(
         lastCandidateHighlightedIndex = highlightedIndex
         lastCandidatePageNo = pageNo
         lastCandidateIsLastPage = isLastPage
-        // 浮动候选窗（WO52 1.4）：内嵌开且有候选时路由到浮动窗，
-        // 内嵌栏清空候选（不与浮动窗重复显示）；否则关浮动窗走内嵌栏。
-        // 引擎浮动激活态与之一致（激活时 1.1 强制 native 分页）。
+        // 候选恢复 v1.1.20 行为（a408a4d1，tag v1.1.20）：候选恒走
+        // 内嵌栏。63a081cd（WO52 1.4）把内嵌开时的候选改道浮动窗并
+        // 清空内嵌栏，但浮动窗自引入起就没正常显示过候选（.2 网格
+        // 代次门、.3 网格 GONE、.4 位置落到键盘下方），三轮补丁未
+        // 根治——改道撤销，候选回内嵌栏；浮动窗本体休眠（不再激活，
+        // 代码与单测保留，待以后按正确坐标系重做）。
         val embedded = CandidateManager.isInlineInputModeEnabled(context)
-        floatingController.updateCandidates(list.isEmpty(), pageNo, isLastPage, pagingMode)
-        if (floatingController.shouldShow(embedded)) {
-            panel.setCandidates(emptyList(), false, 0, 0, false, pagingMode)
-            updateFloatingCandidates(list, revision)
-            setEngineFloatingActive(true)
-        } else {
-            dismissFloatingWindow()
-            setEngineFloatingActive(false)
-            panel.setCandidates(list, hasMore, highlightedIndex, pageNo, isLastPage, pagingMode)
-        }
+        panel.setCandidates(list, hasMore, highlightedIndex, pageNo, isLastPage, pagingMode)
         lastCandidateFirst = list.firstOrNull()?.text
         lastCandidateComment = list.firstOrNull()?.comment?.takeIf { it.isNotEmpty() }
         pushDynamicTexts()
@@ -2038,21 +2032,12 @@ class KeyboardWindowView(
      */
     fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int, revision: Long = 0L) {
         if (!shouldApplyCandidateAppend(revision, candidateFrameGate.lastAppliedRevision)) return
-        if (floatingWindow?.isShowing == true) {
-            // 浮动窗只走整表替换（native 模式正常无追加）；有追加则并入浮动表。
-            floatingWindow?.appendCandidates(list)
-            repositionFloatingWindow()
-            return
-        }
         panel.appendCandidates(list, total)
     }
 
     fun onPossibleCandidatePinYin(pinyins: List<CandidatePinYin>) {
         panel.onPossibleCandidatePinYin(pinyins)
         (currentKeyboard as? ISidePanelKeyboard)?.onPossibleCandidatePinYin(pinyins)
-        if (floatingWindow?.isShowing == true) {
-            floatingWindow?.onPossibleCandidatePinYin(pinyins)
-        }
     }
 
     // ── 浮动候选窗（WO52 1.4） ──
