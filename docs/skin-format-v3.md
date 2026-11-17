@@ -1,5 +1,7 @@
 # 皮肤格式 v3 规格（skin.json）
 
+> 本文档描述 1.1.20.1 及更早版本的皮肤格式，1.1.20.6 起运行时已移除。
+
 本文档是皮肤 v3 格式的规格说明。**权威来源是 `app/src/main/java/com/jobeen/ime/skin/model/SkinValidator.kt`**（校验器即规格）；本文档是对它的摘要，凡与代码不一致处以代码为准。不确定的条目已注明“以 SkinValidator.kt 为准”。
 
 皮肤以 `.jime` 包导入，包内 `skin.json` 为皮肤描述文件。导入时 `JimeImporter` 调 `SkinValidator.validate` 校验；运行时 `SkinSnapshotFactory` 调同一校验器构建快照，校验拒绝则快照为 null（皮肤无法应用）。

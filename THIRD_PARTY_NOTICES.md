@@ -60,7 +60,6 @@ Jime 基于开源组件构建。本文件是随应用分发的第三方组件索
 | Apache Commons Compress | 压缩包处理 | Copyright (C) The Apache Software Foundation | Apache-2.0 |
 | Timber | 日志 | Copyright (C) 2013 Jake Wharton | Apache-2.0 |
 | Splitties | 安卓 DSL 工具集 | Copyright (C) 2015 Louis CAD | Apache-2.0 |
-| zxing-android-embedded（基于 ZXing） | 二维码扫描 | JourneyApps 与 ZXing 作者 | Apache-2.0 |
 | Rhino（Mozilla，`org.mozilla:rhino:1.8.0`） | JS 引擎（语音插件与皮肤脚本的脚本运行时） | Mozilla | MPL-2.0 |
 
 ## 数据与方案

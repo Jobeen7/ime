@@ -920,7 +920,6 @@
     <string name="color_orange">橙色</string>
     <string name="color_custom">自定义颜色</string>
     <string name="fonts_title">字体</string>
-    <string name="font_skin_hint">当前皮肤已指定字体，全局字体暂不生效。</string>
     <string name="font_import_failed">导入失败：文件无效、格式不支持或超过 32MB。</string>
     <string name="font_role_key">按键文字</string>
     <string name="font_role_candidate">候选文字</string>

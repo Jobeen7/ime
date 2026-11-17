@@ -142,4 +142,22 @@ class CandidateRevisionTest {
         assertTrue(gate.shouldApply(1L, list = emptyList()))
         assertEquals(1L, gate.lastAppliedRevision)
     }
+
+    @Test
+    fun gate_sameRevision_scoreOnlyChange_dropped() {
+        // P1-2：指纹只看 index/text/comment/type；score 是 var 评分，
+        // 只变分数不算内容变，同代次重投须丢弃。list.hashCode() 会把
+        // score 算进去、分数一变即永不判等，故指纹不许用它。
+        val gate = CandidateFrameGate()
+        assertTrue(gate.shouldApply(5L, list = listOf(cand(0, "a").copy(score = 1.0))))
+        assertFalse(gate.shouldApply(5L, list = listOf(cand(0, "a").copy(score = 2.0))))
+    }
+
+    @Test
+    fun gate_sameRevision_phraseIdOnlyChange_dropped() {
+        // P1-2：phraseId 与内容无关，只变它同样不算内容变。
+        val gate = CandidateFrameGate()
+        assertTrue(gate.shouldApply(5L, list = listOf(cand(0, "a").copy(phraseId = 7L))))
+        assertFalse(gate.shouldApply(5L, list = listOf(cand(0, "a").copy(phraseId = 8L))))
+    }
 }

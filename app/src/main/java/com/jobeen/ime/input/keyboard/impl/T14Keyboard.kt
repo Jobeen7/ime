@@ -4,11 +4,9 @@ package com.jobeen.ime.input.keyboard.impl
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.res.Configuration
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.skin.layout.CompactLayoutGenerator
-import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.input.keyboard.key.backspaceKey
@@ -40,7 +38,6 @@ class T14Keyboard(
     context: Context,
     colors: KeyboardColors.ColorScheme,
     layout: List<List<KeyDef>> = effectiveLayout(
-        context,
         EnterKeyVariant.resolve(context),
     ),
 ) : CompactKeyboard(
@@ -52,14 +49,9 @@ class T14Keyboard(
     companion object {
         const val NAME = "T14"
 
-        /**
-         * 生效布局（与 T9Keyboard.effectiveLayout 同口径）：出厂布局
-         * 经当前皮肤快照的覆写装配；无快照/无命中时恒等返回出厂布局。
-         */
-        fun effectiveLayout(context: Context, returnVariant: Variant): List<List<KeyDef>> {
-            val raw = buildLayout(returnVariant)
-            return raw
-        }
+        /** 出厂布局（皮肤 v3 下线后无覆写）。 */
+        fun effectiveLayout(returnVariant: Variant): List<List<KeyDef>> =
+            buildLayout(returnVariant)
 
         /** 出厂布局（纯函数）：分组按 QWERTY 顺序流排，行宽和见类注释。 */
         fun buildLayout(returnVariant: Variant): List<List<KeyDef>> {

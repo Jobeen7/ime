@@ -119,9 +119,6 @@ fun ToolbarScreen(onBack: () -> Unit) {
     val skinId = remember {
         ToolbarUserStore.BUILTIN_SKIN_KEY
     }
-    // 皮肤栏按钮 id（与 ToolbarMainPage 同口径）：列表行回落计数用。
-    // 皮肤 v3 死壳删除后皮肤栏按钮 id 恒为空（回落默认计数）。
-    val skinButtonIds: List<String>? = null
     var data by remember { mutableStateOf(ToolbarUserStore.load(storeFile).data) }
     // U-M1：页内导航与编辑草稿随页内态保存——旋转不再丢编辑页与未保存
     // 的草稿（data 本身由防抖盘＋退出刷盘覆盖，不进 rememberSaveable）。
@@ -197,8 +194,8 @@ fun ToolbarScreen(onBack: () -> Unit) {
         val targetId = currentSkinState().activeToolbarId
         editToolbarId = targetId
         if (targetId == null && currentSkinState().buttons.isEmpty()) {
-            val skinButtonIds: List<String>? = null
-            editSeed = ToolbarUserStore.seedEntries(skinButtonIds)
+            // 皮肤 v3 死壳删除后无皮肤栏按钮 id，起步列恒取默认 5 项。
+            editSeed = ToolbarUserStore.seedEntries(null)
             editDraft = editSeed!!
         } else {
             editSeed = null
@@ -265,7 +262,6 @@ fun ToolbarScreen(onBack: () -> Unit) {
                 data = data,
                 activeId = currentSkinState().activeToolbarId,
                 skinId = skinId,
-                skinButtonIds = skinButtonIds,
                 onSelect = { selectDialog = true },
                 onOpenForm = { id ->
                     toolbarFormId = id
@@ -386,7 +382,6 @@ fun ToolbarScreen(onBack: () -> Unit) {
                 imageDir = imageDir,
                 skinId = skinId,
                 data = data,
-                skinButtonIds = skinButtonIds,
                 onSave = { config, isNew ->
                     val next = data.copy(
                         customToolbars = data.customToolbars + (config.id to config),
@@ -436,7 +431,6 @@ fun ToolbarScreen(onBack: () -> Unit) {
                 data = data,
                 activeId = currentSkinState().activeToolbarId,
                 skinId = skinId,
-                skinButtonIds = skinButtonIds,
                 onUse = { id ->
                     persist(
                         data.copy(
@@ -474,21 +468,19 @@ private fun ToolbarMainPage(
 ) {
     val state = data.skins[skinId] ?: ToolbarSkinState()
     val context = LocalContext.current
-    // 皮肤 v3 死壳删除后皮肤栏按钮 id 恒为空（回落默认计数）。
-    val skinIds: List<String>? = null
+    // 皮肤 v3 死壳删除后无皮肤栏按钮 id，主页计数恒回落默认 5 项。
     val currentCount = ToolbarUserStore.mainPageCount(
         skinId,
         data,
-        skinIds,
+        null,
     )
     // 主页计数诊断（2026-11-02 修复批，2026-11-06 改与 resolve 同口径）：
     // 只在生效列变化时记一次，来源列按 resolve 抉择判定——栏 id 悬空
     // 时 resolve 直接回落皮肤／默认、不看用户列，便于下次主页与键盘
     // 实际渲染计数不一致时直接定位是哪一列胜出。
-    LaunchedEffect(state, activeToolbar, data.customButtons, skinIds) {
+    LaunchedEffect(state, activeToolbar, data.customButtons) {
         val source = when {
-            ToolbarUserStore.resolve(skinId, data) == null ->
-                if (skinIds != null) "skin" else "default"
+            ToolbarUserStore.resolve(skinId, data) == null -> "default"
             state.activeToolbarId != null -> "active"
             else -> "user"
         }
@@ -499,7 +491,6 @@ private fun ToolbarMainPage(
                 "source" to source,
                 "activeEnabled" to (activeToolbar?.buttons?.count { it.enabled } ?: -1),
                 "userEnabled" to state.buttons.count { it.enabled },
-                "skinIds" to (skinIds?.size ?: -1),
             ),
         )
     }
@@ -937,7 +928,6 @@ private fun ToolbarToolbarsPage(
     data: ToolbarUserData,
     activeId: String?,
     skinId: String,
-    skinButtonIds: List<String>?,
     onSelect: () -> Unit,
     onOpenForm: (String) -> Unit,
     onNew: () -> Unit,
@@ -982,7 +972,7 @@ private fun ToolbarToolbarsPage(
                             ToolbarUserStore.listRowCount(
                                 skinId,
                                 data,
-                                skinButtonIds,
+                                null,
                                 config,
                                 isActive,
                             ),
@@ -1022,7 +1012,6 @@ private fun ToolbarSelectDialog(
     data: ToolbarUserData,
     activeId: String?,
     skinId: String,
-    skinButtonIds: List<String>?,
     onUse: (String) -> Unit,
     onUseDefault: () -> Unit,
     onDismiss: () -> Unit,
@@ -1065,7 +1054,7 @@ private fun ToolbarSelectDialog(
                                     ToolbarUserStore.listRowCount(
                                         skinId,
                                         data,
-                                        skinButtonIds,
+                                        null,
                                         config,
                                         isActive,
                                     ),
@@ -1716,7 +1705,6 @@ private fun ToolbarToolbarFormDialog(
     imageDir: File,
     skinId: String,
     data: ToolbarUserData,
-    skinButtonIds: List<String>?,
     onSave: (ToolbarCustomConfig, Boolean) -> Unit,
     onEditButtons: (String) -> Unit,
     onDelete: (ToolbarCustomConfig) -> Unit,
@@ -1814,7 +1802,7 @@ private fun ToolbarToolbarFormDialog(
                             ToolbarUserStore.listRowCount(
                                 skinId,
                                 data,
-                                skinButtonIds,
+                                null,
                                 existing,
                                 existing.id == data.skins[skinId]?.activeToolbarId,
                             ),

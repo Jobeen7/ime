@@ -184,16 +184,47 @@ internal fun candidatesContentEqual(
  */
 internal class CandidateFrameGate {
 
+    companion object {
+        private const val FNV_OFFSET_BASIS = -3750763034362895579L
+        private const val FNV_PRIME = 1099511628211L
+    }
+
     /** 已应用的最大代次（-1 = 尚未应用任何版本化帧）。 */
     var lastAppliedRevision: Long = -1L
         private set
 
+    /**
+     * 帧指纹（P1-2）：只存页号／末页／hasMore 与内容哈希，不复制
+     * 整个候选列表（旧实现每放行一帧即 `list.toList()` 一次）。
+     * 内容哈希只对 [candidatesContentEqual] 同口径的四字段
+     * （index/text/comment/type）求值：`Candidate.score` 是 var
+     * 评分、单调变化不代表内容变，`phraseId` 亦与内容无关——
+     * 两者一旦进哈希，分数一变即永不判等、去重失效（故不许用
+     * `list.hashCode()`，data class 的 hashCode 含这两字段）。
+     * 64 位 FNV-1a：顺序与条数都进哈希，碰撞概率可忽略；下游
+     * 另有内容去重兜底，万一碰撞也只省一次重绘。
+     */
     private data class FrameFingerprint(
         val pageNo: Int,
         val isLastPage: Boolean,
         val hasMore: Boolean,
-        val content: List<EngineMessage.Candidate>,
+        val contentHash: Long,
     )
+
+    private fun contentHash(list: List<EngineMessage.Candidate>): Long {
+        var h = FNV_OFFSET_BASIS xor list.size.toLong()
+        for (c in list) {
+            h = h xor c.index.toLong()
+            h *= FNV_PRIME
+            h = h xor c.text.hashCode().toLong()
+            h *= FNV_PRIME
+            h = h xor c.comment.hashCode().toLong()
+            h *= FNV_PRIME
+            h = h xor c.type.hashCode().toLong()
+            h *= FNV_PRIME
+        }
+        return h
+    }
 
     private var lastFrame: FrameFingerprint? = null
 
@@ -218,21 +249,21 @@ internal class CandidateFrameGate {
         if (revision < lastAppliedRevision) {
             // 新引擎 epoch 首帧（见类注释的单调性证明）：放行并复位基线。
             lastAppliedRevision = revision
-            lastFrame = FrameFingerprint(pageNo, isLastPage, hasMore, list.toList())
+            lastFrame = FrameFingerprint(pageNo, isLastPage, hasMore, contentHash(list))
             return true
         }
         if (revision > lastAppliedRevision) {
             lastAppliedRevision = revision
-            lastFrame = FrameFingerprint(pageNo, isLastPage, hasMore, list.toList())
+            lastFrame = FrameFingerprint(pageNo, isLastPage, hasMore, contentHash(list))
             return true
         }
         // 同代次重投：指纹不同（翻页／末页翻转／内容更新）才放行。
         val last = lastFrame
         if (last == null ||
             last.pageNo != pageNo || last.isLastPage != isLastPage ||
-            last.hasMore != hasMore || !candidatesContentEqual(last.content, list)
+            last.hasMore != hasMore || last.contentHash != contentHash(list)
         ) {
-            lastFrame = FrameFingerprint(pageNo, isLastPage, hasMore, list.toList())
+            lastFrame = FrameFingerprint(pageNo, isLastPage, hasMore, contentHash(list))
             return true
         }
         return false

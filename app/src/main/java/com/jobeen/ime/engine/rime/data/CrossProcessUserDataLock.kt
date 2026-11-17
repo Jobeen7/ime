@@ -47,25 +47,32 @@ object CrossProcessUserDataLock {
             refCount++
             return AcquireResult.ACQUIRED
         }
+        var newChannel: FileChannel? = null
         try {
             dir.mkdirs()
             // FileOutputStream.channel（API 1）：FileChannel.open／
             // StandardOpenOption 需 API 26，minSdk 24 上 lint NewApi
             // 报错；append 模式只建空文件、不写内容，锁语义与 open 同。
-            val newChannel = FileOutputStream(File(dir, LOCK_FILE_NAME), true).channel
-            val newLock = newChannel.tryLock()
+            val opened = FileOutputStream(File(dir, LOCK_FILE_NAME), true).channel
+            newChannel = opened
+            val newLock = opened.tryLock()
             if (newLock == null) {
-                runCatching { newChannel.close() }
+                runCatching { opened.close() }
                 return AcquireResult.BUSY
             }
-            channel = newChannel
+            channel = opened
             fileLock = newLock
             refCount = 1
             AcquireResult.ACQUIRED
         } catch (e: OverlappingFileLockException) {
             // 同一 JVM 内已有他路持锁（本对象之外无他路取锁，防卫分支）。
+            // 取锁前已建好的通道必须关掉，否则文件描述符泄漏。
+            runCatching { newChannel?.close() }
             AcquireResult.BUSY
         } catch (e: IOException) {
+            // 取锁本身抛错：已建好的通道同样必须关掉（构造期抛错时
+            // newChannel 仍为 null，close 即 no-op）。
+            runCatching { newChannel?.close() }
             AcquireResult.FAILED
         }
     }

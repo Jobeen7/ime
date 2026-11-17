@@ -3333,6 +3333,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             val lockResult = CrossProcessUserDataLock.tryAcquire(userDataDir)
             if (lockResult != CrossProcessUserDataLock.AcquireResult.ACQUIRED) {
                 Timber.w("Deploy aborted: cross-process user data lock %s", lockResult)
+                // P0-1：部署位已在本入口抢占（tryAcquireRunning 成功），
+                // 锁失败即 return 时必须复位，否则 running 永久钉死、
+                // 后续部署永久 FAILED（只能强杀）。此处认领机制尚未
+                // 建立、orphan 仍为 false，单次直接释放不双放。
+                EngineDeployState.releaseRunning()
                 UpdateImportGate.release(gateToken)
                 deployMutex.unlock()
                 return DeployAwaitResult.FAILED

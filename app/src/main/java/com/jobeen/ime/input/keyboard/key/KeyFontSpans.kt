@@ -21,4 +21,3 @@ class SpanTypefaceSpan(private val typeface: Typeface) : MetricAffectingSpan() {
         paint.typeface = typeface
     }
 }
-

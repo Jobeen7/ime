@@ -300,4 +300,3 @@ sealed interface SkinAction {
      */
     data object SequencePlaceholder : SkinAction
 }
-

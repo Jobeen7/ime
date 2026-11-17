@@ -39,7 +39,6 @@ import com.jobeen.ime.data.keyboard.theme.FontRole
 import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import android.content.Context
 import android.text.format.Formatter
-import com.jobeen.ime.data.keyboard.theme.SkinFonts
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
@@ -83,8 +82,6 @@ fun AppearanceScreen(
     var managedFonts by remember { mutableStateOf<List<GlobalFonts.ImportedFont>>(emptyList()) }
     var fontDeleteTarget by remember { mutableStateOf<GlobalFonts.ImportedFont?>(null) }
     var pendingFontRole by remember { mutableStateOf<FontRole?>(null) }
-    // 皮肤 v3 死壳删除后快照恒为 null，皮肤字族恒为空。
-    val skinFamily: String? = remember { null }
     val fontPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -161,13 +158,6 @@ fun AppearanceScreen(
             when (open) {
                 AppearanceCategory.FONTS -> {
                     SettingsGroup(title = stringResource(R.string.fonts_title)) {
-                        if (skinFamily != null) {
-                            Text(
-                                text = stringResource(R.string.font_skin_hint),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
                         if (fontImportError) {
                             Text(
                                 text = stringResource(R.string.font_import_failed),

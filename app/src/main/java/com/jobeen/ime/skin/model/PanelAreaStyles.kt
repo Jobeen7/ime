@@ -259,4 +259,3 @@ data class CandidateMenuItem(
     val name: String,
     val action: CandidateMenuAction,
 )
-

@@ -96,4 +96,77 @@ class CrossProcessUserDataLockTest {
             CrossProcessUserDataLock.tryAcquire(dir),
         )
     }
+
+    /**
+     * 指向锁文件的已打开描述符数（/proc/self/fd）：泄漏的通道只
+     * 能经描述符计数观测——锁本身从未被它持有，isHeld 与重取都
+     * 看不出泄漏；删除／重命名在 Linux 上也不拦已打开的描述符。
+     */
+    private fun openFdCountFor(file: File): Int {
+        val canonical = file.canonicalPath
+        val fdDir = File("/proc/self/fd")
+        val entries = fdDir.listFiles() ?: return -1
+        var count = 0
+        for (entry in entries) {
+            val target = runCatching {
+                java.nio.file.Files.readSymbolicLink(entry.toPath()).toString()
+            }.getOrNull() ?: continue
+            if (target == canonical) count++
+        }
+        return count
+    }
+
+    @Test
+    fun overlappingLockException_closesNewChannel() {
+        // P1-5：他路持锁时本路 tryLock 抛 OverlappingFileLockException，
+        // 异常分支必须关掉刚建好的通道，否则每次争用漏一个描述符。
+        val dir = tempDir("xlock")
+        val lockFile = File(dir, CrossProcessUserDataLock.LOCK_FILE_NAME)
+        val external = FileChannel.open(
+            lockFile.toPath(),
+            StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+        )
+        val externalLock = external.tryLock()
+        assertTrue("external hold must acquire the file lock", externalLock != null)
+        try {
+            assertEquals(
+                CrossProcessUserDataLock.AcquireResult.BUSY,
+                CrossProcessUserDataLock.tryAcquire(dir),
+            )
+            assertFalse(CrossProcessUserDataLock.isHeld)
+            // 修后只剩他路持有的 1 个描述符；漏关时为 2 个。
+            assertEquals(1, openFdCountFor(lockFile))
+        } finally {
+            externalLock?.release()
+            external.close()
+        }
+        assertEquals(
+            CrossProcessUserDataLock.AcquireResult.ACQUIRED,
+            CrossProcessUserDataLock.tryAcquire(dir),
+        )
+    }
+
+    @Test
+    fun ioExceptionOnLockFile_returnsFailedWithoutHoldingOrLeak() {
+        // P1-5：锁文件位被目录占住，FileOutputStream 构造即抛
+        // FileNotFoundException（IOException）：返回 FAILED、不持有、
+        // 不污染引用计数（再取仍 FAILED），且不漏描述符。构造期抛错
+        // 时通道尚未建好、catch 里的 close 为 no-op；真正关通道的
+        // 分支由 overlappingLockException_closesNewChannel 覆盖。
+        val dir = tempDir("xlock")
+        val lockAsDir = File(dir, CrossProcessUserDataLock.LOCK_FILE_NAME)
+        assertTrue(lockAsDir.mkdir())
+        assertEquals(0, openFdCountFor(lockAsDir))
+        assertEquals(
+            CrossProcessUserDataLock.AcquireResult.FAILED,
+            CrossProcessUserDataLock.tryAcquire(dir),
+        )
+        assertFalse(CrossProcessUserDataLock.isHeld)
+        assertEquals(0, openFdCountFor(lockAsDir))
+        assertEquals(
+            CrossProcessUserDataLock.AcquireResult.FAILED,
+            CrossProcessUserDataLock.tryAcquire(dir),
+        )
+        assertFalse(CrossProcessUserDataLock.isHeld)
+    }
 }
