@@ -8,6 +8,7 @@ import java.io.FileInputStream
 import java.io.InputStreamReader
 import java.nio.charset.CodingErrorAction
 import java.text.Normalizer
+import timber.log.Timber
 
 /**
  * 词库备份/合并安全流程（松烟思路自研重写，不搬松烟代码）。
@@ -23,11 +24,18 @@ import java.text.Normalizer
  *   入口：正权重时 native 本就取较大提交次数与较大 dee，
  *   `o.commits = max(o.commits, v.commits)`，
  *   `o.dee = max(o.dee, v.dee)`。
- * - 所以本文件做的三件事是：① 整批先校验，负权重/非法权重/
- *   坏行/列序可疑（疑似码在前的 `.userdb.txt` 快照）整批拒绝，
- *   一行不写；② 合并前把当前词库导出成 `before-merge.json`
- *   安全副本；③ 批内同词条去重取最大权重后再导入，绝不把
- *   负权重行喂给导入器。
+ * - 所以本文件做的三件事是：① 先校验再合并。批级问题（文件非
+ *   UTF-8、目标词典名非法、多数行码在前疑似 `.userdb.txt` 快照）
+ *   整批拒绝，一行不写；行级问题（列数不对、词/码为空或非法、
+ *   权重非法或为负、码过长）只跳过该行、其余照常导入，并在日志
+ *   里报告跳过的行号——与 librime 本身的导入口径一致（vendored
+ *   librime `rime/dict/tsv.cc` 的 TsvReader 遇坏行记警告后继续，
+ *   不中断整批；其解析器 `rime/dict/table_db.cc` 也没有码长上限）。
+ *   松烟的“整批先校验”同样只是快照身份/格式/版本这一批级检查，
+ *   空快照直接跳过（`RimeLearningBackup.mergeSnapshotFiles`），
+ *   从不对行级问题整批拒绝。② 合并前把当前词库导出成
+ *   `before-merge.json` 安全副本；③ 批内同词条去重取最大权重后
+ *   再导入，绝不把负权重行喂给导入器（跳过即不产生删除标记）。
  * - 恢复：native 的 Import/Restore 两条路都只取最大值、没有
  *   “替换回旧值”的入口，所以恢复用已有的导入器本身完成：
  *   合并后新增的词条写一条 `-1` 删除标记行，被抬高的词条先
@@ -80,6 +88,7 @@ object UserDictMergeSafety {
     sealed interface BatchValidation {
         /** 校验通过：可直接进入“备份→去重→导入”。 */
         data class Valid(
+            /** 将导入的行数（只计校验通过的行，不含跳过的坏行）。 */
             val entryCount: Int,
             val distinctKeys: Int,
             val maxCommits: Int?,
@@ -87,9 +96,18 @@ object UserDictMergeSafety {
             val sourceDict: String?,
             /** 来源词典与目标词典不同：跨词典并入（现有功能，允许，仅告知）。 */
             val crossDict: Boolean,
+            /** 跳过的坏行（只列前 [MAX_ISSUES] 条，其余只计总数）：行级问题
+             *  只跳过该行，不拒绝整批；调用方须把这些行排除在导入文件之外，
+             *  并在日志里报告行号。 */
+            val skipped: List<Issue> = emptyList(),
+            /** 跳过的坏行总数（含未列出的）。 */
+            val skippedRows: Int = 0,
+            /** 全部跳过行的行号（不截断，供导入文件过滤用）。 */
+            val skippedLineNumbers: Set<Int> = emptySet(),
         ) : BatchValidation
 
-        /** 校验不通过：整批拒绝，一行不写。 */
+        /** 校验不通过：批级问题（文件非 UTF-8、词典名非法、列序可疑、
+         *  空批）整批拒绝，一行不写。行级问题不在此列，见 [Valid.skipped]。 */
         data class Invalid(
             val batchLabel: String,
             val issues: List<Issue>,
@@ -126,21 +144,34 @@ object UserDictMergeSafety {
     /**
      * 整批校验 [file]：格式、词典归属、与当前 librime 版本的兼容性。
      *
-     * 规则（均从本仓 vendored librime 的导入解析器推导，见文件头注释）：
+     * 批级问题（整批拒绝，一行不写）：
      * - 文件必须是合法 UTF-8；不是则整批拒绝（native 会按字节读出乱码词条）。
-     * - 每行（空行与 `#` 注释行除外）必须是 `词⇥码` 或 `词⇥码⇥权重`，
-     *   列数不对整批拒绝。
-     * - 词非空、≤128 字、无控制字符；码非空、≤64 字、无控制字符、
-     *   只能是小写字母/数字/空格（去声调后的拼音编码形态）、无连续空格。
-     * - 权重列若有：必须是十进制整数且能装进 Int；负数是 librime 的
-     *   删除标记，整批拒绝；`c=5 d=… t=…` 这类快照值不是整数，同样拒绝。
+     * - 目标词典名须过 [WebDavSync.isSafeDictName]。
      * - 全批投票：多数特征行呈“码在前”（第 1 列像拼音且第 2 列含汉字）
      *   时，疑似拿 `.userdb.txt` 原生快照当 `.userdict.txt` 导入，
      *   整批拒绝（列序错位会把码当词、词当码全量写坏）。
-     * - 词典归属：目标词典名须过 [WebDavSync.isSafeDictName]；来源文件
-     *   名若声明了另一本词典（如 `wanxiang.userdict.txt`），只记录为
-     *   跨词典并入、不拒绝——跨词典并入是现有功能，用户在界面上
+     * - 文件里没有任何词条（只有空行或注释行）：整批拒绝——手动导入
+     *   时用户选错了空文件应被告知；同步路径（allowEmpty）下空文件
+     *   是“无词可合”的正常状态，由 [mergeValidatedBatch] 直接跳过。
+     *
+     * 行级问题（只跳过该行、其余照常导入，见 [BatchValidation.Valid.skipped]）：
+     * - 每行（空行与 `#` 注释行除外）必须是 `词⇥码` 或 `词⇥码⇥权重`，
+     *   列数不对跳过该行。
+     * - 词非空、≤128 字、无控制字符；码非空、≤64 字、无控制字符、
+     *   只能是小写字母/数字/空格（去声调后的拼音编码形态）、无连续空格。
+     *   码长上限 64 字是 Jime 自定的（librime 解析器本身不限码长），
+     *   超长只跳过该行，不拒绝整批。
+     * - 权重列若有：必须是十进制整数且能装进 Int；负数是 librime 的
+     *   删除标记，跳过该行（永不喂给导入器）；`c=5 d=… t=…` 这类
+     *   快照值不是整数，同样跳过该行。
+     * - 词典归属：来源文件名若声明了另一本词典（如 `wanxiang.userdict.txt`），
+     *   只记录为跨词典并入、不拒绝——跨词典并入是现有功能，用户在界面上
      *   选文件/远端文件时已定归属；行内没有词典列，归属只能查到这一层。
+     *
+     * 口径与对端一致：librime 的 TsvReader 遇坏行记警告后继续导入
+     * （`rime/dict/tsv.cc`），松烟只做快照批级校验、空快照直接跳过，
+     * Trime 不做行级校验、直接交给 native 导入——三家都不因个别坏行
+     * 拒绝整批。
      */
     fun validateBatch(file: File, batchLabel: String, dictName: String): BatchValidation {
         if (!WebDavSync.isSafeDictName(dictName)) {
@@ -153,9 +184,11 @@ object UserDictMergeSafety {
                 checkedRows = 0,
             )
         }
-        val issues = ArrayList<Issue>()
-        var badRows = 0
+        val skipped = ArrayList<Issue>()
+        var skippedRows = 0
+        val skippedLineNumbers = HashSet<Int>()
         var checkedRows = 0
+        var validRows = 0
         var codeFirstVotes = 0
         var phraseFirstVotes = 0
         val keys = HashSet<DictKey>()
@@ -188,10 +221,14 @@ object UserDictMergeSafety {
                     }
                     val issue = validateRow(line, lineNumber)
                     if (issue != null) {
-                        badRows++
-                        if (issues.size < MAX_ISSUES) issues += issue
+                        // 行级问题只跳过该行：其余行照常导入，调用方按
+                        // skippedLineNumbers 把这些行排除在导入文件之外。
+                        skippedRows++
+                        skippedLineNumbers += lineNumber
+                        if (skipped.size < MAX_ISSUES) skipped += issue
                         continue
                     }
+                    validRows++
                     val phrase = cols[0]
                     val code = cols[1].trim()
                     val commits = cols.getOrNull(2)?.trim()
@@ -221,29 +258,33 @@ object UserDictMergeSafety {
             )
         }
         if (codeFirstVotes > phraseFirstVotes && codeFirstVotes > 0) {
-            // 整批级问题：放在首位，用户先看到最严重的定性结论。
-            issues.add(
-                0,
-                Issue(
-                    0,
-                    IssueCode.COLUMN_ORDER,
-                    "多数行是“码在前、词在后”，疑似 Rime 原生快照（.userdb.txt），" +
-                        "不是导入要的“词⇥码⇥权重”格式；直接导入会把码当词全量写坏，" +
-                        "请用 WebDAV 下载 .userdb.txt（会自动转置）或改成词在前的格式再导入",
+            // 批级问题：多数行码在前，疑似拿原生快照当导入文件，整批拒绝。
+            // 行级问题不另列——它们是列序错位的后果，不是独立问题。
+            return BatchValidation.Invalid(
+                batchLabel = batchLabel,
+                issues = listOf(
+                    Issue(
+                        0,
+                        IssueCode.COLUMN_ORDER,
+                        "多数行是“码在前、词在后”，疑似 Rime 原生快照（.userdb.txt），" +
+                            "不是导入要的“词⇥码⇥权重”格式；直接导入会把码当词全量写坏，" +
+                            "请用 WebDAV 下载 .userdb.txt（会自动转置）或改成词在前的格式再导入",
+                    ),
                 ),
+                badRows = 1,
+                checkedRows = checkedRows,
             )
-            badRows++
-        }
-        if (issues.isNotEmpty()) {
-            return BatchValidation.Invalid(batchLabel, issues, badRows, checkedRows)
         }
         val sourceDict = sourceDictFromLabel(batchLabel)
         return BatchValidation.Valid(
-            entryCount = checkedRows,
+            entryCount = validRows,
             distinctKeys = keys.size,
             maxCommits = maxCommits,
             sourceDict = sourceDict,
             crossDict = sourceDict != null && sourceDict != dictName,
+            skipped = skipped,
+            skippedRows = skippedRows,
+            skippedLineNumbers = skippedLineNumbers,
         )
     }
 
@@ -277,12 +318,23 @@ object UserDictMergeSafety {
             !code.all { it in 'a'..'z' || it in '0'..'9' || it == ' ' } ||
             code.contains("  ")
         ) {
-            return Issue(
-                lineNumber,
-                IssueCode.BAD_CODE,
-                "码“$code”不是小写字母/数字/空格组成的拼音编码" +
-                    "（含大写、声调符号、控制字符或连续空格的码导入后永远查不到）",
-            )
+            // 逐因点名：此前四种原因并成一句话，超长码会被误报成“含大写/
+            // 声调/控制字符/连续空格”（2026-11-17 实报：53 行全是小写单
+            // 空格、只超 64 字上限，文案却与实情全不符）。回显截断到 64 字：
+            // 超长码本身可达数百字，全文进日志会把诊断撑爆。
+            val shownCode = code.take(64)
+            val reason = when {
+                code.length > MAX_CODE_CHARS ->
+                    "码过长（共 ${code.length} 字，超过 $MAX_CODE_CHARS 字上限；" +
+                        "前 64 字“$shownCode”）"
+                code.any { it.code < 0x20 || it.code == 0x7F } ->
+                    "码“$shownCode”含控制字符"
+                !code.all { it in 'a'..'z' || it in '0'..'9' || it == ' ' } ->
+                    "码“$shownCode”不是小写字母/数字/空格组成的拼音编码" +
+                        "（含大写、声调符号的码导入后永远查不到）"
+                else -> "码“$shownCode”含连续空格（导入后永远查不到）"
+            }
+            return Issue(lineNumber, IssueCode.BAD_CODE, reason)
         }
         val weight = cols.getOrNull(2)?.trim().orEmpty()
         if (weight.isNotEmpty()) {
@@ -353,14 +405,16 @@ object UserDictMergeSafety {
     /**
      * 批内去重：同一（词，码）只留一行，权重取批内最大值；无权重行与
      * 有权重行并存时取有权重的那行；注释行与空行原样保留；首行 BOM 去掉。
+     * [skipLines] 是校验跳过的坏行行号（见 [BatchValidation.Valid.skippedLineNumbers]）：
+     * 这些行两遍都不进入归一结果，永不喂给导入器。
      *
      * native 导入器本身也会逐行取大，但先归一可保证：切块边界、重复行
      * 不会让“较小权重后写”这种时序问题有任何可乘之机，且导入文件
      * 本身就是“较大权重”的定稿。
-     * 无重复行且无 BOM 时直接返回 [input]（不重写）；否则写新文件并返回它，
+     * 无重复行、无 BOM 且无跳过行时直接返回 [input]（不重写）；否则写新文件并返回它，
      * 调用方负责删除返回的文件（与入参不同时）。
      */
-    fun normalizeBatchFile(input: File, workDir: File): File {
+    fun normalizeBatchFile(input: File, workDir: File, skipLines: Set<Int> = emptySet()): File {
         val merged = LinkedHashMap<DictKey, Entry>()
         var hasDuplicate = false
         var hasBom = false
@@ -374,6 +428,7 @@ object UserDictMergeSafety {
                     hasBom = true
                 }
                 if (line.isBlank() || line.startsWith("#")) continue
+                if (lineNumber in skipLines) continue
                 val cols = line.split('\t')
                 if (cols.size < 2 || cols.size > 3) continue
                 val key = DictKey(cols[0], cols[1].trim())
@@ -393,7 +448,7 @@ object UserDictMergeSafety {
                 }
             }
         }
-        if (!hasDuplicate && !hasBom) return input
+        if (!hasDuplicate && !hasBom && skipLines.isEmpty()) return input
         val out = File(workDir, "${input.name}.normalized-${System.nanoTime()}")
         val seen = HashSet<DictKey>()
         out.bufferedWriter(Charsets.UTF_8).use { writer ->
@@ -410,6 +465,7 @@ object UserDictMergeSafety {
                         writer.newLine()
                         continue
                     }
+                    if (lineNumber in skipLines) continue
                     val cols = line.split('\t')
                     if (cols.size < 2 || cols.size > 3) continue
                     val key = DictKey(cols[0], cols[1].trim())
@@ -820,11 +876,17 @@ object UserDictMergeSafety {
     /**
      * 安全合并一批词条（手动导入与同步合并共用此入口）。
      *
-     * 顺序：① 整批校验，不合格抛 [UserDictMergeException]（一行不写）；
-     * ② 导出当前词库、写 `before-merge.json` 安全副本，导出或写备份
-     * 失败同样抛错中止（没备份就不合并）；③ 批内去重取最大权重；
+     * 顺序：① 校验。批级问题（文件非 UTF-8、词典名非法、列序可疑、
+     * 空批）抛 [UserDictMergeException]（一行不写）；行级问题只跳过
+     * 该行、其余照常导入，并在日志里报告跳过的行号。② 导出当前词库、
+     * 写 `before-merge.json` 安全副本，导出或写备份失败同样抛错中止
+     * （没备份就不合并）；③ 批内去重取最大权重（跳过的行已排除）；
      * ④ 经调用方传入的 [importFile] 导入（调用方负责在引擎线程串行执行，
      * 通常是 `importUserDictInChunks` + `importUserDictLive`）。
+     *
+     * [allowEmpty]：同步路径传 true——远端文件里没有任何词条是“无词
+     * 可合”的正常状态，直接返回 0，不记失败、不跑导出/备份/导入；
+     * 手动导入传 false（默认）：用户亲手选了个空文件，应报错告知。
      *
      * [exportCurrent]/[importFile] 收到的是调用方准备好的临时文件路径，
      * 返回引擎的条数（<0 为失败）。临时文件由本函数负责清理；
@@ -838,10 +900,36 @@ object UserDictMergeSafety {
         cacheDir: File,
         exportCurrent: suspend (File) -> Int,
         importFile: suspend (File) -> Int,
+        allowEmpty: Boolean = false,
     ): Int {
-        when (val validation = validateBatch(batchFile, batchLabel, dictName)) {
-            is BatchValidation.Invalid -> throw UserDictMergeException(validation.userMessage())
-            is BatchValidation.Valid -> Unit
+        val valid = when (val validation = validateBatch(batchFile, batchLabel, dictName)) {
+            is BatchValidation.Invalid -> {
+                if (allowEmpty && validation.issues.size == 1 &&
+                    validation.issues[0].code == IssueCode.EMPTY_BATCH
+                ) {
+                    // 空词典同步：无词可合不是失败（松烟同口径：空快照直接跳过）。
+                    Timber.i("跳过空词典合并：$batchLabel（文件里没有任何词条）")
+                    return 0
+                }
+                throw UserDictMergeException(validation.userMessage())
+            }
+            is BatchValidation.Valid -> {
+                if (validation.skipped.isNotEmpty()) {
+                    Timber.w(
+                        "“$batchLabel”跳过 ${validation.skippedRows} 行不合格词条，" +
+                            "其余 ${validation.entryCount} 行照常导入：" +
+                            validation.skipped.joinToString("；") {
+                                "第 ${it.lineNumber} 行：${it.detail}"
+                            } +
+                            if (validation.skippedRows > validation.skipped.size) {
+                                "；另有 ${validation.skippedRows - validation.skipped.size} 行未列出"
+                            } else {
+                                ""
+                            },
+                    )
+                }
+                validation
+            }
         }
         val exportTmp = File(cacheDir, "before-merge-export-$dictName-${System.nanoTime()}.txt")
         try {
@@ -857,7 +945,7 @@ object UserDictMergeSafety {
         } finally {
             exportTmp.delete()
         }
-        val normalized = normalizeBatchFile(batchFile, cacheDir)
+        val normalized = normalizeBatchFile(batchFile, cacheDir, valid.skippedLineNumbers)
         try {
             val count = importFile(normalized)
             if (count < 0) {

@@ -18,9 +18,11 @@ import java.nio.file.Files
  * 词库备份/合并安全流程（UserDictMergeSafety）的 JVM 可测部分。
  *
  * 覆盖口径（均从本仓 vendored librime 的导入语义推导，不依赖网络与引擎）：
- * - 整批校验：合法批通过；负权重/非法权重/坏列数/空词空码/非法码/
- *   非 UTF-8/空批/码在前快照/非法词典名一律整批拒绝，且失败说明
- *   点名批次、行号与原因。
+ * - 校验分两层：批级问题（非 UTF-8/空批/码在前快照/非法词典名）
+ *   整批拒绝，且失败说明点名批次、行号与原因；行级问题（负权重/
+ *   非法权重/坏列数/空词空码/非法码/码过长）只跳过该行、其余照常
+ *   导入，跳过的行号与原因可查；空文件在同步路径（allowEmpty）下
+ *   直接跳过、不记失败。
  * - 批内去重：同词条只留最大权重；无重复不重写文件；BOM 去掉。
  * - 安全副本：导出文本→before-merge.json 往返一致（含引号/反斜杠/
  *   表情词条）；损坏的备份拒绝读取；非法词典名拒绝建备份。
@@ -119,79 +121,106 @@ class UserDictMergeSafetyTest {
     // ---- 校验：拒绝 ----
 
     @Test
-    fun negativeWeightRejectsWholeBatch() {
+    fun negativeWeightRowIsSkippedGoodRowImports() {
+        // 负权重行是删除标记：跳过该行（永不喂给导入器），好行照常导入。
         val dir = createTempDir()
         val file = writeBatch(dir, "batch.txt", "你好\tni hao\t5\n世界\tshi jie\t-1\n")
-        val result = invalid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
-        assertEquals(1, result.badRows)
-        assertEquals(2, result.checkedRows)
-        assertEquals(UserDictMergeSafety.IssueCode.NEGATIVE_WEIGHT, result.issues[0].code)
-        assertEquals(2, result.issues[0].lineNumber)
-        val message = result.userMessage()
-        assertTrue(message.contains("batch.txt"))
-        assertTrue(message.contains("第 2 行"))
-        assertTrue(message.contains("未写入任何词条"))
+        val result = valid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(1, result.entryCount)
+        assertEquals(1, result.skippedRows)
+        assertEquals(UserDictMergeSafety.IssueCode.NEGATIVE_WEIGHT, result.skipped[0].code)
+        assertEquals(2, result.skipped[0].lineNumber)
+        assertEquals(setOf(2), result.skippedLineNumbers)
     }
 
     @Test
-    fun snapshotStyleWeightRejects() {
+    fun snapshotStyleWeightRowIsSkipped() {
         // .userdb.txt 快照第 3 列是 "c=5 d=… t=…"，不是整数：native 会静默当成 0。
         val dir = createTempDir()
         val file = writeBatch(dir, "batch.txt", "你好\tni hao\tc=5 d=0.1 t=123\n")
-        val result = invalid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
-        assertEquals(UserDictMergeSafety.IssueCode.BAD_WEIGHT, result.issues[0].code)
+        val result = valid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(0, result.entryCount)
+        assertEquals(1, result.skippedRows)
+        assertEquals(UserDictMergeSafety.IssueCode.BAD_WEIGHT, result.skipped[0].code)
     }
 
     @Test
-    fun overflowingWeightRejects() {
+    fun overflowingWeightRowIsSkipped() {
         val dir = createTempDir()
         val file = writeBatch(dir, "batch.txt", "你好\tni hao\t99999999999999999999\n")
-        val result = invalid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
-        assertEquals(UserDictMergeSafety.IssueCode.BAD_WEIGHT, result.issues[0].code)
+        val result = valid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(0, result.entryCount)
+        assertEquals(1, result.skippedRows)
+        assertEquals(UserDictMergeSafety.IssueCode.BAD_WEIGHT, result.skipped[0].code)
     }
 
     @Test
-    fun badColumnCountsReject() {
+    fun badColumnCountsAreSkipped() {
         val dir = createTempDir()
         val oneCol = writeBatch(dir, "a.txt", "你好\n")
         assertEquals(
             UserDictMergeSafety.IssueCode.BAD_COLUMNS,
-            invalid(UserDictMergeSafety.validateBatch(oneCol, "a.txt", "wanxiang_lite")).issues[0].code,
+            valid(UserDictMergeSafety.validateBatch(oneCol, "a.txt", "wanxiang_lite")).skipped[0].code,
         )
         val fourCol = writeBatch(dir, "b.txt", "你好\tni hao\t1\textra\n")
         assertEquals(
             UserDictMergeSafety.IssueCode.BAD_COLUMNS,
-            invalid(UserDictMergeSafety.validateBatch(fourCol, "b.txt", "wanxiang_lite")).issues[0].code,
+            valid(UserDictMergeSafety.validateBatch(fourCol, "b.txt", "wanxiang_lite")).skipped[0].code,
         )
     }
 
     @Test
-    fun emptyPhraseAndCodeReject() {
+    fun emptyPhraseAndCodeAreSkipped() {
         val dir = createTempDir()
         val emptyPhrase = writeBatch(dir, "a.txt", "\tni hao\t1\n")
         assertEquals(
             UserDictMergeSafety.IssueCode.EMPTY_PHRASE,
-            invalid(UserDictMergeSafety.validateBatch(emptyPhrase, "a.txt", "wanxiang_lite")).issues[0].code,
+            valid(UserDictMergeSafety.validateBatch(emptyPhrase, "a.txt", "wanxiang_lite")).skipped[0].code,
         )
         val emptyCode = writeBatch(dir, "b.txt", "你好\t \t1\n")
         assertEquals(
             UserDictMergeSafety.IssueCode.EMPTY_CODE,
-            invalid(UserDictMergeSafety.validateBatch(emptyCode, "b.txt", "wanxiang_lite")).issues[0].code,
+            valid(UserDictMergeSafety.validateBatch(emptyCode, "b.txt", "wanxiang_lite")).skipped[0].code,
         )
     }
 
     @Test
-    fun illegalCodesReject() {
+    fun illegalCodesAreSkippedWithNamedCause() {
         val dir = createTempDir()
         val cases = mapOf(
-            "大写码" to "你好\tNi Hao\t1\n",
-            "带声调码" to "陈\tchén\t1\n",
-            "连续空格码" to "你好\tni  hao\t1\n",
+            "大写码" to ("你好\tNi Hao\t1\n" to "不是小写字母/数字/空格"),
+            "带声调码" to ("陈\tchén\t1\n" to "不是小写字母/数字/空格"),
+            "连续空格码" to ("你好\tni  hao\t1\n" to "连续空格"),
         )
-        for ((label, text) in cases) {
+        for ((label, pair) in cases) {
+            val (text, cause) = pair
             val file = writeBatch(dir, "batch.txt", text)
-            val result = invalid(UserDictMergeSafety.validateBatch(file, "batch.txt", "wanxiang_lite"))
-            assertEquals(label, UserDictMergeSafety.IssueCode.BAD_CODE, result.issues[0].code)
+            val result = valid(UserDictMergeSafety.validateBatch(file, "batch.txt", "wanxiang_lite"))
+            assertEquals(label, UserDictMergeSafety.IssueCode.BAD_CODE, result.skipped[0].code)
+            assertTrue(label, result.skipped[0].detail.contains(cause))
+        }
+    }
+
+    @Test
+    fun longCodeRowsAreSkippedWithLengthReason() {
+        // 2026-11-17 实报：wanxiang_lite 19180 行里 53 行只因码超 64 字
+        // 被拒，且旧文案误报成“含大写/声调/控制字符/连续空格”。
+        // 超长码全是小写单空格、只超长：原因必须点名“过长”，不能误报字符集。
+        val dir = createTempDir()
+        val longDing = List(64) { "ding" }.joinToString(" ") // 319 字
+        val longLa = List(23) { "la" }.joinToString(" ") // 68 字
+        val file = writeBatch(
+            dir, "batch.txt",
+            "你好\tni hao\t1\n叮叮叮\t$longDing\t1\n啦啦啦\t$longLa\t1\n世界\tshi jie\t2\n",
+        )
+        val result = valid(UserDictMergeSafety.validateBatch(file, "batch.txt", "wanxiang_lite"))
+        assertEquals(2, result.entryCount)
+        assertEquals(2, result.skippedRows)
+        assertEquals(setOf(2, 3), result.skippedLineNumbers)
+        for (issue in result.skipped) {
+            assertEquals(UserDictMergeSafety.IssueCode.BAD_CODE, issue.code)
+            assertTrue(issue.detail.contains("过长"))
+            assertTrue(issue.detail.contains("64 字上限"))
         }
     }
 
@@ -234,16 +263,17 @@ class UserDictMergeSafetyTest {
     }
 
     @Test
-    fun tooManyBadRowsAreCountedNotListed() {
+    fun tooManyBadRowsAreSkippedAndCounted() {
         val dir = createTempDir()
         val text = buildString {
             repeat(UserDictMergeSafety.MAX_ISSUES + 5) { append("坏行\n") }
         }
         val file = writeBatch(dir, "batch.txt", text)
-        val result = invalid(UserDictMergeSafety.validateBatch(file, "batch.txt", "wanxiang_lite"))
-        assertEquals(UserDictMergeSafety.MAX_ISSUES + 5, result.badRows)
-        assertEquals(UserDictMergeSafety.MAX_ISSUES, result.issues.size)
-        assertTrue(result.userMessage().contains("另有 5 行同类问题未列出"))
+        val result = valid(UserDictMergeSafety.validateBatch(file, "batch.txt", "wanxiang_lite"))
+        assertEquals(0, result.entryCount)
+        assertEquals(UserDictMergeSafety.MAX_ISSUES + 5, result.skippedRows)
+        assertEquals(UserDictMergeSafety.MAX_ISSUES, result.skipped.size)
+        assertEquals(UserDictMergeSafety.MAX_ISSUES + 5, result.skippedLineNumbers.size)
     }
 
     // ---- 批内去重 ----
@@ -270,6 +300,18 @@ class UserDictMergeSafetyTest {
         val dir = createTempDir()
         val file = writeBatch(dir, "batch.txt", "你好\tni hao\t3\n世界\tshi jie\t1\n")
         assertEquals(file, UserDictMergeSafety.normalizeBatchFile(file, dir))
+    }
+
+    @Test
+    fun normalizeBatchFileDropsSkippedLines() {
+        val dir = createTempDir()
+        val file = writeBatch(
+            dir, "batch.txt",
+            "你好\tni hao\t3\n世界\tshi jie\t-1\n你好\tni hao\t9\n",
+        )
+        val normalized = UserDictMergeSafety.normalizeBatchFile(file, dir, setOf(2))
+        assertNotSame(file, normalized)
+        assertEquals("你好\tni hao\t9\n", normalized.readText(Charsets.UTF_8))
     }
 
     @Test
@@ -411,10 +453,15 @@ class UserDictMergeSafetyTest {
     // ---- 一站式合并与恢复 ----
 
     @Test
-    fun mergeValidatedBatchRejectsWithoutExportOrImport() = runBlocking {
+    fun mergeValidatedBatchRejectsBatchLevelProblemWithoutExportOrImport() = runBlocking {
+        // 批级问题（多数行码在前、疑似原生快照）仍整批拒绝：不导出、
+        // 不备份、不导入。行级问题不再走这条路（见跳过相关测试）。
         val dir = createTempDir()
         val filesDir = createTempDir()
-        val file = writeBatch(dir, "batch.txt", "你好\tni hao\t-1\n")
+        val file = writeBatch(
+            dir, "snapshot.txt",
+            "shi\t是\t1\nchen\t陈\t2\nhao\t好\t3\n是\tshi\t1\n",
+        )
         var exportCalled = false
         var importCalled = false
         try {
@@ -429,7 +476,7 @@ class UserDictMergeSafetyTest {
             )
             fail("expected UserDictMergeException")
         } catch (e: UserDictMergeSafety.UserDictMergeException) {
-            assertTrue(e.message!!.contains("batch.txt"))
+            assertTrue(e.message!!.contains("snapshot.txt"))
         }
         assertFalse(exportCalled)
         assertFalse(importCalled)
@@ -465,6 +512,87 @@ class UserDictMergeSafetyTest {
         val backup = UserDictMergeSafety.readBackupMeta(filesDir, "wanxiang_lite")
         assertEquals(listOf(UserDictMergeSafety.Entry("旧词", "jiu ci", 4)), backup!!.entries)
         assertEquals("batch.txt", backup.sourceLabel)
+    }
+
+    @Test
+    fun mergeValidatedBatchSkipsBadRowsAndImportsGoodOnes() = runBlocking {
+        val dir = createTempDir()
+        val filesDir = createTempDir()
+        val longCode = List(30) { "la" }.joinToString(" ") // 89 字，超 64 字上限
+        val file = writeBatch(
+            dir, "batch.txt",
+            "你好\tni hao\t2\n世界\tshi jie\t-1\n啦啦啦\t$longCode\t1\n你好\tni hao\t9\n",
+        )
+        var importedText: String? = null
+        val count = UserDictMergeSafety.mergeValidatedBatch(
+            dictName = "wanxiang_lite",
+            batchFile = file,
+            batchLabel = file.name,
+            filesDir = filesDir,
+            cacheDir = dir,
+            exportCurrent = { tmp ->
+                tmp.writeText("旧词\tjiu ci\t4\n", Charsets.UTF_8)
+                1
+            },
+            importFile = { f ->
+                importedText = f.readText(Charsets.UTF_8)
+                importedText!!.lineSequence().filter { it.isNotEmpty() }.count()
+            },
+        )
+        // 负权重行与超长码行被跳过，好行去重后导入（你好取最大权重 9）。
+        assertEquals(1, count)
+        assertEquals("你好\tni hao\t9\n", importedText)
+        assertTrue(UserDictMergeSafety.hasBeforeMergeBackup(filesDir, "wanxiang_lite"))
+    }
+
+    @Test
+    fun mergeValidatedBatchSkipsEmptyWhenAllowed() = runBlocking {
+        // 同步路径：空文件是“无词可合”，返回 0，不跑导出/备份/导入，不记失败。
+        val dir = createTempDir()
+        val filesDir = createTempDir()
+        val file = writeBatch(dir, "en.userdict.txt", "# 只有注释\n\n")
+        var exportCalled = false
+        var importCalled = false
+        val count = UserDictMergeSafety.mergeValidatedBatch(
+            dictName = "en",
+            batchFile = file,
+            batchLabel = file.name,
+            filesDir = filesDir,
+            cacheDir = dir,
+            exportCurrent = { exportCalled = true; 0 },
+            importFile = { importCalled = true; 0 },
+            allowEmpty = true,
+        )
+        assertEquals(0, count)
+        assertFalse(exportCalled)
+        assertFalse(importCalled)
+        assertFalse(UserDictMergeSafety.hasBeforeMergeBackup(filesDir, "en"))
+    }
+
+    @Test
+    fun mergeValidatedBatchStillRejectsEmptyWhenNotAllowed() = runBlocking {
+        // 手动导入：用户亲手选了个空文件，仍应报错告知。
+        val dir = createTempDir()
+        val filesDir = createTempDir()
+        val file = writeBatch(dir, "batch.txt", "# 只有注释\n\n")
+        var exportCalled = false
+        var importCalled = false
+        try {
+            UserDictMergeSafety.mergeValidatedBatch(
+                dictName = "wanxiang_lite",
+                batchFile = file,
+                batchLabel = file.name,
+                filesDir = filesDir,
+                cacheDir = dir,
+                exportCurrent = { exportCalled = true; 0 },
+                importFile = { importCalled = true; 0 },
+            )
+            fail("expected UserDictMergeException")
+        } catch (e: UserDictMergeSafety.UserDictMergeException) {
+            assertTrue(e.message!!.contains("没有任何词条"))
+        }
+        assertFalse(exportCalled)
+        assertFalse(importCalled)
     }
 
     @Test

@@ -440,12 +440,12 @@ class UserDictActivity : ImeActivity() {
                 val tempFile = contentResolver.openInputStream(uri)?.use { input ->
                     UserDictManager.stageImportFile(input, "import-$dict.txt").getOrThrow()
                 } ?: throw IllegalStateException("无法读取文件")
-                // 安全合并（UserDictMergeSafety）：整批先校验，不合格整批
-                // 不写并在对话框里说明哪一批、为什么；合格才导出当前词库
-                // 存 before-merge.json 安全副本、批内同词条取较大权重去重
-                // 后再导入。经引擎线程串行导入，不与引擎查词/学词并发
-                // 访问同一个 LevelDB；大文件分批导入，避免整段独占引擎
-                // 线程导致导入期间按键卡顿
+                // 安全合并（UserDictMergeSafety）：批级问题整批不写并在
+                // 对话框里说明哪一批、为什么；行级问题只跳过该行、其余
+                // 照常导入；合格才导出当前词库存 before-merge.json 安全
+                // 副本、批内同词条取较大权重去重后再导入。经引擎线程串行
+                // 导入，不与引擎查词/学词并发访问同一个 LevelDB；大文件
+                // 分批导入，避免整段独占引擎线程导致导入期间按键卡顿
                 val count = try {
                     UserDictMergeSafety.mergeValidatedBatch(
                         dictName = dict,

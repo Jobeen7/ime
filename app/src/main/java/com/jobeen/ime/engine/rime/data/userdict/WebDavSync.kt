@@ -771,11 +771,12 @@ object WebDavSync {
                 if (remoteFile.endsWith(".userdb.txt", ignoreCase = true)) {
                     tempFile.writeBytes(convertUserDbSnapshot(tempFile.readBytes()))
                 }
-                // 合并安全流程（UserDictMergeSafety）：整批先校验（格式/
-                // 词典归属/与当前 librime 的兼容性，不合格整批不写）→
+                // 合并安全流程（UserDictMergeSafety）：批级问题（格式/
+                // 词典归属/列序）不合格整批不写；行级问题只跳过该行、
+                // 其余照常导入并报告行号；空文件是“无词可合”，直接跳过。
                 // 合并前导出当前词库存 before-merge.json 安全副本 →
                 // 批内同词条取较大权重去重后导入。负权重行是 librime
-                // 的删除标记，一律整批拒绝，绝不经此处进入词库（只允许
+                // 的删除标记，跳过该行、绝不经此处进入词库（只允许
                 // 用户确认的“恢复合并前备份”流程内部产生删除标记行）。
                 // 导入仍是合并操作：只增不减，不会删除本地已有词；
                 // 热导入直接写运行中引擎的词库，导入后立即生效，无需重启
@@ -786,6 +787,7 @@ object WebDavSync {
                     batchLabel = remoteFile,
                     filesDir = appContext.filesDir,
                     cacheDir = appContext.cacheDir,
+                    allowEmpty = true,
                     exportCurrent = { tmp ->
                         session.runOnReady { exportUserDictLive(dictName, tmp.absolutePath) }
                     },
@@ -1700,8 +1702,9 @@ object WebDavSync {
                     val snapshotHash = tmpIn.inputStream().use {
                         sha256Stream(it, MAX_SYNC_FILE_BYTES)
                     }
-                    // 目录同步的下载合并同样走安全流程：整批校验→合并前
-                    // 备份 before-merge.json→批内取较大权重去重后导入
+                    // 目录同步的下载合并同样走安全流程：批级问题整批拒绝→
+                    // 合并前备份 before-merge.json→行级问题跳过该行、其余
+                    // 照常导入→批内取较大权重去重后导入；空文件直接跳过
                     // （与 downloadLocked 同口径，见该处注释）。
                     UserDictMergeSafety.mergeValidatedBatch(
                         dictName = dict,
@@ -1709,6 +1712,7 @@ object WebDavSync {
                         batchLabel = remoteFileName(dict),
                         filesDir = appContext.filesDir,
                         cacheDir = appContext.cacheDir,
+                        allowEmpty = true,
                         exportCurrent = { tmp ->
                             session.runOnReady { exportUserDictLive(dict, tmp.absolutePath) }
                         },
