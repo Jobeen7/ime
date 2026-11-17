@@ -119,11 +119,7 @@ class PanelActionListener(
     }
 
     override fun onClipboardItemClick(entry: ClipboardManager.Entry) {
-        // 粘贴输出规则（2026-10-29 批量第 4 项）：上屏前按规则变换文本
-        val text = ClipboardManager.applyOutputRule(
-            entry.text, ClipboardManager.getOutputRule(service)
-        )
-        service.keyActionListener?.onKeyAction(KeyboardAction.CommitAction(text))
+        service.keyActionListener?.onKeyAction(KeyboardAction.CommitAction(entry.text))
         // 粘贴后返回：收起剪贴板面板回键盘（默认关，不动旧行为）
         if (ClipboardManager.isReturnAfterPasteEnabled(service)) {
             service.keyboardWindow?.panel?.returnToKeyboard()

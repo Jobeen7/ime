@@ -23,9 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.ClipboardEntryLocator
 import com.jobeen.ime.data.manager.ClipboardManager
-import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
-import com.jobeen.ime.ui.screen.ScreenComponent.SingleChoiceDialog
 import com.jobeen.ime.ui.screen.ScreenComponent.SliderRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
 
@@ -59,13 +57,9 @@ fun ClipboardScreen(onBack: () -> Unit, initialClipboardId: Long = -1L) {
     var dedupEnabled by remember {
         mutableStateOf(ClipboardManager.isDedupEnabled(context))
     }
-    var outputRule by remember {
-        mutableStateOf(ClipboardManager.getOutputRule(context))
-    }
     var returnAfterPaste by remember {
         mutableStateOf(ClipboardManager.isReturnAfterPasteEnabled(context))
     }
-    var showOutputRuleDialog by remember { mutableStateOf(false) }
 
     SettingsPageScaffold(
         title = stringResource(R.string.clipboard_manager),
@@ -149,18 +143,6 @@ fun ClipboardScreen(onBack: () -> Unit, initialClipboardId: Long = -1L) {
                     },
                     showDivider = true,
                 )
-                NavRow(
-                    title = stringResource(R.string.clipboard_output_rule),
-                    subtitle = when (outputRule) {
-                        ClipboardManager.OutputRule.AS_IS ->
-                            stringResource(R.string.clipboard_output_as_is)
-                        ClipboardManager.OutputRule.TRIM ->
-                            stringResource(R.string.clipboard_output_trim)
-                        ClipboardManager.OutputRule.NEWLINE_TO_SPACE ->
-                            stringResource(R.string.clipboard_output_newline)
-                    },
-                    onClick = { showOutputRuleDialog = true },
-                )
                 SwitchRow(
                     title = stringResource(R.string.clipboard_return_after_paste),
                     checked = returnAfterPaste,
@@ -181,11 +163,6 @@ fun ClipboardScreen(onBack: () -> Unit, initialClipboardId: Long = -1L) {
                     // 任一前置未开时开关不可用，并显示缺哪一项。
                     enabled = listeningEnabled && promptEnabled,
                 )
-                Text(
-                    text = stringResource(R.string.clipboard_auto_extract_code_summary),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 if (!listeningEnabled) {
                     Text(
                         text = stringResource(R.string.clipboard_banner_requires_listener),
@@ -199,16 +176,6 @@ fun ClipboardScreen(onBack: () -> Unit, initialClipboardId: Long = -1L) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text(
-                    text = stringResource(R.string.clipboard_dedup_note),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = stringResource(R.string.clipboard_return_note),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
 
             // clipboard?id= 落点：只带 id 进页时出现。列表顺序与键盘
@@ -254,29 +221,5 @@ fun ClipboardScreen(onBack: () -> Unit, initialClipboardId: Long = -1L) {
                     }
                 }
             }
-    }
-
-    if (showOutputRuleDialog) {
-        val rules = listOf(
-            ClipboardManager.OutputRule.AS_IS,
-            ClipboardManager.OutputRule.TRIM,
-            ClipboardManager.OutputRule.NEWLINE_TO_SPACE,
-        )
-        val labels = listOf(
-            stringResource(R.string.clipboard_output_as_is),
-            stringResource(R.string.clipboard_output_trim),
-            stringResource(R.string.clipboard_output_newline),
-        )
-        SingleChoiceDialog(
-            title = stringResource(R.string.clipboard_output_rule),
-            options = labels,
-            selectedIndex = rules.indexOf(outputRule),
-            onSelect = { index ->
-                outputRule = rules[index]
-                ClipboardManager.setOutputRule(context, rules[index])
-                showOutputRuleDialog = false
-            },
-            onDismiss = { showOutputRuleDialog = false },
-        )
     }
 }

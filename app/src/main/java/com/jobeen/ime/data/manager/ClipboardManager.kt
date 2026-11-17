@@ -130,31 +130,6 @@ object ClipboardManager {
         }
     }
 
-    /** 粘贴输出规则（默认原样） */
-    enum class OutputRule { AS_IS, TRIM, NEWLINE_TO_SPACE }
-
-    fun getOutputRule(context: Context): OutputRule {
-        return when (
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString("clipboard.output_rule", "as_is")
-        ) {
-            "trim" -> OutputRule.TRIM
-            "newline_to_space" -> OutputRule.NEWLINE_TO_SPACE
-            else -> OutputRule.AS_IS
-        }
-    }
-
-    fun setOutputRule(context: Context, rule: OutputRule) {
-        val value = when (rule) {
-            OutputRule.AS_IS -> "as_is"
-            OutputRule.TRIM -> "trim"
-            OutputRule.NEWLINE_TO_SPACE -> "newline_to_space"
-        }
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putString("clipboard.output_rule", value)
-        }
-    }
-
     /** 粘贴后返回键盘（默认关）：开 = 点历史条目上屏后收起剪贴板面板回键盘 */
     fun isReturnAfterPasteEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -202,14 +177,6 @@ object ClipboardManager {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
             putBoolean("clipboard.return_after_paste", enabled)
         }
-    }
-
-    /** 粘贴输出变换（纯函数）：原样／去首尾空白／换行转空格（其余内容不动） */
-    fun applyOutputRule(text: String, rule: OutputRule): String = when (rule) {
-        OutputRule.AS_IS -> text
-        OutputRule.TRIM -> text.trim()
-        OutputRule.NEWLINE_TO_SPACE -> text.replace("\r\n", " ")
-            .replace('\n', ' ').replace('\r', ' ')
     }
 
     // ── 历史记录 ──

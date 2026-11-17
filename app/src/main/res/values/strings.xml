@@ -64,25 +64,18 @@
     <string name="clipboard_listening">剪贴板监听</string>
     <string name="clipboard_rules">规则</string>
     <string name="clipboard_dedup">去重</string>
-    <string name="clipboard_output_rule">粘贴输出规则</string>
-    <string name="clipboard_output_as_is">原样粘贴</string>
-    <string name="clipboard_output_trim">去首尾空白</string>
-    <string name="clipboard_output_newline">换行转空格</string>
     <string name="clipboard_return_after_paste">粘贴后返回</string>
     <!-- 批量第 4 项：键盘显示补齐 -->
     <string name="display_hide_symbol">隐藏按键符号</string>
     <string name="display_hide_symbol_note">图标键隐藏后键面空白，仍可点按；文字键恢复出厂文字</string>
     <string name="display_hide_hint">隐藏按键提示</string>
     <string name="display_hide_hint_note">隐藏按键上的副文字（如九宫格字母）</string>
-    <string name="clipboard_dedup_note">关 = 重复复制顶到最前并刷新时间（同一文本仍只留一行）</string>
     <string name="clipboard_listening_note">关 = 不记录新的复制内容，历史保留</string>
     <string name="clipboard_prompt_bar">剪贴板提示条</string>
     <string name="clipboard_banner_requires_listener">需先开启剪贴板监听。</string>
     <string name="clipboard_auto_extract_code">自动提取验证码</string>
-    <string name="clipboard_auto_extract_code_summary">复制含验证码的文字时只保留验证码：提示条显示验证码并写入系统剪贴板，原文不记入剪贴板。</string>
     <string name="clipboard_auto_extract_code_requires_banner">需先开启剪贴板提示条。</string>
     <string name="clipboard_tap_to_copy">点按条目复制，长按多选。</string>
-    <string name="clipboard_return_note">粘贴后收起剪贴板面板回键盘</string>
     <!-- 批量第 5 项：主题诊断 -->
     <string name="layout_editor_label">标签</string>
     <string name="layout_editor_width">宽度</string>

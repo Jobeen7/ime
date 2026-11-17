@@ -155,7 +155,6 @@ fun catalogRows(): List<CatalogRow> = listOf(
     CatalogRow(R.string.clipboard_max_entries, "clipboard", R.string.clipboard_history),
     CatalogRow(R.string.clipboard_retention_days, "clipboard", R.string.clipboard_history),
     CatalogRow(R.string.clipboard_dedup, "clipboard", R.string.clipboard_rules),
-    CatalogRow(R.string.clipboard_output_rule, "clipboard", R.string.clipboard_rules),
     CatalogRow(R.string.clipboard_return_after_paste, "clipboard", R.string.clipboard_rules),
     // 语音：模型组／插件组。
     // U-M3：定位标题须是页内真实渲染的行标题——“识别模型”在语音页

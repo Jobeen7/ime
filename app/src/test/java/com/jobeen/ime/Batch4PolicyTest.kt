@@ -3,43 +3,15 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.data.manager.CandidateLinePolicy
-import com.jobeen.ime.data.manager.ClipboardManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 批量第 4 项纯策略单测：粘贴输出变换、展开候选网格行高、截断省略号。
+ * 批量第 4 项纯策略单测：展开候选网格行高、截断省略号。
  * 均不依赖 Android 框架（measure 以字符计数替身传入）。
  */
 class Batch4PolicyTest {
-
-    @Test
-    fun outputRule_asIs_unchanged() {
-        assertEquals(
-            "  a\nb  ",
-            ClipboardManager.applyOutputRule("  a\nb  ", ClipboardManager.OutputRule.AS_IS),
-        )
-    }
-
-    @Test
-    fun outputRule_trim_edgesOnly() {
-        assertEquals(
-            "a\nb",
-            ClipboardManager.applyOutputRule("  a\nb  ", ClipboardManager.OutputRule.TRIM),
-        )
-    }
-
-    @Test
-    fun outputRule_newlineToSpace_allBreaks() {
-        assertEquals(
-            "a b c d",
-            ClipboardManager.applyOutputRule(
-                "a\nb\r\nc\rd",
-                ClipboardManager.OutputRule.NEWLINE_TO_SPACE,
-            ),
-        )
-    }
 
     @Test
     fun gridHeight_shrinkToContent() {
