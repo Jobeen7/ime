@@ -166,12 +166,13 @@ object KeyboardManager {
         }
 
         /**
-         * 已删内置主题 id：落日（2026-10-29 删）与微信绿浅/深
-         * （wechat-green-light/dark，2026-11-07 删绿预设，v1.1.16.22；
-         * .21 里在 KeyboardThemePresets.kt:176/:221）。
+         * 已删内置主题 id：微信绿浅/深（wechat-green-light/dark，
+         * 2026-11-07 删绿预设，v1.1.16.22；.21 里在
+         * KeyboardThemePresets.kt:176/:221）。落日曾在此列
+         * （2026-10-29 删），2026-11-18 随内置皮肤选择恢复而
+         * 移出——落日预设仍在，选落日须能存住、不被迁回。
          */
         private val REMOVED_BUILTIN_IDS = setOf(
-            "sunset",
             "wechat-green-light",
             "wechat-green-dark",
         )

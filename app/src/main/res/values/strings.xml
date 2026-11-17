@@ -724,6 +724,12 @@
     <string name="user_dict_cancel">取消</string>
 
     <string name="appearance_title">外观</string>
+    <string name="keyboard_theme">键盘皮肤</string>
+    <string name="row_sub_skin">内置皮肤、扫码导入</string>
+    <string name="builtin_theme_default">默认</string>
+    <string name="theme_in_use">使用中</string>
+    <string name="theme_default_desc">跟随系统，深浅自动切换</string>
+    <string name="keyboard_theme_custom">自定义主题</string>
     <string name="app_appearance">应用外观</string>
     <string name="app_appearance_follow_system">跟随系统</string>
     <string name="app_appearance_light">亮色</string>

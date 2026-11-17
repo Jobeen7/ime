@@ -136,6 +136,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.KeyboardThemeActivity"
+            android:exported="false"
+            android:label="@string/keyboard_theme"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name="com.journeyapps.barcodescanner.CaptureActivity"
             android:exported="false"
             android:screenOrientation="fullSensor"

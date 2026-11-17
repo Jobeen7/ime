@@ -78,16 +78,12 @@ class KeyboardManagerMigrationTest {
     }
 
     @Test
-    fun sunsetStillMigratesAsBefore() {
-        // 落日口径回归：主主题落日 → 跟随开＋暗夜；槽位落日 → 只复位该槽。
-        val main = migrate("sunset", light, dark)!!
-        assertEquals(dark, main.themeId)
-        assertEquals(true, main.followSystem)
-        val slots = migrate(dark, "sunset", "sunset")!!
-        assertEquals(dark, slots.themeId)
-        assertEquals(light, slots.lightThemeId)
-        assertEquals(dark, slots.darkThemeId)
-        assertEquals(false, slots.followSystem)
+    fun sunsetNoLongerMigrates() {
+        // 落日已恢复为内置预设（2026-11-18）：三槽存落日不再迁移，
+        // 选落日能存住；仍在 validIdsNeedNoMigration 中复核。
+        assertNull(migrate("sunset", light, dark))
+        assertNull(migrate(dark, "sunset", "sunset"))
+        assertNull(migrate("sunset", "sunset", "sunset"))
     }
 
     @Test
@@ -95,6 +91,7 @@ class KeyboardManagerMigrationTest {
         assertNull(migrate("monet", light, dark))
         assertNull(migrate(light, light, dark))
         assertNull(migrate(dark, light, dark))
+        assertNull(migrate("sunset", light, dark))
         assertNull(migrate("custom_legacy", light, dark))
     }
 
@@ -102,14 +99,6 @@ class KeyboardManagerMigrationTest {
     fun migrationIsIdempotent() {
         val first = migrate(greenLight, greenLight, greenDark)!!
         assertNull(migrate(first.themeId, first.lightThemeId, first.darkThemeId))
-        val sunsetFirst = migrate("sunset", "sunset", "sunset")!!
-        assertNull(
-            migrate(
-                sunsetFirst.themeId,
-                sunsetFirst.lightThemeId,
-                sunsetFirst.darkThemeId,
-            ),
-        )
     }
 
     @Test

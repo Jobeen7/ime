@@ -181,6 +181,11 @@ class MainActivity : ImeActivity() {
                     Intent(this@MainActivity, KeyboardMenuSettingsActivity::class.java)
                 )
             },
+            onOpenKeyboardTheme = {
+                startActivity(
+                    Intent(this@MainActivity, KeyboardThemeActivity::class.java)
+                )
+            },
             onOpenToolbar = {
                 startActivity(
                     Intent(this@MainActivity, ToolbarActivity::class.java)

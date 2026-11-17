@@ -159,14 +159,15 @@ class MainSettingsCatalogTest {
     }
 
     @Test
-    fun catalogPages_eighteenKeysInOrder() {
-        // 18 键：Emoji 设置入口、按键符号页、皮肤脚本页、皮肤编辑器页、
+    fun catalogPages_nineteenKeysInOrder() {
+        // 19 键：Emoji 设置入口、按键符号页、皮肤脚本页、皮肤编辑器页、
         // LevelDB 页、皮肤库页、脚本页、Wi-Fi 传输页已删；
+        // 键盘皮肤页（skin）2026-11-18 恢复（内置选择＋扫码导入）；
         // 旧期望随单子改（测试期望与单子相背时按单子改期望）。
         val keys = catalogPages().map { it.key }
         assertEquals(
             listOf(
-                "schema", "scheme_update", "rime", "candidates", "keyboard",
+                "schema", "scheme_update", "rime", "candidates", "skin", "keyboard",
                 "keyboardMenu", "toolbar", "symbol_bar", "appearance", "clipboard", "phrase", "ai", "voice", "stats", "userdict",
                 "backup", "files", "about",
             ),
