@@ -77,11 +77,6 @@ fun ClipboardScreen(onBack: () -> Unit, initialClipboardId: Long = -1L) {
                         ClipboardManager.setListeningEnabled(context, it)
                     },
                 )
-                Text(
-                    text = stringResource(R.string.clipboard_listening_note),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 SwitchRow(
                     title = stringResource(R.string.clipboard_prompt_bar),
                     checked = promptEnabled,
