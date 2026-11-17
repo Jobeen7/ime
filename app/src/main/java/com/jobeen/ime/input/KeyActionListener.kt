@@ -564,13 +564,6 @@ class KeyActionListener(
                 )
             }
 
-            // 悬浮键盘开关（WO52 1.7：#floatingKeyboardWindowStateToggle）：
-            // 读键取反写回；硬件键盘在用时 view 内提示并拒绝。
-            is KeyboardAction.ToggleFloatingKeyboardWindowAction -> {
-                (service as? ImeInputMethodService)?.keyboardWindow?.view
-                    ?.toggleFloatingKeyboardWindow()
-            }
-
             // RIME 部署／同步（WO52 3.1a 挂白名单，3.1b/3.1c 改走
             // :ime Service 跨进程链）：部署走 FabActions.deploy
             // （内经 RimeMaintenanceClient），同步走 librime

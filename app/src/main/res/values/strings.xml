@@ -212,7 +212,6 @@
     <string name="fab_deploy_done">部署完成</string>
     <string name="notif_channel_remote_transfer">远程传输</string>
     <string name="notif_remote_transfer_title">正在同步用户词</string>
-    <string name="floating_keyboard_title">悬浮键盘</string>
     <string name="fab_deploy_failed">部署失败，请稍后重试</string>
     <string name="fab_deploy_busy">部署进行中，请稍后再试</string>
     <string name="fab_dict_sync_success">用户词同步完成</string>
@@ -898,7 +897,6 @@
     <string name="action_hash_rime_next_page">候选下页</string>
     <string name="action_hash_rime_deploy">部署</string>
     <string name="action_hash_rime_sync">同步</string>
-    <string name="action_hash_floating_keyboard_window_state_toggle">悬浮键盘切换</string>
     <string name="action_hash_toggle_embedded_input">内嵌输入切换</string>
     <string name="action_hash_toggle_symbol_bar">符号条切换</string>
     <string name="action_hash_keyboard_menu">键盘菜单</string>

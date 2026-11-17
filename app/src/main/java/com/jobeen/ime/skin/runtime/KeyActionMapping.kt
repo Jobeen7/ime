@@ -166,8 +166,6 @@ object KeyActionMapping {
             WhitelistAction.HASH_RIME_NEXT_PAGE -> KeyboardAction.PageCandidatesAction(false)
             WhitelistAction.HASH_RIME_DEPLOY -> KeyboardAction.RimeDeployAction
             WhitelistAction.HASH_RIME_SYNC -> KeyboardAction.RimeSyncAction
-            WhitelistAction.HASH_FLOATING_KEYBOARD_WINDOW_STATE_TOGGLE ->
-                KeyboardAction.ToggleFloatingKeyboardWindowAction
             WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT -> KeyboardAction.ToggleEmbeddedInputAction
             WhitelistAction.HASH_CLEAR_CLIPBOARD ->
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CLEAR)

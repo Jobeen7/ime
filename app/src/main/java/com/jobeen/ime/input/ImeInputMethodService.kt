@@ -580,34 +580,19 @@ class ImeInputMethodService : InputMethodService() {
     override fun onComputeInsets(outInsets: Insets) {
         super.onComputeInsets(outInsets)
         val view = keyboardWindow?.view ?: return
-        val candidateFrame = view.floatingFrameScreenRect
-        val keyboardFrame = view.floatingKeyboardFrameRect
-        if (candidateFrame == null && keyboardFrame == null) return
+        val frame = view.floatingFrameScreenRect ?: return
         val viewWidth = view.width.takeIf { it > 0 } ?: return
         val viewHeight = view.height.takeIf { it > 0 } ?: return
         val loc = IntArray(2).also { view.getLocationOnScreen(it) }
-        // 悬浮键盘（WO52 1.7）：浮动时可触区只计浮动矩形（＋浮动
-        // 候选窗），框外点按透传给应用；停靠时沿用原口径（整窗＋
-        // 浮动候选窗）。
-        val region = if (keyboardFrame != null) {
-            Region()
-        } else {
-            Region(0, 0, viewWidth, viewHeight)
-        }
-        fun unionFrame(frame: Rect) {
-            region.union(
-                Rect(
-                    frame.left - loc[0],
-                    frame.top - loc[1],
-                    frame.right - loc[0],
-                    frame.bottom - loc[1],
-                ),
-            )
-        }
-        // floatingFrameScreenRect 是屏幕坐标，floatingKeyboardFrameRect
-        // 是 view 坐标：前者减 loc，后者直接用。
-        candidateFrame?.let { unionFrame(it) }
-        keyboardFrame?.let { region.union(it) }
+        val region = Region(0, 0, viewWidth, viewHeight)
+        region.union(
+            Rect(
+                frame.left - loc[0],
+                frame.top - loc[1],
+                frame.right - loc[0],
+                frame.bottom - loc[1],
+            ),
+        )
         outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
         outInsets.touchableRegion.set(region)
     }

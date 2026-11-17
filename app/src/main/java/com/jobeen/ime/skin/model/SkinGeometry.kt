@@ -2,7 +2,7 @@ package com.jobeen.ime.skin.model
 
 /**
  * 皮肤几何与类型注册（自 SkinModel.kt 迁出的活声明；
- * 浮动窗／悬浮键盘／配色／键盘类型等活代码在用）。
+ * 浮动窗／配色／键盘类型等活代码在用）。
  */
 
 /**
@@ -35,41 +35,6 @@ data class FloatingCandidateStyle(
         const val MAX_CORNER_RADIUS_DP = 24f
     }
 }
-
-/**
- * 悬浮键盘窗口几何（WO52 1.7）：皮肤键 floatingKeyboardWindowPortrait／
- * floatingKeyboardWindowLandscape 的对象形态 `{widthRatio, centerX}`；
- * 两值均为相对屏幕宽度的分数（0..1）。缺省 = 宽比 0.9、中心 0.5。
- */
-data class FloatingKeyboardGeometry(
-    val widthRatio: Float = DEFAULT_WIDTH_RATIO,
-    val centerX: Float = DEFAULT_CENTER_X,
-) {
-    companion object {
-        const val DEFAULT_WIDTH_RATIO = 0.9f
-        const val DEFAULT_CENTER_X = 0.5f
-        const val MIN_WIDTH_RATIO = 0.3f
-        const val MAX_WIDTH_RATIO = 1.0f
-    }
-
-    /** 钳制到合法区间（非法／越界值在校验期先行回落，见 SkinValidator）。 */
-    fun clamped(): FloatingKeyboardGeometry = copy(
-        widthRatio = widthRatio.coerceIn(MIN_WIDTH_RATIO, MAX_WIDTH_RATIO),
-        centerX = centerX.coerceIn(0f, 1f),
-    )
-}
-
-/**
- * 悬浮键盘（WO52 1.7）：皮肤顶层 floatingKeyboardWindowEnabled（开关，
- * 缺省 false）＋ floatingKeyboardWindowPortrait／Landscape（按横竖屏
- * 的窗口几何）。开关的运行期翻转写偏好覆写（见 FloatingKeyboardPrefs），
- * 皮肤键只作缺省值。
- */
-data class FloatingKeyboardWindowStyle(
-    val enabled: Boolean = false,
-    val portrait: FloatingKeyboardGeometry = FloatingKeyboardGeometry(),
-    val landscape: FloatingKeyboardGeometry = FloatingKeyboardGeometry(),
-)
 
 /** 几何字段全集（定稿三.4）：只出现在 appearance，单位 dp 浮点。 */
 enum class GeometryField(val jsonName: String) {
