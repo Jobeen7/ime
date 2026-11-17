@@ -20,7 +20,7 @@ import java.nio.file.Files
  * 覆盖口径（均从本仓 vendored librime 的导入语义推导，不依赖网络与引擎）：
  * - 校验分两层：批级问题（非 UTF-8/空批/码在前快照/非法词典名）
  *   整批拒绝，且失败说明点名批次、行号与原因；行级问题（负权重/
- *   非法权重/坏列数/空词空码/非法码/码过长）只跳过该行、其余照常
+ *   非法权重/坏列数/空词空码/非法码）只跳过该行、其余照常
  *   导入，跳过的行号与原因可查；空文件在同步路径（allowEmpty）下
  *   直接跳过、不记失败。
  * - 批内去重：同词条只留最大权重；无重复不重写文件；BOM 去掉。
@@ -202,10 +202,10 @@ class UserDictMergeSafetyTest {
     }
 
     @Test
-    fun longCodeRowsAreSkippedWithLengthReason() {
-        // 2026-11-17 实报：wanxiang_lite 19180 行里 53 行只因码超 64 字
-        // 被拒，且旧文案误报成“含大写/声调/控制字符/连续空格”。
-        // 超长码全是小写单空格、只超长：原因必须点名“过长”，不能误报字符集。
+    fun longCodeRowsAreImportedWithoutLengthLimit() {
+        // 2026-11-17 删掉 Jime 自定的 64 字码长上限（librime 解析器本身不限
+        // 码长）：wanxiang_lite 19180 行里曾被拒的 53 行超长码（全是小写单
+        // 空格）现在正常导入。
         val dir = createTempDir()
         val longDing = List(64) { "ding" }.joinToString(" ") // 319 字
         val longLa = List(23) { "la" }.joinToString(" ") // 68 字
@@ -214,14 +214,9 @@ class UserDictMergeSafetyTest {
             "你好\tni hao\t1\n叮叮叮\t$longDing\t1\n啦啦啦\t$longLa\t1\n世界\tshi jie\t2\n",
         )
         val result = valid(UserDictMergeSafety.validateBatch(file, "batch.txt", "wanxiang_lite"))
-        assertEquals(2, result.entryCount)
-        assertEquals(2, result.skippedRows)
-        assertEquals(setOf(2, 3), result.skippedLineNumbers)
-        for (issue in result.skipped) {
-            assertEquals(UserDictMergeSafety.IssueCode.BAD_CODE, issue.code)
-            assertTrue(issue.detail.contains("过长"))
-            assertTrue(issue.detail.contains("64 字上限"))
-        }
+        assertEquals(4, result.entryCount)
+        assertEquals(0, result.skippedRows)
+        assertTrue(result.skippedLineNumbers.isEmpty())
     }
 
     @Test
@@ -518,7 +513,7 @@ class UserDictMergeSafetyTest {
     fun mergeValidatedBatchSkipsBadRowsAndImportsGoodOnes() = runBlocking {
         val dir = createTempDir()
         val filesDir = createTempDir()
-        val longCode = List(30) { "la" }.joinToString(" ") // 89 字，超 64 字上限
+        val longCode = List(30) { "la" }.joinToString(" ") // 89 字，码不限长
         val file = writeBatch(
             dir, "batch.txt",
             "你好\tni hao\t2\n世界\tshi jie\t-1\n啦啦啦\t$longCode\t1\n你好\tni hao\t9\n",
@@ -539,9 +534,9 @@ class UserDictMergeSafetyTest {
                 importedText!!.lineSequence().filter { it.isNotEmpty() }.count()
             },
         )
-        // 负权重行与超长码行被跳过，好行去重后导入（你好取最大权重 9）。
-        assertEquals(1, count)
-        assertEquals("你好\tni hao\t9\n", importedText)
+        // 负权重行被跳过，超长码行正常导入，好行去重后导入（你好取最大权重 9）。
+        assertEquals(2, count)
+        assertEquals("你好\tni hao\t9\n啦啦啦\t$longCode\t1\n", importedText)
         assertTrue(UserDictMergeSafety.hasBeforeMergeBackup(filesDir, "wanxiang_lite"))
     }
 

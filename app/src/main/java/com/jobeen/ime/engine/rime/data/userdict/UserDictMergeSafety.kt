@@ -27,7 +27,7 @@ import timber.log.Timber
  * - 所以本文件做的三件事是：① 先校验再合并。批级问题（文件非
  *   UTF-8、目标词典名非法、多数行码在前疑似 `.userdb.txt` 快照）
  *   整批拒绝，一行不写；行级问题（列数不对、词/码为空或非法、
- *   权重非法或为负、码过长）只跳过该行、其余照常导入，并在日志
+ *   权重非法或为负）只跳过该行、其余照常导入，并在日志
  *   里报告跳过的行号——与 librime 本身的导入口径一致（vendored
  *   librime `rime/dict/tsv.cc` 的 TsvReader 遇坏行记警告后继续，
  *   不中断整批；其解析器 `rime/dict/table_db.cc` 也没有码长上限）。
@@ -54,9 +54,8 @@ object UserDictMergeSafety {
     const val BACKUP_FILE_NAME = "before-merge.json"
     const val BACKUP_FORMAT_VERSION = 1
 
-    /** 词/码的长度上限：正常词条远小于此值，超限基本是选错文件或坏行。 */
+    /** 词的长度上限：正常词条远小于此值，超限基本是选错文件或坏行。码不限长（与 librime 解析器一致）。 */
     const val MAX_PHRASE_CHARS = 128
-    const val MAX_CODE_CHARS = 64
 
     /** 校验失败时最多向用户列出的行问题数（其余只计总数）。 */
     const val MAX_ISSUES = 20
@@ -157,10 +156,9 @@ object UserDictMergeSafety {
      * 行级问题（只跳过该行、其余照常导入，见 [BatchValidation.Valid.skipped]）：
      * - 每行（空行与 `#` 注释行除外）必须是 `词⇥码` 或 `词⇥码⇥权重`，
      *   列数不对跳过该行。
-     * - 词非空、≤128 字、无控制字符；码非空、≤64 字、无控制字符、
+     * - 词非空、≤128 字、无控制字符；码非空、无控制字符、
      *   只能是小写字母/数字/空格（去声调后的拼音编码形态）、无连续空格。
-     *   码长上限 64 字是 Jime 自定的（librime 解析器本身不限码长），
-     *   超长只跳过该行，不拒绝整批。
+     *   码不限长（librime 解析器本身不限码长，2026-11-17 删掉 Jime 自定的 64 字上限）。
      * - 权重列若有：必须是十进制整数且能装进 Int；负数是 librime 的
      *   删除标记，跳过该行（永不喂给导入器）；`c=5 d=… t=…` 这类
      *   快照值不是整数，同样跳过该行。
@@ -313,20 +311,14 @@ object UserDictMergeSafety {
         if (code.isEmpty()) {
             return Issue(lineNumber, IssueCode.EMPTY_CODE, "码为空")
         }
-        if (code.length > MAX_CODE_CHARS ||
-            code.any { it.code < 0x20 || it.code == 0x7F } ||
+        if (code.any { it.code < 0x20 || it.code == 0x7F } ||
             !code.all { it in 'a'..'z' || it in '0'..'9' || it == ' ' } ||
             code.contains("  ")
         ) {
-            // 逐因点名：此前四种原因并成一句话，超长码会被误报成“含大写/
-            // 声调/控制字符/连续空格”（2026-11-17 实报：53 行全是小写单
-            // 空格、只超 64 字上限，文案却与实情全不符）。回显截断到 64 字：
-            // 超长码本身可达数百字，全文进日志会把诊断撑爆。
+            // 逐因点名：三种原因各给一句话，不混报。
+            // 回显截断到 64 字：码本身可达数百字，全文进日志会把诊断撑爆。
             val shownCode = code.take(64)
             val reason = when {
-                code.length > MAX_CODE_CHARS ->
-                    "码过长（共 ${code.length} 字，超过 $MAX_CODE_CHARS 字上限；" +
-                        "前 64 字“$shownCode”）"
                 code.any { it.code < 0x20 || it.code == 0x7F } ->
                     "码“$shownCode”含控制字符"
                 !code.all { it in 'a'..'z' || it in '0'..'9' || it == ' ' } ->
