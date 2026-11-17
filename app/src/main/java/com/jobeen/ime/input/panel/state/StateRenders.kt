@@ -8,15 +8,12 @@ import com.jobeen.ime.R
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.panel.ComposingRenderer
 import com.jobeen.ime.input.panel.component.ClipboardTab
-import com.jobeen.ime.input.panel.toolbar.SkinToolbarApplier
 import com.jobeen.ime.input.panel.toolbar.ToolbarConfig
 import com.jobeen.ime.input.panel.toolbar.ToolbarRenderer
 import com.jobeen.ime.input.panel.toolbar.ToolbarRendererResources
 import com.jobeen.ime.input.panel.toolbar.ToolbarToggleState
 import com.jobeen.ime.input.panel.toolbar.voiceInputEnabled
-import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.icon.MaterialSymbols
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 private fun StateRenderContext.idleHorizontalPaddingDp(): Float =
     KeyboardManager.Keyboard.Padding.getHorizontalDp(context).toFloat()
@@ -32,19 +29,11 @@ private fun StateRenderContext.buildToolbarRenderer(
     clipSelectedTextColor: Int = 0,
     clipSelectedBgColor: Int = 0,
 ): ToolbarRenderer {
-    // 工具栏构成：皮肤快照优先（SkinToolbarApplier 抉择，中央区
-    // 未定义时用出厂默认）；态渲染器每次新建，在此读最新
-    // 快照即生效。
-    val skinApplied = SkinToolbarApplier.resolveFor(context)
     return ToolbarRenderer(
         idleResources,
         idleHorizontalPaddingDp(),
         centerActions = ToolbarConfig.DEFAULT_ACTIONS,
         centerIconOverrides = emptyMap(),
-        skinToolbar = skinApplied?.toolbar,
-        skinToolbarIcons = skinApplied?.icons ?: emptyMap(),
-        // 工具栏钮背景图（审计 D 项）：与构成同批解析结果。
-        buttonBackground = skinApplied?.buttonBackground,
         // Symbol 名解析接线（参考项）：中央按钮 icon 不是
         // 包内资产 id 时查 Material Symbols 注册表。
         symbolIconProvider = { name ->
@@ -53,11 +42,6 @@ private fun StateRenderContext.buildToolbarRenderer(
                 (24f * context.resources.displayMetrics.density).toInt().coerceAtLeast(1),
             )
         },
-        // 工具栏样式（审计 B 项）：独立于工具栏构成（toolbar 节点），
-        // 无 toolbarStyle 节点时为 null，不影响构成抉择。
-        toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle,
-        // 工具栏布局（审计 B 项）：同上，独立于构成抉择。
-        toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout,
         // 开关启用判定（E6）：与菜单网格同口径。
         toggleActive = { action -> ToolbarToggleState.isActive(context, action) },
         // 语音入口可见判定（H2-13）：总开关关时工具栏语音键隐藏。
@@ -78,28 +62,10 @@ private fun StateRenderContext.buildToolbarRenderer(
 
 /**
  * 组字/预测态右缘按钮图标（与闲置态最右槽口径一致）：
- * 皮肤收起资产 > 皮肤收起符号名 > 面板传入内置图；均缺失回落内置图。
- * 皮肤展开图标在组字/预测态无左缘槽，不适用。符号未知名记一条
- * WARN（只记动作与符号名），调用方再回落内置图，永不崩溃。
- * 态渲染器每次新建时读最新快照，皮肤切换后下次进组字/预测态即生效。
+ * 皮肤 v3 死壳删除后恒用面板传入的内置图。
  */
 private fun StateRenderContext.composingEdgeDrawable(): Drawable? {
-    val applied = SkinToolbarApplier.resolveFor(context)
-    if (applied != null) {
-        applied.toolbar.collapseIcon?.assetId?.let { applied.icons[it] }?.let { return it }
-        val symbol = applied.toolbar.collapseSymbol
-        if (symbol != null) {
-            val drawable = MaterialSymbols.drawable(
-                context, symbol,
-                (24f * context.resources.displayMetrics.density).toInt().coerceAtLeast(1),
-            )
-            if (drawable != null) return drawable
-            DiagLog.w(
-                "toolbar", "toolbar_icon_unresolved",
-                mapOf("actionId" to "collapse", "icon" to symbol),
-            )
-        }
-    }
+    // 皮肤 v3 死壳删除后快照恒为 null，恒回落面板传入的内置图。
     return expandDrawable
 }
 
@@ -127,7 +93,6 @@ class ComposingStateRender(
 
     override fun createToolbarRenderer(): ComposingRenderer {
         val settings = ctx.candidateDisplaySettings()
-        val snapshot = SkinSnapshotProvider.peek()
         return ComposingRenderer(
             candidates,
             ctx.composingEdgeDrawable(),
@@ -136,10 +101,10 @@ class ComposingStateRender(
             showComment = settings.showComment,
             candidateBorder = settings.candidateBorder,
             expandBorder = settings.expandBorder,
-            candidateRadiusDp = snapshot?.candidateRadiusDp ?: 6f,
-            areaStyle = snapshot?.horizontalCandidatesStyle,
-            maxColumns = snapshot?.horizontalMaxColumns,
-            expandLeft = snapshot?.horizontalExpandLeft ?: false,
+            candidateRadiusDp = 6f,
+            areaStyle = null,
+            maxColumns = null,
+            expandLeft = false,
             wordSpacingDp = settings.wordSpacingDp,
         ).also {
             it.recording = ctx.recording
@@ -166,7 +131,6 @@ class PredictionStateRender(
 ) : IStateRender {
     override fun createToolbarRenderer(): ComposingRenderer {
         val settings = ctx.candidateDisplaySettings()
-        val snapshot = SkinSnapshotProvider.peek()
         return ComposingRenderer(
             candidates,
             ctx.composingEdgeDrawable(),
@@ -175,12 +139,12 @@ class PredictionStateRender(
             showComment = settings.showComment,
             candidateBorder = settings.candidateBorder,
             expandBorder = settings.expandBorder,
-            candidateRadiusDp = snapshot?.candidateRadiusDp ?: 6f,
-            edgeBgColor = snapshot?.predictionCloseBg,
-            edgeRadiusDp = snapshot?.predictionCloseRadiusDp,
-            areaStyle = snapshot?.horizontalCandidatesStyle,
-            maxColumns = snapshot?.horizontalMaxColumns,
-            expandLeft = snapshot?.horizontalExpandLeft ?: false,
+            candidateRadiusDp = 6f,
+            edgeBgColor = null,
+            edgeRadiusDp = null,
+            areaStyle = null,
+            maxColumns = null,
+            expandLeft = false,
             edgeTapClosesPredictions = true,
             // 预测首项不是 RIME 首选候选：首选色在此态关闭。
             preferredEnabled = false,

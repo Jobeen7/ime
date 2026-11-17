@@ -124,16 +124,14 @@ object BackupManager {
 
     // ---------------- 备份 ----------------
 
-    /** 备份出包结果：文件字节＋因超限跳过的皮肤段（B-B-7，8MB 上限不动）。 */
+    /** 备份出包结果：文件字节。 */
     data class CreatedBackup(
         val bytes: ByteArray,
-        val skippedSkinSections: Set<String> = emptySet(),
     )
 
-    /** 采集结果：载荷 JSON＋因超限跳过的皮肤段。 */
+    /** 采集结果：载荷 JSON。 */
     private data class CollectedPayload(
         val json: JSONObject,
-        val skippedSkinSections: Set<String> = emptySet(),
     )
 
     /** 采集当前数据并加密，返回完整备份文件字节（头部行 + 密文） */
@@ -141,7 +139,6 @@ object BackupManager {
         val collected = collectPayload("备份")
         return CreatedBackup(
             bytes = encryptPayload(collected.json, password),
-            skippedSkinSections = collected.skippedSkinSections,
         )
     }
 
@@ -172,9 +169,6 @@ object BackupManager {
     private suspend fun collectPayload(operation: String = "备份"): CollectedPayload {
         val root = JSONObject()
         val guard = BackupChangeGuard()
-        // 因超限跳过的皮肤段（B-B-7）：只记名，不阻塞整包；调用方据此提示用户。
-        val skippedSkinSections = HashSet<String>()
-
         // —— SharedPreferences：枚举 shared_prefs 目录全部文件整表导出
         val prefsDir = File(appContext.applicationInfo.dataDir, "shared_prefs")
         val prefsJson = JSONObject()
@@ -462,12 +456,6 @@ object BackupManager {
             }
         }
 
-        // —— 皮肤库文件：index.json + skins/ + assets/（合并写回，见 KDoc）；
-        // 空库时不写该段；超限时整段跳过、记入 skippedSkinSections（B-B-7）。
-        val skinLibrary = collectSkinLibraryJson(guard, operation)
-        skinLibrary.json?.let { root.put("skin_library", it) }
-        if (skinLibrary.skippedOverLimit) skippedSkinSections += RestoreJournal.SECTION_SKIN_LIBRARY
-
         // —— 结算重验（WO33 第 1 项，D-M1 残余窗口的缓解）——
         // 采集全部结束、清单附上之前，把本次读过的全部文件（prefs
         // 各表、Room 两库 db＋-wal、统计文件、皮肤库文件）
@@ -519,84 +507,12 @@ object BackupManager {
                 aiConversationsCount = aiExport.conversations.size,
                 aiMessagesCount = aiExport.messages.size,
                 inputStatsPresent = root.has("input_stats_json"),
-                skinLibraryPresent = root.has("skin_library"),
-                skinLibraryFiles = root.optJSONObject("skin_library")
-                    ?.optJSONObject("files")?.length() ?: 0,
             ),
         )
         root.put("manifest", manifest.toJsonObject())
-        return CollectedPayload(root, skippedSkinSections)
+        return CollectedPayload(root)
     }
 
-    /** 皮肤库备份原始字节上限：超限整段跳过只记日志（仿 input_stats 跳过模式）。 */
-    private const val SKIN_BACKUP_MAX_RAW_BYTES = 8L * 1024 * 1024
-
-    /**
-     * 皮肤段采集结果：json 为 null 即不写该段；skippedOverLimit 为真
-     * 表示原始字节超 8MB 整段跳过（B-B-7，调用方据此提示用户），
-     * 与“空库不写段”区分——空库不是跳过，不提示。
-     */
-    private data class SkinSectionResult(
-        val json: JSONObject?,
-        val skippedOverLimit: Boolean,
-    )
-
-    /**
-     * 皮肤库段采集：index.json（文本，读不到则 null）+ skins/ 与 assets/
-     * 下全部文件（相对路径 → Base64）。只认 App.skinLibraryDir 这一唯一
-     * 目录来源；相对路径须过 canonical 校验（防符号链接逃逸）；空库
-     * （无 index 且无文件）返回空段，即不写该段；原始字节总量超
-     * 8MB 整段跳过只记日志（不阻塞整包），skippedOverLimit 为真。
-     */
-    private fun collectSkinLibraryJson(
-        guard: BackupChangeGuard,
-        operation: String,
-    ): SkinSectionResult {
-        val rootDir = App.skinLibraryDir
-        val indexFile = File(rootDir, "index.json")
-        val indexText = if (indexFile.isFile) {
-            // 逐文件改动检测（D-M1）：读前取元数据，读后重验，变了即
-            // 整个备份失败、不产残包（见 BackupChangeGuard）。
-            guard.guard(indexFile, operation) {
-                if (!indexFile.isFile) throw BackupDataChangedException(operation)
-                runCatching { indexFile.readText(Charsets.UTF_8) }.onFailure {
-                    Timber.w("skin index unreadable, skipped in backup")
-                }.getOrNull()
-            }
-        } else {
-            null
-        }
-        val canonicalRoot = runCatching { rootDir.canonicalPath }.getOrNull()
-            ?: return SkinSectionResult(null, false)
-        val filesJson = JSONObject()
-        var totalBytes = 0L
-        for (sub in listOf("skins", "assets")) {
-            val subDir = File(rootDir, sub)
-            if (!subDir.isDirectory) continue
-            for (file in subDir.walkTopDown().filter { it.isFile }.sortedBy { it.path }) {
-                val canonical = runCatching { file.canonicalPath }.getOrNull() ?: continue
-                if (!canonical.startsWith(canonicalRoot + File.separator)) continue
-                val rel = "$sub/" + file.relativeTo(subDir).path.replace(File.separatorChar, '/')
-                if (!isValidSkinRelPath(rel)) continue
-                // 枚举到但读前已消失 = 采集中途被删，整包失败，不静默丢一文件。
-                if (!file.isFile) throw BackupDataChangedException(operation)
-                val bytes = guard.guard(file, operation) {
-                    runCatching { file.readBytes() }.getOrNull()
-                } ?: continue
-                totalBytes += bytes.size
-                if (totalBytes > SKIN_BACKUP_MAX_RAW_BYTES) {
-                    Timber.w("skin library too large, skipped in backup")
-                    return SkinSectionResult(null, true)
-                }
-                filesJson.put(rel, bytes.toBase64())
-            }
-        }
-        if (indexText == null && filesJson.length() == 0) return SkinSectionResult(null, false)
-        val section = JSONObject()
-        if (indexText != null) section.put("index", indexText)
-        section.put("files", filesJson)
-        return SkinSectionResult(section, false)
-    }
 
     private fun encodePrefValue(value: Any): JSONObject {
         val obj = JSONObject()
@@ -653,7 +569,6 @@ object BackupManager {
             prefers = snapshot.prefers,
             sortings = snapshot.sortings,
             inputStatsJson = snapshot.inputStatsJson,
-            skinLibrary = snapshot.skinLibrary,
             ai = patched,
         )
     }
@@ -671,17 +586,6 @@ object BackupManager {
         // （BackupDataChangedException），此时尚未写任何数据，直接失败。
         val snapshotJson = collectPayload("还原")
         val snapshotParsed = patchSnapshotTokens(parsePayload(snapshotJson.json))
-        // 回滚可覆盖性（D-S1/D-M2）：快照里缺段的源，快照回放恢复不了。
-        // 皮肤库段缺失且还原前确有皮肤文件（超 8MB 跳段或采集失败），
-        // 回滚后这些数据即永久丢失——此时绝不能报“已恢复到还原前状态”，
-        // 必须如实报回滚未成功。皮肤库段缺失且还原前本就无皮肤文件时，
-        // 快照即“空库”，回滚清空皮肤即恢复（clearSkinsForRollback），覆盖成立。
-        val skinsPresentBefore = hasSkinFiles()
-        val rollbackCovered = rollbackCovered(
-            snapshotHasSkins = snapshotParsed.skinLibrary != null,
-            skinsPresentBefore = skinsPresentBefore,
-        )
-        val clearSkinsForRollback = snapshotParsed.skinLibrary == null && !skinsPresentBefore
         // 合并语义（D31）：四表先取“当前 ∪ 备份”（当前优先），再整表
         // 写回合并结果——备份后新学的内容保留，备份里有、当前已删的
         // 内容补回来。合并只发生在还原入口这一处，applyPayload 本体
@@ -718,10 +622,6 @@ object BackupManager {
             backupFingerprint = DigestUtil.sha256Hex(bytes),
             snapshotFile = snapshotFile.name,
             completedSections = emptySet(),
-            // D-P1：磁盘回滚据此区分“快照缺皮肤段是还原前本就无皮肤”
-            // 与“还原前有皮肤但快照没装下”，与内存回滚的
-            // rollbackCovered／clearSkinsForRollback 取同一位。
-            skinsPresentBefore = skinsPresentBefore,
         )
         try {
             RestoreJournal.write(journalDir, journalEntry)
@@ -740,41 +640,13 @@ object BackupManager {
             withContext(NonCancellable) {
                 skippedAiMessages = applyPayload(
                     merged,
-                    onSectionStart = { section ->
-                        // D-P1（WO36）：皮肤段开始标记是强制推进——标记
-                        // 写失败即中止还原本体（触发快照回滚），绝不静
-                        // 默吞：标记丢了，杀在皮肤循环中途时磁盘回滚会
-                        // 把半写段误判为“没写过”而谎报成功。与上文
-                        // REPLACING 推进同口径（journal 推进不了就不
-                        // 开始写盘）。标记经 [markSectionStarted] 同步
-                        // 落盘（AtomicFiles：tmp＋fsync＋rename＋目录
-                        // fsync）后 applyPayload 才进皮肤段；kill 在标
-                        // 记写中途只留旧版或新版完整 journal，而皮肤写
-                        // 盘尚未开始，旧 journal 同样判得对。
-                        try {
-                            markSectionStarted(
-                                journalDir,
-                                section,
-                                journalEntry.copy(phase = RestoreJournal.Phase.REPLACING),
-                            )
-                        } catch (e: Exception) {
-                            if (e is kotlinx.coroutines.CancellationException) throw e
-                            Timber.e(e, "restore journal section-start mark failed, aborting restore")
-                            throw BackupException(
-                                backupString(R.string.backup_restore_journal_write_failed),
-                            )
-                        }
-                    },
                     onSectionDone = { section ->
                         // 段进度是尽力而为的记录：journal 写失败不阻断
                         // 还原本体（阶段已是 REPLACING，中断后照常提示）；
                         // 段进度丢了也不影响回滚覆盖判定（见
                         // uncoveredSectionsForRollback 的 KDoc：可部分写
-                        // 的段要么原子、要么快照恒覆盖）——皮肤库除外，
-                        // 其半写态由 inProgressSections 记（D-P1）。
-                        // 失败只记日志（WO36：onSectionStart 已改强制，
-                        // 此处仍尽力而为；失败改 Timber.e 大声上报，
-                        // 不再静默 w）。
+                        // 的段要么原子、要么快照恒覆盖）。
+                        // 失败只记日志（失败改 Timber.e 大声上报，不再静默 w）。
                         runCatching {
                             val current = RestoreJournal.read(journalDir)
                                 ?: journalEntry.copy(phase = RestoreJournal.Phase.REPLACING)
@@ -809,14 +681,12 @@ object BackupManager {
                     applyPayload(
                         snapshotParsed,
                         forRollback = true,
-                        clearSkinsForRollback,
                         rollbackExtraPrefsFiles,
                     )
                 }
             }.isSuccess
-            // 回放成功才算回滚成功；缺段快照盖不住的源（皮肤）
-            // 只要还原前存在，回滚即不完整——如实报失败，不谎报成功。
-            val rolledBack = replayed && rollbackCovered
+            // 回放成功才算回滚成功。
+            val rolledBack = replayed
             if (rolledBack) {
                 // 内存回滚已把状态恢复到还原前：中断记录不再有意义，
                 // 清掉，下次启动不提示。
@@ -1104,11 +974,7 @@ object BackupManager {
         val uncovered = uncoveredSectionsForRollback(
             entry.completedSections,
             snapshotHasInputStats = snapshotParsed.inputStatsJson != null,
-            snapshotHasSkinLibrary = snapshotParsed.skinLibrary != null,
-            // D-P1：半写段（杀在皮肤文件循环中途）与“还原前确有皮肤”
-            // 这一位都进判定——否则皮肤半写段 uncovered 为空、报成功。
             inProgressSections = entry.inProgressSections,
-            skinsPresentBefore = entry.skinsPresentBefore,
         )
         // 失败还原新建的偏好文件：以当前 shared_prefs 目录为准（磁盘
         // 回滚没有内存里的 merged 目标可比）。
@@ -1116,14 +982,11 @@ object BackupManager {
         // D-P1：clearSkins 与内存回滚取同一判定（快照无皮肤段且还原前
         // 本就无皮肤 → 快照即空库，清掉失败还原新增的孤儿皮肤文件）；
         // 还原前确有皮肤时绝不清——快照里没有它们可恢复，清了即丢数据。
-        val clearSkinsForRollback =
-            snapshotParsed.skinLibrary == null && !entry.skinsPresentBefore
         return try {
             withContext(NonCancellable) {
                 applyPayload(
                     snapshotParsed,
                     forRollback = true,
-                    clearSkinsForRollback = clearSkinsForRollback,
                     rollbackExtraPrefsFiles = rollbackExtraPrefsFiles,
                 )
             }
@@ -1160,25 +1023,16 @@ object BackupManager {
     /**
      * 磁盘回滚覆盖判定（纯函数）：快照里缺段、且失败还原写过该段的，列入 uncovered。
      * Room 两库与 prefs 在快照里恒有（collectPayload 必写），永不缺段；
-     * 输入统计／皮肤库两段是条件段，缺段且被写过即 uncovered。
+     * 输入统计段是条件段，缺段且被写过即 uncovered。
      * “写过”含两类（D-P1）：journal 已记的完成段（completedSections），
-     * 与已开始未完成的段（inProgressSections）——皮肤库是多文件逐文件
-     * 写，杀在循环中途即半写（index 已换新、部分文件已换新），completed
-     * 里没有它；旧 KDoc 称“没记的段不可能半写”对皮肤库不成立，已纠正。
-     * 皮肤库另须 skinsPresentBefore 配合：快照缺段且还原前确有皮肤时
-     * 被写过即 uncovered（快照里没有，恢复不了）；还原前本就无皮肤时
-     * 不列入——磁盘回滚以 clearSkinsForRollback 清掉失败还原新增的孤儿
-     * 文件即回到还原前状态，全覆盖。skinsPresentBefore 默认为 true：
-     * 旧 journal 无此行时按“有”保守处理（不清、不谎报）。
+     * 与已开始未完成的段（inProgressSections）。
      * 其余段的原子性（输入统计单文件 tmp＋rename）
      * 使“开始过”只可能来自未来才加的段开始标记，统一按写过计亦保守。
      */
     internal fun uncoveredSectionsForRollback(
         completedSections: Set<String>,
         snapshotHasInputStats: Boolean,
-        snapshotHasSkinLibrary: Boolean,
         inProgressSections: Set<String> = emptySet(),
-        skinsPresentBefore: Boolean = true,
     ): List<String> {
         val uncovered = ArrayList<String>()
         val touched = { section: String ->
@@ -1187,44 +1041,12 @@ object BackupManager {
         if (touched(RestoreJournal.SECTION_INPUT_STATS) && !snapshotHasInputStats) {
             uncovered += RestoreJournal.SECTION_INPUT_STATS
         }
-        if (!snapshotHasSkinLibrary && skinsPresentBefore &&
-            touched(RestoreJournal.SECTION_SKIN_LIBRARY)
-        ) {
-            uncovered += RestoreJournal.SECTION_SKIN_LIBRARY
-        }
         return uncovered
     }
 
-    /**
-     * 皮肤段开始标记（D-P1，WO36）：段开始写前把该段记入 journal 的
-     * inProgressSections，同步落盘后调用方才进皮肤段。
-     *
-     * 同步性：[RestoreJournal.write] 经 [AtomicFiles] 原子写（tmp＋
-     * 文件 fsync＋rename＋目录 fsync），本函数返回即标记已落盘；
-     * kill 在写中途只留旧版或新版完整 journal，而皮肤写盘尚未开始，
-     * 故旧 journal（无此段）同样判得对——“开始标记落盘前 kill 仍走
-     * 旧路径”的残余即此闭合。
-     *
-     * 失败直接抛（调用方按还原失败处理、触发快照回滚），绝不静默吞：
-     * 标记丢了，磁盘回滚会把半写皮肤段误判为“没写过”而谎报成功。
-     * journal 读不出（损坏／丢失）时用 [fallbackEntry]（REPLACING
-     * 态的本次 journal）重建整行，不拿空 journal 覆盖已有进度。
-     */
-    internal fun markSectionStarted(
-        journalDir: File,
-        section: String,
-        fallbackEntry: RestoreJournal.Entry,
-    ) {
-        val current = RestoreJournal.read(journalDir) ?: fallbackEntry
-        RestoreJournal.write(
-            journalDir,
-            current.copy(inProgressSections = current.inProgressSections + section),
-        )
-    }
 
     private fun sectionDisplayName(section: String): String = when (section) {
         RestoreJournal.SECTION_INPUT_STATS -> backupString(R.string.backup_section_input_stats)
-        RestoreJournal.SECTION_SKIN_LIBRARY -> backupString(R.string.backup_section_skin_library)
         else -> section
     }
 
@@ -1282,14 +1104,6 @@ object BackupManager {
     }
 
     /** 解析完成、等待写入的还原数据（解析阶段零写入） */
-    /** 皮肤库备份段（null = 旧备份无此段，还原时不碰现皮肤）。 */
-    private data class SkinBackup(
-        /** index.json 文本（null = 备份时无 index 或读不到，还原时不写 index） */
-        val index: String?,
-        /** 相对路径（skins/… 或 assets/…）→ 原始字节（已在解析阶段 Base64 解码） */
-        val files: Map<String, ByteArray>,
-    )
-
     private class ParsedBackup(
         val prefs: Map<String, Map<String, Any>>,
         val clipboard: List<ClipboardRecord>,
@@ -1300,8 +1114,6 @@ object BackupManager {
         val sortings: List<CandidateSorting>,
         /** 输入统计文件内容（null = 旧备份无此字段，还原时不碰现文件） */
         val inputStatsJson: String?,
-        /** 皮肤库段（null = 旧备份无此字段，还原时不碰现皮肤） */
-        val skinLibrary: SkinBackup?,
         /** AI 七表（null = 旧备份无此段，还原不碰现 AI 表；有段即整表替换，见 applyPayload） */
         val ai: AiBackupData?,
     )
@@ -1622,40 +1434,6 @@ object BackupManager {
                     }
                     raw
                 },
-                // 皮肤库段：无字段 = 旧备份，不碰现皮肤；有字段则相对路径
-                // 逐项白名单校验、Base64 逐项解码，任一非法整包判失败
-                // （解析阶段拦截，不写脏文件）。index 只要求是文本，不
-                // 硬校验其 JSON 结构——损坏索引由下次启动对账重建，
-                // 不值得为此判整包失败；文件内容损坏则无自愈，必须拦截。
-                skinLibrary = if (!root.has("skin_library")) {
-                    null
-                } else {
-                    val section = root.getJSONObject("skin_library")
-                    val index = when (val v = section.opt("index")) {
-                        null -> null
-                        is String -> v
-                        else -> throw BackupException(backupString(R.string.backup_skin_index_not_text))
-                    }
-                    val filesJson = when (val v = section.opt("files")) {
-                        null -> JSONObject()
-                        is JSONObject -> v
-                        else -> throw BackupException(backupString(R.string.backup_skin_files_not_object))
-                    }
-                    val files = LinkedHashMap<String, ByteArray>()
-                    val keys = filesJson.keys()
-                    while (keys.hasNext()) {
-                        val rel = keys.next()
-                        if (!isValidSkinRelPath(rel)) {
-                            throw BackupException(backupString(R.string.backup_skin_illegal_path))
-                        }
-                        files[rel] = when (val v = filesJson.opt(rel)) {
-                            is String -> v.fromBase64()
-                                ?: throw BackupException(backupString(R.string.backup_skin_file_corrupt))
-                            else -> throw BackupException(backupString(R.string.backup_skin_file_corrupt))
-                        }
-                    }
-                    SkinBackup(index = index, files = files)
-                },
                 ai = ai,
             )
         } catch (e: BackupException) {
@@ -1690,9 +1468,6 @@ object BackupManager {
             aiConversationsCount = root.optJSONArray("ai_conversations")?.length() ?: 0,
             aiMessagesCount = root.optJSONArray("ai_messages")?.length() ?: 0,
             inputStatsPresent = root.has("input_stats_json"),
-            skinLibraryPresent = root.has("skin_library"),
-            skinLibraryFiles = root.optJSONObject("skin_library")
-                ?.optJSONObject("files")?.length() ?: 0,
         )
     }
 
@@ -1704,20 +1479,6 @@ object BackupManager {
         name.isNotEmpty() && name != "." && name != ".." &&
             PREFS_NAME_PATTERN.matches(name)
 
-    /**
-     * 皮肤备份文件相对路径白名单（解析阶段防穿越）：仅 skins/ 与 assets/
-     * 下的普通文件路径；段为空、含 . / ..、含反斜杠、绝对路径一律拒绝。
-     * index.json 不走此口径（它是段内独立字段，不在 files 表中）。
-     */
-    internal fun isValidSkinRelPath(path: String): Boolean {
-        if (path.isEmpty()) return false
-        if (path.startsWith("/") || path.contains('\\')) return false
-        val parts = path.split('/')
-        if (parts.size < 2) return false
-        if (parts[0] != "skins" && parts[0] != "assets") return false
-        if (parts.any { it.isEmpty() || it == "." || it == ".." }) return false
-        return true
-    }
 
     /** 严格解析单个 prefs 值：未知类型标签或类型不符直接抛错（解析阶段拦截） */
     private fun parsePrefValue(obj: JSONObject): Any = when (obj.optString("t")) {
@@ -1785,7 +1546,6 @@ object BackupManager {
             prefers = mergePrefersForRestore(current.prefers, backup.prefers),
             sortings = mergeSortingsForRestore(current.sortings, backup.sortings),
             inputStatsJson = backup.inputStatsJson,
-            skinLibrary = backup.skinLibrary,
             // AI 七表是整表替换口径（备份原样透传；缺段时
             // 为 null，下游 applyPayload 不碰现表）
             ai = backup.ai,
@@ -1900,40 +1660,18 @@ object BackupManager {
         return out
     }
 
-    /** 还原前皮肤库是否确有文件（index.json 或 skins/、assets/ 下任一文件）。 */
-    private fun hasSkinFiles(): Boolean {
-        val dir = App.skinLibraryDir
-        return dir.isDirectory && dir.walkTopDown().any { it.isFile }
-    }
-
-    /**
-     * 回滚可覆盖性（D-S1/D-M2）：快照里缺段的源，快照回放恢复不了。
-     * 皮肤库段缺失且还原前确有皮肤文件时，回滚后这些数据即永久丢失
-     * ——此时绝不能报“已恢复到还原前状态”。
-     */
-    private fun rollbackCovered(
-        snapshotHasSkins: Boolean,
-        skinsPresentBefore: Boolean,
-    ): Boolean = snapshotHasSkins || !skinsPresentBefore
-
     /**
      * 写入段：输入已在解析阶段全量校验，此处只做落盘，不再有解析错误。
      * @param forRollback 回滚回放：快照即还原前状态，分组恒整表替换、
-     *   失败还原新建的偏好文件删掉、皮肤库整表替换（或快照即空库时
-     *   清空）；正常还原走合并写回口径，不碰快照里没有的现数据。
+     *   失败还原新建的偏好文件删掉；正常还原走合并写回口径，不碰快照里没有的现数据。
      */
     /**
      * 把解析后的备份写回各存储。失败时由调用方用快照回放整体回滚。
-     * [onSectionDone]：每写完一段（剪贴板库／主库／prefs／输入统计／
-     * 皮肤库）回调一次，供还原 journal 记段进度；条件段
-     * （输入统计／皮肤库）只在真实写盘后才回调，跳过的段
+     * [onSectionDone]：每写完一段（剪贴板库／主库／prefs／输入统计）
+     * 回调一次，供还原 journal 记段进度；条件段
+     * （输入统计）只在真实写盘后才回调，跳过的段
      * 不记（见 [uncoveredSectionsForRollback] 的 KDoc）。回滚回放
      * 不传回调（journal 正在被处置，不记进度）。
-     * [onSectionStart]：段开始写前回调一次，目前只对皮肤库触发——它
-     * 是唯一多文件逐文件写的段，杀在循环中途即半写、[onSectionDone]
-     * 永远到不了；其余段是事务或单文件原子写／整目录换位写，无半写
-     * 态可记（D-P1）。回滚回放不传回调。回调抛错即中止还原本体
-     * （开始标记是强制推进，见 [markSectionStarted]，WO36）。
      */
     /**
      * 将解析后的备份内容写回各存储（主调）。返回还原时跳过的孤儿
@@ -1942,9 +1680,7 @@ object BackupManager {
     private suspend fun applyPayload(
         parsed: ParsedBackup,
         forRollback: Boolean = false,
-        clearSkinsForRollback: Boolean = false,
         rollbackExtraPrefsFiles: Set<String> = emptySet(),
-        onSectionStart: ((String) -> Unit)? = null,
         onSectionDone: ((String) -> Unit)? = null,
     ): Int {
         val db = AppDatabase.getInstance(appContext)
@@ -2089,55 +1825,6 @@ object BackupManager {
                 throw BackupException(backupString(R.string.backup_input_stats_write_failed))
             }
             onSectionDone?.invoke(RestoreJournal.SECTION_INPUT_STATS)
-        }
-
-        // —— 皮肤库文件（正常还原合并写回，非整表覆盖）：只覆盖备份中
-        // 同路径的文件，不删除备份中没有的现文件；无字段（旧备份）时
-        // 不碰现皮肤。写回后还原流程末尾重启进程，下次启动对账会把
-        // 磁盘孤儿代次重新登记、把损坏索引重建，因此此处不做索引一
-        // 致性校验。临时文件＋改名：中途失败不留半截文件。回滚模式
-        // 下整表替换（D-M2 的皮肤残留）：先清掉现库再写回快照，失败
-        // 还原中途新增的文件在此清掉；快照即空库时（clearSkinsForRollback）
-        // 只清不写。
-        parsed.skinLibrary?.let { skin ->
-            // D-P1：段开始标记必须先于任何皮肤写盘——杀在循环中途时
-            // journal 里留有该段，磁盘回滚据此报 uncovered 而非成功。
-            onSectionStart?.invoke(RestoreJournal.SECTION_SKIN_LIBRARY)
-            val rootDir = App.skinLibraryDir
-            runCatching { rootDir.mkdirs() }
-            if (forRollback) {
-                File(rootDir, "index.json").delete()
-                File(rootDir, "skins").deleteRecursively()
-                File(rootDir, "assets").deleteRecursively()
-            }
-            skin.index?.let { indexText ->
-                try {
-                    AtomicFiles.write(File(rootDir, "index.json"), indexText.toByteArray(Charsets.UTF_8))
-                } catch (e: java.io.IOException) {
-                    throw BackupException(backupString(R.string.backup_skin_index_write_failed))
-                }
-            }
-            for ((rel, bytes) in skin.files) {
-                // 解析阶段已白名单校验，此处只做落盘（与 prefs 名口径一致：
-                // 输入已在解析阶段全量校验，写入段不再有解析错误）。
-                val target = File(rootDir, rel)
-                try {
-                    AtomicFiles.write(target, bytes)
-                } catch (e: java.io.IOException) {
-                    throw BackupException(backupString(R.string.backup_skin_file_write_failed, rel))
-                }
-            }
-            onSectionDone?.invoke(RestoreJournal.SECTION_SKIN_LIBRARY)
-        }
-        // 回滚模式 + 快照无皮肤段 + 还原前本就无皮肤文件：快照即“空库”，
-        // 失败还原新增的皮肤文件必须清干净（clearSkinsForRollback）。
-        // 快照无段但还原前确有皮肤时（超限跳段）不碰皮肤，由回滚覆盖
-        // 判定如实报回滚未成功。
-        if (forRollback && clearSkinsForRollback) {
-            val rootDir = App.skinLibraryDir
-            File(rootDir, "index.json").delete()
-            File(rootDir, "skins").deleteRecursively()
-            File(rootDir, "assets").deleteRecursively()
         }
 
         return skippedAiMessages

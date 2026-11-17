@@ -2,7 +2,6 @@
 
 package com.jobeen.ime.data.manager
 
-import com.jobeen.ime.skin.runtime.SkinGeneration
 import com.jobeen.ime.ui.SingleFlightClaim
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
@@ -114,16 +113,4 @@ class Wo38MaintainMutexTest {
         assertFalse(EngineDeployState.isRunning())
     }
 
-    @Test
-    fun skinGeneration_concurrentBump_allDistinct() {
-        // 皮肤世代号：32 路并发 bump，返回值两两不同、恰为 1..32。
-        val gen = SkinGeneration()
-        val seen = Collections.synchronizedSet(HashSet<Long>())
-        runConcurrent(32) {
-            seen += gen.bump()
-        }
-        assertEquals(32, seen.size)
-        assertEquals((1L..32L).toSet(), seen)
-        assertEquals(32L, gen.current())
-    }
 }

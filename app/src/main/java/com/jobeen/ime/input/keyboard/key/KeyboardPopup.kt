@@ -7,7 +7,6 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import splitties.dimensions.dp
 
 class KeyboardPopup(private val context: Context) {
@@ -107,7 +106,7 @@ class KeyboardPopup(private val context: Context) {
         // 关闭或窗口尺寸未知时保持旧行为（只贴边夹取）。
         val overflowGap = context.dp(6)
         val rootView = anchor.rootView
-        val checkEnabled = SkinSnapshotProvider.peek()?.bubbleOverflowCheck ?: true
+        val checkEnabled = true
         val (popupX, popupY) = if (checkEnabled && rootView != null &&
             rootView.width > 0 && rootView.height > 0
         ) {

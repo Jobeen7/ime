@@ -738,7 +738,6 @@
     <string name="backup_working_create">正在生成备份…</string>
     <string name="backup_working_restore">正在还原…</string>
     <string name="backup_done">备份已保存</string>
-    <string name="backup_done_skin_skipped">备份完成，皮肤过大，已跳过</string>
     <string name="backup_restore_done">还原完成，应用即将重启</string>
     <string name="backup_restore_done_skipped">还原完成，%1$d 条 AI 消息无所属会话已跳过，应用即将重启</string>
     <string name="backup_cancel">取消</string>
@@ -1440,7 +1439,6 @@
     <string name="backup_rollback_failed">回滚失败：%1$s</string>
     <string name="backup_rollback_partial">回滚未完全成功：%1$s未能恢复（还原前快照中没有），请重新导入备份文件</string>
     <string name="backup_section_input_stats">输入统计</string>
-    <string name="backup_section_skin_library">皮肤库</string>
     <string name="backup_file_bad_format">备份文件格式不正确</string>
     <string name="backup_not_jime_file">不是 Jime 备份文件</string>
     <string name="backup_version_unsupported">备份版本不受支持</string>
@@ -1451,14 +1449,8 @@
     <string name="backup_manifest_corrupt">备份清单损坏</string>
     <string name="backup_manifest_mismatch">备份清单与内容不符，请重新备份</string>
     <string name="backup_input_stats_not_json">输入统计内容不是合法 JSON</string>
-    <string name="backup_skin_index_not_text">皮肤备份索引不是文本</string>
-    <string name="backup_skin_files_not_object">皮肤备份文件表不是对象</string>
-    <string name="backup_skin_illegal_path">皮肤备份包含非法相对路径</string>
-    <string name="backup_skin_file_corrupt">皮肤备份文件内容损坏</string>
     <string name="backup_prefs_write_failed">设置写入失败（%1$s），还原中止</string>
     <string name="backup_input_stats_write_failed">输入统计写入失败，还原中止</string>
-    <string name="backup_skin_index_write_failed">皮肤索引写入失败，还原中止</string>
-    <string name="backup_skin_file_write_failed">皮肤文件写入失败（%1$s），还原中止</string>
     <string name="backup_read_db_failed">备份读取数据库失败：%1$s</string>
     <string name="backup_db_open_failed">无法打开数据库</string>
     <string name="backup_db_attach_failed">无法关联剪贴板库</string>

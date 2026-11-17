@@ -264,27 +264,8 @@ abstract class KeyView(
      * 落定（失败帧跳过、不卡住整组，旧口径 mapNotNull 同理）。
      */
     private fun requestKeyImage(assetId: String, onBitmap: (Bitmap?) -> Unit) {
-        val generationAtRequest =
-            com.jobeen.ime.skin.runtime.SkinKeyImageStore.currentGeneration
-        com.jobeen.ime.skin.runtime.SkinKeyImageStore.peek(assetId)?.let {
-            onBitmap(it)
-            return
-        }
-        com.jobeen.ime.skin.runtime.SkinKeyImageStore.request(assetId) { bitmap ->
-            if (bitmap == null) {
-                // 无图／解码失败：以 null 落定，无视图可刷，无需切主线程。
-                onBitmap(null)
-                return@request
-            }
-            post {
-                if (com.jobeen.ime.skin.runtime.SkinKeyImageStore.currentGeneration !=
-                    generationAtRequest
-                ) {
-                    return@post
-                }
-                onBitmap(bitmap)
-            }
-        }
+        // 皮肤 v3 死壳删除后图片缓存恒空（字节源只由死 provider 安装），恒以 null 落定。
+        onBitmap(null)
     }
 
     /** 多图异步集齐（卡通帧／物理位图）：按原顺序收集已解出的位图，全部落定（成功或失败）后回调一次；代次已变时不回调。 */
@@ -420,11 +401,6 @@ abstract class KeyView(
         mode: com.jobeen.ime.skin.model.ImageContentMode?,
         onDrawable: (Drawable?) -> Unit,
     ) {
-        val cached = com.jobeen.ime.skin.runtime.SkinKeyImageStore.peek(ref.file)
-        if (cached != null) {
-            onDrawable(spriteDrawableFor(cached, ref, mode))
-            return
-        }
         requestKeyImage(ref.file) { bitmap ->
             onDrawable(bitmap?.let { spriteDrawableFor(it, ref, mode) })
         }
@@ -436,8 +412,7 @@ abstract class KeyView(
         ref: com.jobeen.ime.skin.model.SkinImageRef,
         mode: com.jobeen.ime.skin.model.ImageContentMode?,
     ): Drawable? {
-        val spriteMaps =
-            com.jobeen.ime.skin.runtime.SkinSnapshotProvider.peek()?.spriteMaps ?: emptyMap()
+        val spriteMaps: Map<String, Map<String, com.jobeen.ime.skin.model.SpriteFrame>> = emptyMap()
         val descriptor = com.jobeen.ime.skin.model.SkinImageDescriptor.File(
             normal = ref,
             highlight = null,
@@ -734,12 +709,11 @@ abstract class KeyView(
     private fun logKeyFaceOnce(variantFace: Int) {
         // 诊断模式关时直接返回：不 peek 快照、不拼签名，热路径零开销。
         if (!com.jobeen.ime.skin.diag.DiagPrefs.isDiagnosticMode(context)) return
-        val snapshot = com.jobeen.ime.skin.runtime.SkinSnapshotProvider.peek()
         val info = KeyFaceDiag.resolve(
             keyLabel = keyFaceLabel(),
-            skinId = snapshot?.ref?.skinId,
-            generation = snapshot?.ref?.generation,
-            keyStylesEmpty = snapshot?.keyStyles?.isEmpty() ?: true,
+            skinId = null,
+            generation = null,
+            keyStylesEmpty = true,
             overrideColor = backgroundOverride,
             skinFaceColor = def.skinFaceColor,
             variantDefaultColor = variantFace,
@@ -806,24 +780,8 @@ abstract class KeyView(
                     continuous = continuous,
                 )
             } else {
-                // 拟态双阴影（2026-10-29 item-1）：快照 keyShadow 开启且
-                // 装饰开关开时常态层换三层阴影形；装饰关 = 平面旧形。
-                // 按压层保持平面（压在阴影之上显隐，阴影不重复绘制）。
-                // 快照未就绪（peek 为 null）时走旧形。
-                val shadow = com.jobeen.ime.skin.runtime.SkinSnapshotProvider.peek()?.keyShadow
-                val decorationOn =
-                    com.jobeen.ime.data.manager.KeyboardManager.Keyboard.Decoration
-                        .isEnabled(context)
-                if (shadow?.enabled == true && decorationOn) {
-                    dualShadowKeyBackgroundDrawable(
-                        bkgColor, strokeColorFor(), radius, strokeWidthFor(),
-                        hMarginLeft, vMarginTop, hMarginRight, vMarginBottom,
-                        shadow.lightColor, shadow.darkColor,
-                        dp(shadow.offsetDp).roundToInt(),
-                    )
-                } else {
-                    createShapeBkg(bkgColor)
-                }
+                // 皮肤 v3 死壳删除后快照 keyShadow 恒缺席，恒走平面旧形。
+                createShapeBkg(bkgColor)
             }
         } else {
             Color.TRANSPARENT.toDrawable()
@@ -1501,7 +1459,6 @@ class TextKeyView(
         mainText.text = text
         // 分段字体（工具项 10）：图标贴回前挂段跨，图标键整体换
         // 文本时段跨随旧文本丢弃，不污染字形。
-        applyKeyFontSpans(mainText, mainText.typeface?.style ?: Typeface.NORMAL)
         // 单键图标（参考项）：大小写/全半角更新会重设文本，
         // 图标键须把字形贴回去；无图标时 apply 返回 false，无行为变化。
         MaterialSymbols.applyToTextView(mainText, context, def.skinIconSymbol)
@@ -1704,7 +1661,6 @@ class AltTextKeyView(
         if (mainText.text.toString() == text?.toString()) return
         mainText.text = text
         // 分段字体（工具项 10）：图标贴回前挂段跨。
-        applyKeyFontSpans(mainText, mainText.typeface?.style ?: Typeface.NORMAL)
         // 单键图标（参考项）：文本更新后把字形贴回去（同 TextKeyView）。
         MaterialSymbols.applyToTextView(mainText, context, def.skinIconSymbol)
         mainText.doOnPreDraw {
@@ -2139,7 +2095,6 @@ class ImageTextKeyView(
         if (mainText.text.toString() == text?.toString()) return
         mainText.text = text
         // 分段字体（工具项 10）：图标贴回前挂段跨。
-        applyKeyFontSpans(mainText, mainText.typeface?.style ?: Typeface.NORMAL)
         // 单键图标（参考项）：文本更新后把字形贴回去（同 TextKeyView）。
         MaterialSymbols.applyToTextView(mainText, context, def.skinIconSymbol)
         mainText.doOnPreDraw {

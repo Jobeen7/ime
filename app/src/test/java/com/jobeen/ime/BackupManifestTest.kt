@@ -33,8 +33,6 @@ class BackupManifestTest {
         aiConversationsCount = 6,
         aiMessagesCount = 30,
         inputStatsPresent = true,
-        skinLibraryPresent = true,
-        skinLibraryFiles = 42,
     )
 
     private fun manifest(counts: Map<String, Any> = fullCounts()) =
@@ -89,14 +87,10 @@ class BackupManifestTest {
     fun optionalSectionsMismatch_reported() {
         val actual = fullCounts() + mapOf(
             "inputStatsPresent" to false,
-            "skinLibraryPresent" to false,
-            "skinLibraryFiles" to 0,
         )
         val mismatches = manifest().validate(actual)
-        assertEquals(3, mismatches.size)
+        assertEquals(1, mismatches.size)
         assertTrue(mismatches.any { it.contains("inputStats") })
-        assertTrue(mismatches.any { it.contains("skinLibrary:") })
-        assertTrue(mismatches.any { it.contains("skinLibraryFiles") })
     }
 
     @Test
@@ -116,10 +110,10 @@ class BackupManifestTest {
     }
 
     @Test
-    fun legacy10KeyManifest_validatesAgainst18KeyActual() {
-        // 旧清单只有 10 键：validate 跳过清单里没有的新键，旧备份
-        // 不因新键缺失被判不符（L-32 兼容性）。旧清单形状直接手写
-        // （manifestCounts 恒出 18 键，造不出旧形状）。
+    fun legacy10KeyManifest_validatesAgainst12KeyActual() {
+        // 旧清单只有 10 键（含已删的皮肤键）：validate 只核对清单里
+        // 有的键，旧备份不因新键缺失被判不符（L-32 兼容性）。旧清单
+        // 形状直接手写（manifestCounts 恒出 12 键，造不出旧形状）。
         val legacy = mapOf<String, Any>(
             "prefsFiles" to 12,
             "prefsEntries" to 345,
@@ -147,8 +141,6 @@ class BackupManifestTest {
             prefersCount = 0,
             sortingsCount = 0,
             inputStatsPresent = false,
-            skinLibraryPresent = false,
-            skinLibraryFiles = 0,
         )
         assertTrue(manifest(empty).validate(empty).isEmpty())
     }

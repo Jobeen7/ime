@@ -20,10 +20,7 @@ import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.skin.model.KeyboardTypes
-import com.jobeen.ime.skin.runtime.CustomLayoutRuntime
-import com.jobeen.ime.skin.runtime.SkinColorMode
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
-import com.jobeen.ime.skin.store.SkinTypePrefs
+import com.jobeen.ime.skin.runtime.LayoutTypeRouting
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
@@ -132,14 +129,9 @@ object KeyboardStateManager {
      * 建好后 onAttach 首挂分支会重走本函数。
      */
     fun switchKeyboardType(type: String) {
-        val landscape = appContext.resources.configuration.orientation ==
-            android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        val target = CustomLayoutRuntime.resolveTypeTarget(
-            SkinSnapshotProvider.current(appContext),
+        val target = LayoutTypeRouting.resolveTypeTarget(
             type,
             currentSchema?.layout ?: defaultKeyboardName,
-            landscape,
-            SkinColorMode.isDark(appContext),
         )
         switchToResolvedWithType(target, type)
     }
@@ -199,9 +191,6 @@ object KeyboardStateManager {
 
     fun onAttach() {
         if (schemas.isEmpty()) refreshSchemas()
-        val snapshot = SkinSnapshotProvider.current(appContext)
-        val landscape = appContext.resources.configuration.orientation ==
-            android.content.res.Configuration.ORIENTATION_LANDSCAPE
         if (currentKeyboardName == null) {
             // 首挂：先确立类型再按类型切（旧路径首挂按方案布局名
             // 切；类型路径在无表皮肤上经 pinyin 旧绑定回落到同一
@@ -209,10 +198,8 @@ object KeyboardStateManager {
             // 皮肤存过的恢复 → 按输入模式初始（中文 pinyin、英文
             // alphabetic）。factory 未注入时 switchKeyboardType
             // 不提交类型，View 建好后再次 onAttach 会重走本分支。
-            val skinId = snapshot?.ref?.skinId
-            val stored = skinId?.let {
-                runCatching { SkinTypePrefs.getType(appContext, it) }.getOrNull()
-            }
+            // 皮肤 v3 死壳删除后快照恒为 null，无存过的皮肤隔离类型。
+            val stored: String? = null
             // 偏好与 Rime ascii_mode 极性相反（见 asciiModeFromPreference）：
             // 偏好 true＝中文，Rime ascii_mode true＝英文；出错默认中文。
             val asciiMode = runCatching {
@@ -229,13 +216,13 @@ object KeyboardStateManager {
             // 方案布局未知时 typeForLayoutName 为空，对账不动原值。
             val type = reconcileOpenType(
                 currentSchema?.layout?.let {
-                    CustomLayoutRuntime.typeForLayoutName(snapshot, it, landscape)
+                    LayoutTypeRouting.typeForLayoutName(it)
                 },
                 rawType,
                 asciiMode,
             ) ?: rawType
             typeState.establish(type)
-            lastTypeSkinId = skinId
+            lastTypeSkinId = null
             // 首挂确立亦写持久化：switchKeyboardType 内仅在类型
             // 实际变化时写盘，而 establish 后的切换是同值切换、
             // 不写盘；此处补写，使进程重启后仍恢复本皮肤类型。
@@ -248,28 +235,6 @@ object KeyboardStateManager {
         // 存过的类型恢复、无存过类型时回初始类型；皮肤未变时
         // 不动类型，走下方的重挂决策。皮肤 id 为空（无皮肤生
         // 效）时亦不动类型（类型解析本身已按无表回退）。
-        val skinId = snapshot?.ref?.skinId
-        if (skinId != null && skinId != lastTypeSkinId) {
-            val stored = runCatching {
-                SkinTypePrefs.getType(appContext, skinId)
-            }.getOrNull()
-            if (stored != null && stored != typeState.current) {
-                switchKeyboardType(stored)
-                return
-            }
-            if (stored == null) {
-                // 偏好与 Rime ascii_mode 极性相反（见 asciiModeFromPreference）。
-                val asciiMode = runCatching {
-                    asciiModeFromPreference(CandidateManager.isAsciiModeEnabled(appContext))
-                }.getOrDefault(false)
-                val initial = typeState.initialType(asciiMode)
-                if (initial != typeState.current) {
-                    switchKeyboardType(initial)
-                    return
-                }
-            }
-            lastTypeSkinId = skinId
-        }
         // 重挂时若当前方案布局已变（键盘收起期间切了方案），不直接
         // 复现旧键盘实例，改走切换同步布局与空格键文案。
         // round-1 空白修复的类型化推广（先解析再比较原则不变）：
@@ -284,7 +249,7 @@ object KeyboardStateManager {
         // 自定义类型与未知方案布局不动；切换后写盘，下次打开即正。
         // 偏好与 Rime ascii_mode 极性相反（见 asciiModeFromPreference）。
         val reconciledType = reconcileOpenType(
-            CustomLayoutRuntime.typeForLayoutName(snapshot, targetLayout, landscape),
+            LayoutTypeRouting.typeForLayoutName(targetLayout),
             typeState.current,
             runCatching {
                 asciiModeFromPreference(CandidateManager.isAsciiModeEnabled(appContext))
@@ -303,8 +268,7 @@ object KeyboardStateManager {
                 ReattachAction.Reshow
             } else {
                 decideReattach(
-                    snapshot, currentKeyboardName!!, typeState.current, targetLayout, landscape,
-                    SkinColorMode.isDark(appContext),
+                    currentKeyboardName!!, typeState.current, targetLayout,
                 )
             }
         when (val action = reattachAction) {
@@ -507,13 +471,9 @@ object KeyboardStateManager {
      * 自动往返（竖屏回内置布局，横屏进横屏专属布局）。
      */
     fun switchTo(name: String) {
-        val landscape = appContext.resources.configuration.orientation ==
-            android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        val target = CustomLayoutRuntime.resolveSwitchTarget(
-            SkinSnapshotProvider.current(appContext),
+        val target = LayoutTypeRouting.resolveSwitchTarget(
             name,
             currentSchema?.layout ?: defaultKeyboardName,
-            landscape,
         )
         switchToResolved(target)
     }
@@ -571,12 +531,10 @@ object KeyboardStateManager {
         updateReturnKeyIfNeeded()
     }
 
-    /** 类型持久化（按皮肤隔离，见 SkinTypePrefs）：无快照时只留内存态，不写盘。 */
+    /** 类型持久化：皮肤 v3 死壳删除后快照恒为 null，只留内存态，不写盘。 */
     private fun persistType(type: String) {
         if (!shouldPersistType(type)) return
-        val skinId = SkinSnapshotProvider.peek()?.ref?.skinId ?: return
-        lastTypeSkinId = skinId
-        runCatching { SkinTypePrefs.setType(appContext, skinId, type) }
+        return
     }
 
     private fun attachNew(name: String) {
@@ -678,10 +636,7 @@ object KeyboardStateManager {
             return
         }
         val first = schemas.firstOrNull() ?: return
-        val snapshot = SkinSnapshotProvider.current(appContext)
-        val landscape = appContext.resources.configuration.orientation ==
-            android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        val schemeType = CustomLayoutRuntime.typeForLayoutName(snapshot, first.layout, landscape)
+        val schemeType = LayoutTypeRouting.typeForLayoutName(first.layout)
         when (val decision = decideWindowReset(currentSchema?.id, first.id, typeState.current, schemeType)) {
             WindowReset.None -> return
             is WindowReset.Apply -> {
@@ -1088,12 +1043,9 @@ internal sealed interface ReattachAction {
  * 因解析口径不同而相撞（旧 bug 正是口径不同所致）。
  */
 internal fun decideReattach(
-    snapshot: com.jobeen.ime.skin.model.SkinSnapshot?,
     currentName: String,
     currentType: String?,
     schemaLayout: String,
-    landscape: Boolean,
-    isDark: Boolean = false,
 ): ReattachAction {
     return if (currentType != null) {
         // 非主类型不得在重挂时翻回（与首挂只认主类型同原则）：
@@ -1105,13 +1057,13 @@ internal fun decideReattach(
         if (currentType !in KeyboardTypes.MAIN) {
             return ReattachAction.Reshow
         }
-        val target = CustomLayoutRuntime.resolveTypeTarget(
-            snapshot, currentType, schemaLayout, landscape, isDark,
+        val target = LayoutTypeRouting.resolveTypeTarget(
+            currentType, schemaLayout,
         )
         if (target == currentName) ReattachAction.Reshow else ReattachAction.SwitchType(currentType)
     } else {
-        val target = CustomLayoutRuntime.resolveSwitchTarget(
-            snapshot, schemaLayout, schemaLayout, landscape,
+        val target = LayoutTypeRouting.resolveSwitchTarget(
+            schemaLayout, schemaLayout,
         )
         if (target == currentName) ReattachAction.Reshow else ReattachAction.SwitchName(schemaLayout)
     }

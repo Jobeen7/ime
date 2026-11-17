@@ -7,7 +7,6 @@ import com.jobeen.ime.input.keyboard.impl.T15Keyboard
 import com.jobeen.ime.input.keyboard.impl.T9Keyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
-import com.jobeen.ime.skin.layout.LayoutResolver
 import com.jobeen.ime.skin.store.SkinGenRef
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -32,7 +31,6 @@ import org.junit.Test
  */
 class KeyboardGeometryFontMatrixTest {
 
-    private val fallbacks = GeometryFallbacks(12f, 6f, 5f, 10f)
     private val ref = SkinGenRef("skin-matrix", "h".repeat(64), 1)
 
     private val defaultScheme = KeyboardColors.ColorScheme(
@@ -59,17 +57,7 @@ class KeyboardGeometryFontMatrixTest {
         "\"geometry\": {\"keyRadiusDp\": 14, \"keyHGapDp\": 6, \"keyVGapDp\": 6, \"heightPercent\": 30}, " +
         "\"fontFamily\": \"serif\"}"
 
-    private fun validate(json: String): SkinValidator.Result.Valid {
-        val tree = Json.parseToJsonElement(json) as JsonObject
-        val result = SkinValidator.validate(tree, 157, fallbacks, assetKind = { null })
-        assertTrue("expected Valid, got $result", result is SkinValidator.Result.Valid)
-        return result as SkinValidator.Result.Valid
-    }
 
-    private fun buildSnapshot() = SkinSnapshotBuilder.build(
-        validate(matrixSkinJson).skin, ref, defaultScheme, MemoryTier.NORMAL,
-        { "a".repeat(64) }, 1000, 400,
-    )
 
     /** BaseKeyboard.createKeyView 处理的分支（sealed 穷尽由编译期保证）。 */
     private fun isFactoryHandled(appearance: KeyDef.Appearance): Boolean =
@@ -78,29 +66,6 @@ class KeyboardGeometryFontMatrixTest {
             appearance is KeyDef.Appearance.Image ||
             appearance is KeyDef.Appearance.SidePannel
 
-    @Test
-    fun sharedSkinLeg_geometryAndFontReachSnapshotAndScheme() {
-        val skin = validate(matrixSkinJson).skin
-        assertEquals(
-            setOf(
-                KeyboardGeometryField.KEY_RADIUS, KeyboardGeometryField.KEY_H_GAP,
-                KeyboardGeometryField.KEY_V_GAP, KeyboardGeometryField.HEIGHT_PERCENT,
-            ),
-            skin.keyboardGeometry.presence,
-        )
-        assertEquals(14f, skin.keyboardGeometry.values.getValue(KeyboardGeometryField.KEY_RADIUS))
-        assertEquals(6f, skin.keyboardGeometry.values.getValue(KeyboardGeometryField.KEY_H_GAP))
-        assertEquals(6f, skin.keyboardGeometry.values.getValue(KeyboardGeometryField.KEY_V_GAP))
-        assertEquals(30f, skin.keyboardGeometry.values.getValue(KeyboardGeometryField.HEIGHT_PERCENT))
-        assertEquals("serif", skin.fontFamily)
-        val snapshot = buildSnapshot()
-        assertEquals("serif", snapshot.fontFamily)
-        assertEquals(30f, snapshot.keyboardGeometry.values.getValue(KeyboardGeometryField.HEIGHT_PERCENT))
-        // 几何进 ColorScheme：KeyView 构造时即取这三值，与布局无关。
-        assertEquals(14f, snapshot.colorScheme.cornerRadius)
-        assertEquals(6f, snapshot.colorScheme.keyHMargin)
-        assertEquals(6f, snapshot.colorScheme.keyVMargin)
-    }
 
     @Test
     fun builtinLayouts_allDefsRouteThroughSharedFactory() {
@@ -151,64 +116,5 @@ class KeyboardGeometryFontMatrixTest {
         }
     }
 
-    @Test
-    fun customLayouts_resolveWithNamespacedIdsAndFactoryDefs() {
-        val cases = listOf("matrix-11" to 11, "matrix-14" to 14, "matrix-17" to 17, "matrix-18" to 18)
-        for ((layoutId, keyCount) in cases) {
-            val outcome = LayoutResolver.resolve(
-                customLayoutTree(layoutId, keyCount), layoutId, 1, emptyMap(),
-            )
-            assertTrue("$layoutId must resolve, got $outcome", outcome is LayoutResolver.Outcome.Resolved)
-            val resolved = (outcome as LayoutResolver.Outcome.Resolved).resolved
-            assertEquals(layoutId, resolved.layoutId)
-            val baseDefs = resolved.baseLayout.flatten().filter { it.id != null }
-            val landscapeDefs = resolved.baseLayoutLandscape.flatten().filter { it.id != null }
-            // 实键数（2026-10-29 item-1 D4：短行补的空白键 id 为 null，不计入）
-            assertEquals("$layoutId keyCount", keyCount, baseDefs.size)
-            assertEquals("$layoutId landscape keyCount", keyCount, landscapeDefs.size)
-            // 布局 id 命名空间坐标键 ID：{layoutId}:K-<stableId>。
-            assertEquals(
-                (1..keyCount).map { "$layoutId:K-$it" },
-                baseDefs.map { it.id },
-            )
-            for (def in baseDefs + landscapeDefs) {
-                assertTrue(
-                    "$layoutId def must be factory-handled, got ${def.appearance::class.simpleName}",
-                    isFactoryHandled(def.appearance),
-                )
-            }
-        }
-    }
 
-    @Test
-    fun matrixEntries_allPairWithSameSkinSnapshot() {
-        // 8 个矩阵项 × 同一皮肤快照：布局腿 + 皮肤腿在同一测试内配对断言，
-        // 覆盖表中的每一格都对应这里的一次断言（像素渲染除外，见类注释）。
-        val snapshot = buildSnapshot()
-        assertEquals("serif", snapshot.fontFamily)
-        assertEquals(14f, snapshot.colorScheme.cornerRadius)
-        val builtinCounts = mapOf(
-            "T9" to T9Keyboard.buildLayout(Variant.Normal).flatten().size,
-            "Qwerty" to QwertyKeyboard.buildLayout(Variant.Normal).flatten().size,
-            "T15" to T15Keyboard.buildLayout(Variant.Normal).flatten().size,
-            "Number" to NumberKeyboard.buildLayout(Variant.Normal).flatten().size,
-        )
-        for ((name, count) in builtinCounts) {
-            assertTrue("$name must build keys", count > 0)
-        }
-        for ((layoutId, keyCount) in listOf(
-            "matrix-11" to 11, "matrix-14" to 14, "matrix-17" to 17, "matrix-18" to 18,
-        )) {
-            val outcome = LayoutResolver.resolve(
-                customLayoutTree(layoutId, keyCount), layoutId, 1, emptyMap(),
-            )
-            assertTrue("$layoutId must resolve", outcome is LayoutResolver.Outcome.Resolved)
-            // 实键数（2026-10-29 item-1 D4：短行补的空白键 id 为 null，不计入）
-            assertEquals(
-                keyCount,
-                (outcome as LayoutResolver.Outcome.Resolved).resolved.baseLayout.flatten()
-                    .count { it.id != null },
-            )
-        }
-    }
 }

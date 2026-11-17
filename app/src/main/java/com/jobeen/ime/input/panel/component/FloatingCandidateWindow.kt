@@ -16,7 +16,6 @@ import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.panel.panelColorScheme
 import com.jobeen.ime.skin.model.FloatingCandidateStyle
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 /**
  * 浮动候选窗（WO52 1.4）：PopupWindow＋控制器无关的 Android 壳。
@@ -141,8 +140,7 @@ class FloatingCandidateWindow(
     val isShowing: Boolean get() = popupWindow?.isShowing == true
 
     /** 当前皮肤浮动窗样式（快照缺失时取缺省）。 */
-    fun currentStyle(): FloatingCandidateStyle =
-        SkinSnapshotProvider.peek()?.floatingCandidate ?: FloatingCandidateStyle()
+    fun currentStyle(): FloatingCandidateStyle = FloatingCandidateStyle()
 
     /** 刷新容器背景（深浅＋圆角，皮肤键）＋当前皮肤配色。 */
     fun refreshStyle() {

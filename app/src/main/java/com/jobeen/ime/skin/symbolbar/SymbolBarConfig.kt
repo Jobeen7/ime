@@ -2,7 +2,7 @@ package com.jobeen.ime.skin.symbolbar
 
 import android.content.Context
 import com.jobeen.ime.skin.icon.MaterialSymbols
-import com.jobeen.ime.skin.model.IconSlot
+import com.jobeen.ime.skin.icon.IconAlias
 import com.jobeen.ime.skin.model.SkinAction
 import com.jobeen.ime.skin.model.WhitelistAction
 import java.io.File
@@ -48,7 +48,7 @@ data class SymbolBarPosition(
     fun display(): Pair<String, Boolean> {
         val glyph = systemImageName
             ?.takeIf { it.isNotBlank() }
-            ?.let { IconSlot.SfMaterialTable[it] }
+            ?.let { IconAlias.SfMaterialTable[it] }
             ?.let { MaterialSymbols.glyphFor(it) }
         if (glyph != null) return glyph to true
         if (text != null) return text to false

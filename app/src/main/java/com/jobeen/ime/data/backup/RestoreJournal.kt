@@ -44,7 +44,6 @@ internal object RestoreJournal {
     const val SECTION_APPDB = "appdb"
     const val SECTION_PREFS = "prefs"
     const val SECTION_INPUT_STATS = "input_stats"
-    const val SECTION_SKIN_LIBRARY = "skin_library"
 
     enum class Phase {
         STAGING,
@@ -90,13 +89,6 @@ internal object RestoreJournal {
          * onSectionDone）。旧 journal 无此行时读作空集。
          */
         val inProgressSections: Set<String> = emptySet(),
-        /**
-         * 还原前皮肤库是否确有文件（D-P1）：磁盘回滚据此区分“快照缺段是
-         * 还原前本就无皮肤（可清零恢复，全覆盖）”与“还原前有皮肤但快照
-         * 没装下（清不掉，须报 uncovered）”。旧 journal 无此行时读作
-         * true——保守口径：按“有”处理，不清、不谎报全覆盖。
-         */
-        val skinsPresentBefore: Boolean = true,
     )
 
     fun dir(filesDir: File): File = File(filesDir, JOURNAL_DIR_NAME)
@@ -116,7 +108,6 @@ internal object RestoreJournal {
             appendLine("snapshotFile=${entry.snapshotFile}")
             appendLine("completedSections=${entry.completedSections.sorted().joinToString(",")}")
             appendLine("inProgressSections=${entry.inProgressSections.sorted().joinToString(",")}")
-            appendLine("skinsPresentBefore=${entry.skinsPresentBefore}")
         }
         AtomicFiles.write(journalFile(dir), content)
     }
@@ -135,7 +126,7 @@ internal object RestoreJournal {
      * journal”与“journal 损坏”——损坏按疑似中断还原处理（保留快照、
      * 走横幅），不得按无 journal 清扫快照（D-L1）。token 与 phase 是
      * 必需项，其余缺失即取缺省（startedAt=0、指纹空、快照空、完成段空、
-     * 进行段空、还原前有皮肤按 true 保守取）——缺省的 journal 仍可用
+     * 进行段空）——缺省的 journal 仍可用
      * 于提示，只是回滚入口不可用。
      */
     fun read(dir: File): Entry? {
@@ -161,12 +152,6 @@ internal object RestoreJournal {
                 .split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
             inProgressSections = values["inProgressSections"].orEmpty()
                 .split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
-            // 未写／写坏时一律按 true 保守取：按 false 会让磁盘回滚清掉
-            // 还原前皮肤，而快照里并没有它们可恢复。
-            skinsPresentBefore = when (values["skinsPresentBefore"]) {
-                "false" -> false
-                else -> true
-            },
         )
     }
 

@@ -10,8 +10,7 @@ import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.panel.component.PinYinKeyDefCache
 import com.jobeen.ime.skin.layout.LayoutModel
-import com.jobeen.ime.skin.runtime.KeyOverrideApplier
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
+import com.jobeen.ime.skin.runtime.KeyActionMapping
 import com.jobeen.ime.skin.symbol.SharedPrefsUserSymbolBarStore
 import com.jobeen.ime.skin.symbol.UserSymbolBarOps
 import com.jobeen.ime.skin.symbol.UserSymbolBarStore
@@ -117,9 +116,7 @@ class GenericLayoutKeyboard(
     /** 数字左竖栏项：皮肤 numericSymbols 为准，未声明时按源包 13 项，＋末尾“自定义”入口。 */
     private fun numericPanelItems(): List<KeyDef> =
         SymbolKeyboard.buildSidePanelItemDefs(
-            SkinSnapshotProvider.peek()?.numericSymbols?.items?.map { it.commitText }
-                ?.takeIf { it.isNotEmpty() }
-                ?: KeyOverrideApplier.NUMERIC_SYMBOLS_COLLECTION_DEFAULT,
+            KeyActionMapping.NUMERIC_SYMBOLS_COLLECTION_DEFAULT,
         )
 
     companion object {
@@ -129,8 +126,8 @@ class GenericLayoutKeyboard(
                 for (def in row) {
                     if (def.appearance !is KeyDef.Appearance.SidePannel) continue
                     when (LayoutModel.parseLogicalId(def.id ?: "")?.second) {
-                        KeyOverrideApplier.T9_SYMBOLS_COLLECTION_STABLE_ID -> return PanelMode.T9
-                        KeyOverrideApplier.NUMERIC_SYMBOLS_COLLECTION_STABLE_ID ->
+                        KeyActionMapping.T9_SYMBOLS_COLLECTION_STABLE_ID -> return PanelMode.T9
+                        KeyActionMapping.NUMERIC_SYMBOLS_COLLECTION_STABLE_ID ->
                             return PanelMode.NUMERIC
                     }
                 }

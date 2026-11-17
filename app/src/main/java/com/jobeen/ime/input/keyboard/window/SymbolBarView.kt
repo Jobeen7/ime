@@ -23,9 +23,8 @@ import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.skin.model.SkinAction
-import com.jobeen.ime.skin.runtime.KeyOverrideApplier
+import com.jobeen.ime.skin.runtime.KeyActionMapping
 import com.jobeen.ime.skin.runtime.SkinColorMode
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbolbar.SymbolBarCell
 import com.jobeen.ime.skin.symbolbar.SymbolBarConfig
 import com.jobeen.ime.skin.symbolbar.SymbolBarKey
@@ -74,9 +73,7 @@ class SymbolBarView(
         setBackgroundColor(barBg)
         // S11：横向符号 RTL 时整行镜像（关闭钮／类型钮随行反转）。
         val barCells = symbolBarCells(config.closeButtonOnLeft)
-        val orderedCells =
-            if (SkinSnapshotProvider.peek()?.horizontalSymbolsRtl == true) barCells.reversed()
-            else barCells
+        val orderedCells = barCells
         for (cell in orderedCells) {
             val view = when (cell) {
                 SymbolBarCell.Close -> buildCloseCell()
@@ -286,11 +283,11 @@ class SymbolBarView(
                         dismissBubble()
                         if (selected >= 0) {
                             bubbleOrdered.getOrNull(selected)?.action?.let {
-                                onAction(KeyOverrideApplier.toRuntime(it))
+                                onAction(KeyActionMapping.toRuntime(it))
                             }
                         }
                     } else if (pressActive) {
-                        key.center.action?.let { onAction(KeyOverrideApplier.toRuntime(it)) }
+                        key.center.action?.let { onAction(KeyActionMapping.toRuntime(it)) }
                     }
                     pressActive = false
                     setPressedVisual(false)

@@ -41,4 +41,32 @@ object IconAlias {
         val target = ALIASES[normalized] ?: return normalized
         return if (target in knownNames) target else normalized
     }
+
+    /**
+     * SF Symbols → Material Symbols 起始表（转换器数据表，
+     * 亦供运行期 android 缺失时回落）。只收已确认的对应关系；
+     * 未在表中的名一律不映射（不猜测、不回退到近似名）。
+     * 填充变体（.fill）与无填充同名映射；方向键以 Material
+     * 的键盘箭头名对应。
+     */
+    val SfMaterialTable: Map<String, String> = mapOf(
+        "delete.left" to "backspace",
+        "delete.left.fill" to "backspace",
+        "keyboard" to "keyboard",
+        "mic" to "mic",
+        "mic.fill" to "mic",
+        "globe" to "language",
+        "return" to "keyboard_return",
+        "checkmark" to "check",
+        "xmark" to "close",
+        "gearshape" to "settings",
+        "list.bullet" to "list",
+        "magnifyingglass" to "search",
+        "trash" to "delete",
+        "chevron.up" to "keyboard_arrow_up",
+        "chevron.down" to "keyboard_arrow_down",
+        "chevron.left" to "chevron_left",
+        "chevron.right" to "chevron_right",
+        "square.and.arrow.up" to "share",
+    )
 }

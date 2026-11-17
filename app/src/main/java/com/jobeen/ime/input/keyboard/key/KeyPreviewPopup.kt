@@ -11,7 +11,6 @@ import android.widget.PopupWindow
 import android.widget.TextView
 import com.jobeen.ime.data.keyboard.theme.FontRole
 import com.jobeen.ime.data.keyboard.theme.GlobalFonts
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import splitties.dimensions.dp
 
 class KeyPreviewPopup(private val context: Context) {
@@ -65,8 +64,7 @@ class KeyPreviewPopup(private val context: Context) {
         // 保持旧行为（不夹取，原样显示）。
         val gap = context.dp(6)
         val rootView = anchor.rootView
-        val checkEnabled = checkOverflow
-            ?: SkinSnapshotProvider.peek()?.bubbleOverflowCheck ?: true
+        val checkEnabled = checkOverflow ?: true
         val (popupX, popupY) = if (checkEnabled && rootView != null &&
             rootView.width > 0 && rootView.height > 0
         ) {

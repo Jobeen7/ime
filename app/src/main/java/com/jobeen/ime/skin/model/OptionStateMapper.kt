@@ -2,8 +2,6 @@
 
 package com.jobeen.ime.skin.model
 
-import com.jobeen.ime.skin.notify.ConditionCurrent
-import com.jobeen.ime.skin.notify.ConditionStyleParser
 
 /**
  * 选项态映射（接线轮 R2，纯函数）：
@@ -16,26 +14,6 @@ import com.jobeen.ime.skin.notify.ConditionStyleParser
  * 选项标签映射见 R3（同一文件的后续扩展）。
  */
 object OptionStateMapper {
-
-    /**
-     * 条件现值映射。
-     *
-     * @param conditionOptionNames 条件表里声明的 rime 选项名
-     *   （已去前缀）；values 之外的名字不写入。
-     */
-    fun mapConditionCurrent(
-        conditionOptionNames: List<String>,
-        values: Map<String, Boolean>,
-        symbolKeyboardActive: Boolean,
-    ): Map<String, ConditionCurrent> = buildMap {
-        for (name in conditionOptionNames) {
-            values[name]?.let { put(ConditionStyleParser.RIME_OPTION_PREFIX + name, ConditionCurrent.Bool(it)) }
-        }
-        put(
-            ConditionStyleParser.SYMBOL_LOCK_KEY,
-            ConditionCurrent.Bool(symbolKeyboardActive),
-        )
-    }
 
     /**
      * 选项标签映射（R3）：每开关各算全称与缩写两项，有值才入表；

@@ -10,11 +10,7 @@ import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
-import com.jobeen.ime.skin.layout.BuiltinLayoutApplier
-import com.jobeen.ime.skin.runtime.KeyOverrideApplier
-import com.jobeen.ime.skin.runtime.PlaceholderValues
 import com.jobeen.ime.skin.runtime.SkinColorMode
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 /**
  * 悬浮面板（工具类型 floatPanel 的无绑定回退视图）：
@@ -38,24 +34,7 @@ class FloatPanelKeyboard(
         /** 生效布局：与 LayoutSwitchKeyboard 同口径（覆写装配）。 */
         fun effectiveLayout(context: Context): List<List<KeyDef>> {
             val raw = buildLayout()
-            val snapshot = SkinSnapshotProvider.current(context) ?: return raw
-            val arranged = snapshot.builtinLayouts[NAME]?.let { override ->
-                BuiltinLayoutApplier.apply(
-                    raw, override,
-                    landscape = context.resources.configuration.orientation ==
-                        Configuration.ORIENTATION_LANDSCAPE,
-                    placeholders = PlaceholderValues.current(context),
-                )
-            } ?: raw
-            return KeyOverrideApplier.apply(
-                NAME, arranged, snapshot, PlaceholderValues.current(context),
-                scheme = snapshot.effectiveColorScheme(SkinColorMode.isDark(context)),
-                notifications = com.jobeen.ime.skin.runtime.SkinRuntimeState.latchedNotifications(),
-                gatedStyleNames = com.jobeen.ime.skin.runtime.SkinRuntimeState.gatedStyleNames(),
-                activeStyleNames = com.jobeen.ime.skin.runtime.SkinRuntimeState.activeStyleNames(),
-                mnemonicEnabled = KeyboardManager.Keyboard.Mnemonic.isEnabled(context),
-                decorationEnabled = KeyboardManager.Keyboard.Decoration.isEnabled(context),
-            )
+            return raw
         }
 
         /** 出厂行（纯函数）：单行四钮，行宽和恰为 1.0。 */

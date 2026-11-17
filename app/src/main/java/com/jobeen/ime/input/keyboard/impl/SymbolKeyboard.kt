@@ -32,10 +32,8 @@ import com.jobeen.ime.input.keyboard.key.TextKeyView
 import com.jobeen.ime.input.keyboard.key.resolveSwipeReleaseForward
 import com.jobeen.ime.input.keyboard.key.shouldInterceptHorizontalSwipe
 import com.jobeen.ime.skin.model.KeyboardTypes
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BarSide
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
-import com.jobeen.ime.skin.symbol.HorizontalSymbolStripState
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.skin.symbol.SharedPrefsSymbolBarTypeStore
@@ -183,9 +181,6 @@ class SymbolKeyboard(
     private val sideReturnBtn =
         TextKeyView(context, colors, returnKeyDef.appearance as KeyDef.Appearance.Text)
 
-    // 接线轮 R5：皮肤符号栏（快照有 symbolBar 规格时才建条；
-    // 无规格时本键盘与旧行为完全一致；栏高 48dp）。
-    private val barSpec = SkinSnapshotProvider.peek()?.symbolBar
     private val barState = SymbolBarState(SharedPrefsSymbolBarTypeStore(context))
     private var barView: LinearLayout? = null
     private var barSwitchBtn: TextView? = null
@@ -209,41 +204,9 @@ class SymbolKeyboard(
      * 空集不附加（不占侧栏位）。
      */
     private val twoStageSymbols: SubClassifiedSymbols =
-        SkinSnapshotProvider.peek()?.let { snap ->
-            val base = snap.subClassifiedSymbols
-                ?: SubClassifiedSymbols.fromSingleLevel(categorys)
-            val extra = buildList {
-                snap.numericSymbols?.takeIf { it.items.isNotEmpty() }?.let { collection ->
-                    add(
-                        SymbolParentCategory(
-                            label = NUMERIC_PARENT_LABEL,
-                            subCategories = listOf(
-                                SymbolSubCategory("全部", collection.items),
-                            ),
-                        ),
-                    )
-                }
-                snap.t9Symbols?.let { spec ->
-                    add(
-                        SymbolParentCategory(
-                            label = T9_PARENT_LABEL,
-                            subCategories = listOf(
-                                SymbolSubCategory("全部", spec.dataSource),
-                            ),
-                        ),
-                    )
-                }
-            }
-            if (extra.isEmpty()) base else base.copy(parents = base.parents + extra)
-        } ?: SubClassifiedSymbols.fromSingleLevel(categorys)
+        SubClassifiedSymbols.fromSingleLevel(categorys)
     private val boardState = SubClassifiedBoardState(twoStageSymbols)
 
-    /** 横向符号条（P1-7）：horizontalSymbols 优先于 t9HorizontalSymbols；无则无条。 */
-    private val horizontalStripSpec = SkinSnapshotProvider.peek()?.let { snap ->
-        snap.horizontalSymbols ?: snap.t9HorizontalSymbols
-    }
-    private val horizontalStripState =
-        horizontalStripSpec?.let { HorizontalSymbolStripState(it) }
 
     /** 横向符号条（48dp 横条，子条之下、网格之上；无规格时隐藏）。 */
     private val hStripView: LinearLayout = LinearLayout(context).apply {
@@ -307,122 +270,6 @@ class SymbolKeyboard(
         rebuildSubStrip()
         rebuildHorizontalStrip()
 
-        // 接线轮 R5：符号栏条（皮肤规格驱动；关闭钮恒贴外缘，
-        // 切换钮居内；栏键点按提交、长按出角标格）。
-        if (barSpec != null) {
-            val bar = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setBackgroundColor(colors.specialKeyBackground)
-                visibility = View.GONE
-            }
-            fun pressedBackground(): StateListDrawable =
-                StateListDrawable().apply {
-                    addState(
-                        intArrayOf(android.R.attr.state_pressed),
-                        ColorDrawable(colors.specialKeyPressed),
-                    )
-                    addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
-                }
-            fun cell(text: String): TextView = TextView(context).apply {
-                gravity = Gravity.CENTER
-                setTextSize(15f)
-                setTextColor(colors.specialKeyText)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                this.text = text
-                background = pressedBackground()
-            }
-            fun cellParams() =
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
-            val closeBtn = cell("✕").apply {
-                setOnClickListener {
-                    barState.close()
-                    bar.visibility = View.GONE
-                    requestLayout()
-                }
-            }
-            val switchBtn = cell(barState.currentType ?: categorys.first().first.label).apply {
-                setOnClickListener {
-                    val next = SymbolBarTypeCycler.next(categoryLabels(), barState.currentType)
-                        ?: return@setOnClickListener
-                    barState.switchType(next)
-                    applyCategory(next)
-                }
-            }
-            barSwitchBtn = switchBtn
-            if (barSpec.closePosition == BarSide.LEFT) bar.addView(closeBtn, cellParams())
-            if (barSpec.typeSwitchPosition == BarSide.LEFT) bar.addView(switchBtn, cellParams())
-            for (key in barSpec.keys) {
-                val keyCell = cell(key.tap)
-                keyCell.setOnClickListener {
-                    dispatchBoardCommit(key.tap)
-                }
-                // 长按角标格：位移选格（接线轮 R6 同款逻辑的单行版）。
-                var popupHighlight: Int? = null
-                var popupSpec: SymbolGridSpec? = null
-                var originX = 0f
-                var firstMove = true
-                keyCell.setOnLongClickListener {
-                    if (key.corners.isEmpty()) return@setOnLongClickListener false
-                    barPopup.show(
-                        keyCell,
-                        key.corners.map { KeyboardAction.CommitAction(it) },
-                        colors.specialKeyText,
-                        colors.specialKeyBackground,
-                        colors.specialKeyBackground,
-                        colors.specialKeyPressed,
-                    )
-                    popupHighlight = barPopup.selectedIndex
-                    popupSpec = SymbolGridSpec.create(
-                        cells = key.corners,
-                        columns = key.corners.size,
-                        anchorIndex = barPopup.selectedIndex,
-                        defaultIndex = barPopup.selectedIndex,
-                        cellSizePx = barPopup.itemStep,
-                        sensitivity = 1f,
-                        jitterPx = barPopup.itemStep / 2f,
-                    )
-                    firstMove = true
-                    true
-                }
-                keyCell.setOnTouchListener { _, event ->
-                    if (!barPopup.isShowing()) return@setOnTouchListener false
-                    when (event.actionMasked) {
-                        MotionEvent.ACTION_MOVE -> {
-                            if (firstMove) {
-                                originX = event.x
-                                firstMove = false
-                                return@setOnTouchListener true
-                            }
-                            val spec = popupSpec ?: return@setOnTouchListener true
-                            val h = SymbolGridResolver.highlightFor(spec, event.x - originX, 0f)
-                            if (h != popupHighlight) {
-                                popupHighlight = h
-                                if (h != null) barPopup.selectIndex(h) else barPopup.clearSelection()
-                                InputFeedbacks.hapticFeedback(keyCell)
-                            }
-                            true
-                        }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                            val h = popupHighlight
-                            barPopup.dismiss()
-                            popupHighlight = null
-                            if (event.actionMasked == MotionEvent.ACTION_UP && h != null) {
-                                key.corners.getOrNull(h)?.let {
-                                    dispatchBoardCommit(it)
-                                }
-                            }
-                            true
-                        }
-                        else -> false
-                    }
-                }
-                bar.addView(keyCell, cellParams())
-            }
-            if (barSpec.typeSwitchPosition == BarSide.RIGHT) bar.addView(switchBtn, cellParams())
-            if (barSpec.closePosition == BarSide.RIGHT) bar.addView(closeBtn, cellParams())
-            barView = bar
-        }
 
         addView(sidePanelKey, lParams(0, matchParent))
         addView(sideReturnBtn, lParams(0, matchParent))
@@ -588,18 +435,15 @@ class SymbolKeyboard(
             sub.badgeText?.let { badge ->
                 // S12：角标字号／颜色按皮肤（未写沿用旧 9／specialKeyText；
                 // 选中格用高亮色，未写高亮时沿用常规色）。
-                val badgeSnap = SkinSnapshotProvider.peek()
                 val badgeSelected = index == boardState.subIndex
                 val badgeView = TextView(context).apply {
                     gravity = Gravity.CENTER
-                    setTextSize(badgeSnap?.symbolBadgeFontSizeDp ?: 9f)
+                    setTextSize(9f)
                     setTextColor(
                         if (badgeSelected) {
-                            badgeSnap?.symbolBadgeHighlightColor
-                                ?: badgeSnap?.symbolBadgeNormalColor
-                                ?: colors.specialKeyText
+                            colors.specialKeyText
                         } else {
-                            badgeSnap?.symbolBadgeNormalColor ?: colors.specialKeyText
+                            colors.specialKeyText
                         },
                     )
                     text = badge
@@ -623,46 +467,15 @@ class SymbolKeyboard(
     }
 
     /**
-     * 横向符号条重建（P1-7）：无规格时隐藏（旧板行为不变）；
-     * 有规格时横排首页面（maxColumns 格，RTL 时顺序已由
-     * HorizontalSymbolStripState 反向），点格按符号项动作
-     * 分发（与网格键同 resolver、同自动返回口径）。条内翻页
-     * 暂无 UI 入口，只显示首页（超页项待后续翻页控件接线）。
+     * 横向符号条重建：皮肤 v3 死壳删除后恒无规格，恒隐藏
+     * （旧板行为不变）。
      */
     private fun rebuildHorizontalStrip() {
-        val state = horizontalStripState
-        if (state == null) {
-            hStripView.visibility = View.GONE
-            hStripView.removeAllViews()
-            return
-        }
-        hStripView.visibility = View.VISIBLE
+        // 皮肤 v3 死壳删除后横向符号条恒无规格，恒隐藏。
+        hStripView.visibility = View.GONE
         hStripView.removeAllViews()
-        for (item in state.visibleItems) {
-            val cell = TextView(context).apply {
-                gravity = Gravity.CENTER
-                setTextSize(15f)
-                setTextColor(colors.specialKeyText)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                text = item.displayText
-                setOnClickListener { dispatchStripItem(item) }
-            }
-            hStripView.addView(
-                cell,
-                LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.MATCH_PARENT, 1f,
-                ),
-            )
-        }
     }
 
-    /** 横条点按：与网格键同动作解析；提交类动作走同一自动返回口径。 */
-    private fun dispatchStripItem(item: SymbolItem) {
-        val action = SymbolItemActionResolver.resolve(item)
-        keyActionListener?.onKeyAction(action)
-        if (action is KeyboardAction.CommitAction) maybeAutoReturn()
-    }
 
     /**
      * 左侧竖栏重建（2026-11-12 符号栏重做，WO43 v7）：显示用户自定义符号列
@@ -772,14 +585,6 @@ class SymbolKeyboard(
 
     override fun onAttach() {
         reset()
-        // 接线轮 R5：有皮肤栏规格时打开栏（状态对象默认关闭，
-        // 键盘策略在附着时打开；关闭钮仅隐藏本实例的栏，
-        // 下次附着重新显示——类型记忆不受影响）。
-        if (barSpec != null) {
-            barState.open()
-            barView?.visibility = View.VISIBLE
-            requestLayout()
-        }
         // 2026-11-12：竖栏符号每附着重建（设置改动下次打开符号面板即生效）。
         rebuildSidePanelSymbols()
         requestLayout()

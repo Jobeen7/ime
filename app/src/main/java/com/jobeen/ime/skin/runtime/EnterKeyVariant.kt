@@ -14,12 +14,11 @@ import com.jobeen.ime.input.keyboard.key.returnKeyVariantForSkin
  * 本解析不读颜色模式与跟随开关：开关只决定皮肤取浅/深色板，
  * 不再间接改变回车变体（此前开关经 themeFor 的主题 id 间接
  * 带走变体，现回车已不读内置主题 id，此链路不复存在）。
- * 快照存在性与 KeyboardColors.resolve / 各键盘 effectiveLayout
- * 用同一口径（SkinSnapshotProvider.current）。
+ * 皮肤 v3 死壳删除后快照恒为 null，恒走无快照分支。
  */
 object EnterKeyVariant {
     fun resolve(context: Context): Variant = returnKeyVariantForSkin(
-        SkinSnapshotProvider.current(context) != null,
+        false, // 皮肤 v3 死壳删除后快照恒为 null，恒走无快照分支。
         KeyboardColors.themeFor(context).id,
     )
 }

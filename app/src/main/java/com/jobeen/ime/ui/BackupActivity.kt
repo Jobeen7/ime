@@ -117,7 +117,6 @@ class BackupActivity : ImeActivity() {
                     uiState.busyText = null
                     ToastUtil.showToast(
                         if (!written) getString(R.string.backup_write_failed)
-                        else if (backup.skippedSkinSections.isNotEmpty()) getString(R.string.backup_done_skin_skipped)
                         else getString(R.string.backup_done)
                     )
                 }

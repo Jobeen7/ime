@@ -29,7 +29,6 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.skin.model.KeyboardTypes
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
 import com.jobeen.ime.skin.symbol.EmojiBoardBuilder
 import com.jobeen.ime.skin.symbol.EmojiSearchIndex
@@ -135,7 +134,7 @@ class EmojiKeyboard(
     private val recentStore: RecentEmojiStore = SharedPrefsRecentEmojiStore(context)
 
     private var twoStageSymbols: SubClassifiedSymbols =
-        EmojiBoardBuilder.build(recentStore.load(), SkinSnapshotProvider.peek()?.subClassifiedSymbols)
+        EmojiBoardBuilder.build(recentStore.load(), null)
     private var boardState = SubClassifiedBoardState(twoStageSymbols)
 
     /**
@@ -302,7 +301,7 @@ class EmojiKeyboard(
     private fun rebuildBoard() {
         twoStageSymbols = EmojiBoardBuilder.build(
             recentStore.load(),
-            SkinSnapshotProvider.peek()?.subClassifiedSymbols,
+            null,
         )
         boardState = SubClassifiedBoardState(twoStageSymbols)
         boardState.selectParent(0)
@@ -409,18 +408,15 @@ class EmojiKeyboard(
             sub.badgeText?.let { badge ->
                 // S12：角标字号／颜色按皮肤（未写沿用旧 9／specialKeyText；
                 // 选中格用高亮色，未写高亮时沿用常规色）。
-                val badgeSnap = SkinSnapshotProvider.peek()
                 val badgeSelected = index == boardState.subIndex
                 val badgeView = TextView(context).apply {
                     gravity = Gravity.CENTER
-                    setTextSize(badgeSnap?.symbolBadgeFontSizeDp ?: 9f)
+                    setTextSize(9f)
                     setTextColor(
                         if (badgeSelected) {
-                            badgeSnap?.symbolBadgeHighlightColor
-                                ?: badgeSnap?.symbolBadgeNormalColor
-                                ?: colors.specialKeyText
+                            colors.specialKeyText
                         } else {
-                            badgeSnap?.symbolBadgeNormalColor ?: colors.specialKeyText
+                            colors.specialKeyText
                         },
                     )
                     text = badge

@@ -2,43 +2,11 @@
 
 package com.jobeen.ime.skin.model
 
-import com.jobeen.ime.skin.notify.ConditionCurrent
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** 选项态映射（接线轮 R2）：条件现值含条件表声明的选项＋符号锁定态（板锁已删，不再喂锁键）。 */
+/** 选项态映射：只剩 mapOptionLabels（mapConditionCurrent 随皮肤 v3 死壳删除）。 */
 class OptionStateMapperTest {
-
-    @Test
-    fun mapConditionCurrent_onlyDeclaredOptionsAndSymbolLock() {
-        val current = OptionStateMapper.mapConditionCurrent(
-            conditionOptionNames = listOf("ascii_mode", "missing_option"),
-            values = mapOf("ascii_mode" to true, "unrelated" to false),
-            symbolKeyboardActive = true,
-        )
-        assertEquals(
-            mapOf(
-                "rime\$ascii_mode" to ConditionCurrent.Bool(true),
-                "symbolLock" to ConditionCurrent.Bool(true),
-            ),
-            current,
-        )
-    }
-
-    @Test
-    fun mapConditionCurrent_symbolKeyboardInactive() {
-        val current = OptionStateMapper.mapConditionCurrent(
-            conditionOptionNames = emptyList(),
-            values = emptyMap(),
-            symbolKeyboardActive = false,
-        )
-        assertEquals(
-            mapOf(
-                "symbolLock" to ConditionCurrent.Bool(false),
-            ),
-            current,
-        )
-    }
 
     @Test
     fun mapOptionLabels_fullAndAbbreviated() {

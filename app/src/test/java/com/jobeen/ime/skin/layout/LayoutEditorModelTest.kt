@@ -65,13 +65,13 @@ class LayoutEditorModelTest {
         val tree = sampleTree()
         val high = LayoutEditorModel.setWeight(tree, "a1", 100.0)!!
         assertEquals(
-            LayoutValidator.MAX_WEIGHT,
+            20.0,
             (LayoutEditorModel.keyByStableId(high, "a1")!!["widthWeight"] as kotlinx.serialization.json.JsonPrimitive).content.toDouble(),
             0.0,
         )
         val low = LayoutEditorModel.setWeight(tree, "a1", 0.001)!!
         assertEquals(
-            LayoutValidator.MIN_WEIGHT,
+            0.05,
             (LayoutEditorModel.keyByStableId(low, "a1")!!["widthWeight"] as kotlinx.serialization.json.JsonPrimitive).content.toDouble(),
             0.0,
         )

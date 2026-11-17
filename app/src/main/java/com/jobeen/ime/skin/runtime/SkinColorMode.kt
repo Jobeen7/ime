@@ -137,3 +137,24 @@ object SkinColorMode {
         return isDark(get(context), NightModePolicy.resolve(explicit, systemNight))
     }
 }
+
+/**
+ * 系统夜间态判定（对方 T22，纯函数）：
+ * explicitMode 取 UiModeManager.getNightMode() 的返回值镜像
+ * （MODE_NIGHT_NO=1、MODE_NIGHT_YES=2、MODE_NIGHT_AUTO=0、
+ * MODE_NIGHT_UNSPECIFIED=-1，值与 Android 常量一致，JVM 单测
+ * 不触 Android 框架）；显式 YES/NO 优先，AUTO／未指定／null
+ * 回落 configuration 回调值 reportedNight。
+ */
+object NightModePolicy {
+    const val MODE_NIGHT_UNSPECIFIED = -1
+    const val MODE_NIGHT_AUTO = 0
+    const val MODE_NIGHT_NO = 1
+    const val MODE_NIGHT_YES = 2
+
+    fun resolve(explicitMode: Int?, reportedNight: Boolean): Boolean = when (explicitMode) {
+        MODE_NIGHT_YES -> true
+        MODE_NIGHT_NO -> false
+        else -> reportedNight
+    }
+}

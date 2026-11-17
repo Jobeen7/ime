@@ -8,7 +8,6 @@ import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.CandidateSpacingPolicy
 import com.jobeen.ime.skin.runtime.SkinColorMode
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 /**
  * 面板配色按类型取（G1）：快照存在时按当前键盘类型取样式集色板，
@@ -17,9 +16,8 @@ import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
  * KeyboardStateManager（窗口层持有类型，面板只收参数）。
  */
 internal fun panelColorScheme(context: Context, type: String?): KeyboardColors.ColorScheme {
-    val snapshot = SkinSnapshotProvider.peek()
-    return snapshot?.effectiveColorSchemeForType(type, SkinColorMode.isDark(context))
-        ?: KeyboardColors.resolve(context)
+    // 皮肤 v3 死壳删除后快照恒为 null，恒走内置主题配色。
+    return KeyboardColors.resolve(context)
 }
 
 class Paints(context: Context) {
@@ -126,7 +124,6 @@ class Paints(context: Context) {
 
     fun updateColors(context: Context, type: String? = null) {
         val scheme = panelColorScheme(context, type)
-        val snapshot = SkinSnapshotProvider.peek()
         val panel = scheme.panel
         bgPaint.color = panel.background
         keyboardBackground = scheme.background
@@ -143,20 +140,14 @@ class Paints(context: Context) {
         // 默认黑色；现接线为皮肤注释色，缺失回落序号色。
         candidateCommentPaint.color = panel.candidateComment ?: panel.candidateIndex
         toolbarPressedColor = panel.toolbarPressed
-        candidateStripBg = snapshot?.horizontalCandidatesStyleFor(type)?.background
+        candidateStripBg = null
         // S10：横条分隔线可见性（未写 = 可见）。
-        candidateDividerVisible =
-            snapshot?.horizontalCandidatesStyleFor(type)?.dividerVisible ?: true
+        candidateDividerVisible = true
         // 单元格全字段优先于旧顶层字号字段，缺失回落 Jime 默认。
-        candidateIndexSizeDp =
-            snapshot?.horizontalCandidateStyleFor(type)?.indexSizeDp
-                ?: snapshot?.candidateIndexSizeDp ?: CANDIDATE_INDEX_DP
-        candidateCommentSizeDp =
-            snapshot?.horizontalCandidateStyleFor(type)?.commentSizeDp
-                ?: snapshot?.candidateCommentSizeDp ?: CANDIDATE_COMMENT_DP
+        candidateIndexSizeDp = CANDIDATE_INDEX_DP
+        candidateCommentSizeDp = CANDIDATE_COMMENT_DP
         // 候选主文字字号（S9；主文字无旧顶层字段，只读横条样式）。
-        candidateTextSizeDp =
-            snapshot?.horizontalCandidateStyleFor(type)?.textSizeDp ?: CANDIDATE_TEXT_DP
+        candidateTextSizeDp = CANDIDATE_TEXT_DP
         // 候选栏缩放（H2-3）：用户倍率，读 prefs（updateColors
         // 只同步变量，实际画笔字号由 applyDensity 写）。
         candidateScale = com.jobeen.ime.data.manager.CandidateManager.getCandidateScale(context)
@@ -185,10 +176,7 @@ class Paints(context: Context) {
                 ?: Typeface.DEFAULT_BOLD
         // S9：候选字重（≥600 粗体，其余常规；无字重时常规）。
         // 现取快照，避免依赖 updateColors 的调用顺序。
-        val candidateWeight =
-            SkinSnapshotProvider.peek()?.horizontalCandidateStyle?.textWeight?.weight
-        val candidateStyle =
-            if ((candidateWeight ?: 400) >= 600) Typeface.BOLD else Typeface.NORMAL
+        val candidateStyle = Typeface.NORMAL
         candidateTextPaint.typeface =
             GlobalFonts.typefaceFor(context, FontRole.CANDIDATE, candidateStyle)
         selectedCandidateTextPaint.typeface =

@@ -35,7 +35,6 @@ import com.jobeen.ime.skin.model.VerticalBottomRowNames
 import com.jobeen.ime.skin.model.VerticalBottomRowSpec
 import com.jobeen.ime.input.panel.CandidateFlingPolicy
 import com.jobeen.ime.input.panel.panelColorScheme
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
 import kotlin.math.abs
@@ -1153,12 +1152,9 @@ class CandidateGridView(
                             relocateCandidateIndex(longPressCandidate, allCandidates)
                         if (!longPressMoved && resolvedLongPressIndex >= 0) {
                             val candidate = allCandidates[resolvedLongPressIndex]
-                            // 候选菜单（审计 I 项）：皮肤定义菜单时走菜单，
-                            // 菜单可自含遗忘，功能不丢；未定义时旧遗忘确认不变。
-                            val menu = SkinSnapshotProvider.peek()?.candidateContextMenu.orEmpty()
-                            if (menu.isNotEmpty()) {
-                                this@CandidateGridView.onCandidateMenu?.invoke(candidate, menu)
-                            } else {
+                            // 候选菜单（审计 I 项）：皮肤 v3 死壳删除后菜单恒为空，
+                            // 走旧遗忘确认。
+                            run {
                                 val firstRow = (scrollOffsetY / rowH).toInt().coerceAtLeast(0)
                                 val yOff = -(scrollOffsetY - firstRow * rowH) + stretch
                                 val pos = positions[resolvedLongPressIndex]
@@ -1399,21 +1395,21 @@ class CandidateGridView(
     fun refreshTheme(context: Context, type: String? = null) {
         val colors = panelColorScheme(context, type)
         refreshTheme(colors)
-        val snapshot = SkinSnapshotProvider.peek()
-        candidateRadiusDp = snapshot?.candidateRadiusDp ?: 6f
+        candidateRadiusDp = 6f
         // 区样式（审计 B 项）：insets 变化但尺寸不变时，onSizeChanged
-        // 不跑，须显式重算画布几何（不重置滚动）。G2：类型区域集
-        // 写了竖网格区样式时优先，否则回落包级。
-        areaInsets = snapshot?.verticalCandidatesStyleFor(type)?.insets ?: AreaInsets()
-        areaBackground = snapshot?.verticalCandidatesStyleFor(type)?.background
-        cellPadDp = snapshot?.verticalCandidatesStyleFor(type)?.cellPadDp
-        minWordSpaceDp = snapshot?.verticalCandidatesStyleFor(type)?.minWordSpaceDp
-        minRowHeightDp = snapshot?.verticalCandidatesStyleFor(type)?.minRowHeightDp
-        skinMaxRows = snapshot?.verticalMaxRows
-        skinMaxColumns = snapshot?.verticalMaxColumns
+        // 不跑，须显式重算画布几何（不重置滚动）。皮肤 v3 死壳删除后
+        // 全部皮肤区样式恒缺席，走包级默认值。
+        areaInsets = AreaInsets()
+        areaBackground = null
+        cellPadDp = null
+        minWordSpaceDp = null
+        minRowHeightDp = null
+        skinMaxRows = null
+        skinMaxColumns = null
         // 底部钮行：规范变化时重建钮条并重新布局（网格内高重分）；
         // 颜色变化时同样重建（钮色取当前主题色）。
-        val newBottomRowSpec = snapshot?.verticalBottomRow?.takeIf { it.hasAny }
+        // 皮肤 v3 死壳删除后快照恒为 null，底部钮行恒缺席。
+        val newBottomRowSpec: VerticalBottomRowSpec? = null
         val bottomSpecChanged = newBottomRowSpec != bottomRowSpec
         bottomRowSpec = newBottomRowSpec
         rebuildBottomStrip()
@@ -1421,7 +1417,7 @@ class CandidateGridView(
         // 行列上限立即生效（不等下批候选到达才 syncLinePolicy）。
         syncLinePolicy()
         // 侧边栏有无立即生效：可见性 + 重新布局（网格占满宽）。
-        val newShowSidePanel = snapshot?.verticalSidePanel ?: true
+        val newShowSidePanel = true
         if (newShowSidePanel != showSidePanel) {
             showSidePanel = newShowSidePanel
             sidePanelKey.visibility = if (showSidePanel) android.view.View.VISIBLE

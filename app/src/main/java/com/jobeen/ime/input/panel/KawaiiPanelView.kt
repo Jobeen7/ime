@@ -22,7 +22,6 @@ import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.panel.toolbar.CustomButtonSlot
 import com.jobeen.ime.input.panel.toolbar.CustomDisplayKind
 import com.jobeen.ime.input.panel.toolbar.EffectiveToolbarButton
-import com.jobeen.ime.input.panel.toolbar.SkinToolbarApplier
 import com.jobeen.ime.input.panel.toolbar.ToolbarBackground
 import com.jobeen.ime.input.panel.toolbar.ToolbarRenderer
 import com.jobeen.ime.input.panel.toolbar.ToolbarToggleState
@@ -33,8 +32,7 @@ import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.input.panel.toolbar.ToolbarConfig
 import com.jobeen.ime.input.panel.toolbar.ToolbarRendererResources
 import com.jobeen.ime.skin.model.SkinAction
-import com.jobeen.ime.skin.runtime.KeyOverrideApplier
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
+import com.jobeen.ime.skin.runtime.KeyActionMapping
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.max
@@ -160,7 +158,7 @@ class KawaiiPanelView(context: Context) : View(context) {
         if (recording) return false
         val binding = def.bindings[slot] ?: return false
         val runtime = runCatching {
-            KeyOverrideApplier.toRuntime(SkinAction.Command(binding.action, binding.value))
+            KeyActionMapping.toRuntime(SkinAction.Command(binding.action, binding.value))
         }.onFailure { error ->
             DiagLog.e(
                 "toolbar", "toolbar_custom_action_failed",
@@ -199,8 +197,7 @@ class KawaiiPanelView(context: Context) : View(context) {
         userBarBitmap?.recycle()
         userBarBitmap = null
         userBarBackground = null
-        val skinId = SkinSnapshotProvider.peek()?.ref?.skinId
-            ?: ToolbarUserStore.BUILTIN_SKIN_KEY
+        val skinId = ToolbarUserStore.BUILTIN_SKIN_KEY
         val file = File(context.filesDir, ToolbarUserStore.FILE_NAME)
         val loaded = ToolbarUserStore.load(file)
         if (loaded.corrupt) {
@@ -304,15 +301,7 @@ class KawaiiPanelView(context: Context) : View(context) {
             // 语音入口可见判定（H2-13）：总开关关时工具栏语音键隐藏。
             voiceEnabled = { voiceInputEnabled(context) },
         ).also { renderer ->
-            // 初始渲染器即应用皮肤工具栏（若快照有构成）；无皮肤时
-            // 用出厂默认（构造参数已传入）。其后用户覆盖层再压一层
-            // （有用户配置则胜出，无则不动既有路）。
-            SkinToolbarApplier.resolveFor(context)?.let { applied ->
-                renderer.updateSkinToolbar(applied.toolbar, applied.icons, applied.buttonBackground)
-            }
-            // 工具栏样式（审计 B 项）：独立于构成抉择，快照直取。
-            renderer.toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle
-            renderer.toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout
+            // 其后用户覆盖层再压一层（有用户配置则胜出，无则不动既有路）。
             // P4：锁定通知样式解析用当前配色方案（与 refreshTheme 同步）。
             renderer.scheme = KeyboardColors.resolve(context)
             applyUserToolbar(renderer)
@@ -332,10 +321,7 @@ class KawaiiPanelView(context: Context) : View(context) {
         // 渲染器在此重抉择（有皮肤构成用皮肤，否则回落出厂默认）。
         // 其后用户覆盖层再压一层（工具栏编辑轮，分层：用户＞皮肤＞默认）。
         (currentRenderer as? ToolbarRenderer)?.let { renderer ->
-            SkinToolbarApplier.applyTo(renderer, context)
-            // 工具栏样式与构成抉择无关：有样式即应用，无样式清掉旧样式。
-            renderer.toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle
-            renderer.toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout
+            renderer.updateCenterActions(ToolbarConfig.DEFAULT_ACTIONS, emptyMap())
             // P4：锁定通知样式解析用当前配色方案（主题变化时同步；
             // G1：有类型样式集时取类型色板）。
             renderer.scheme = panelColorScheme(context, type)
@@ -461,13 +447,8 @@ class KawaiiPanelView(context: Context) : View(context) {
             expandLongPressed = true
             onTap?.invoke(KawaiiPanel.TouchResult.LongPressClearPhrases)
         } else if (result is KawaiiPanel.TouchResult.SelectCandidate) {
-            // 候选菜单（审计 I 项）：皮肤定义菜单时横条长按发菜单，
-            // 未定义时旧行为不变（长按候选无动作）。
-            val menu = SkinSnapshotProvider.peek()?.candidateContextMenu.orEmpty()
-            if (menu.isNotEmpty()) {
-                menuLongPressed = true
-                onTap?.invoke(KawaiiPanel.TouchResult.CandidateMenu(result.candidate, menu))
-            }
+            // 候选菜单（审计 I 项）：皮肤 v3 死壳删除后菜单恒为空，
+            // 长按候选无动作（旧行为）。
         }
     }
 

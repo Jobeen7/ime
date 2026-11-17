@@ -77,15 +77,6 @@ class KeyGeometryStyleTest {
         assertTrue(warnings.contains("style_geometry_normalBorderColor_invalid"))
     }
 
-    @Test
-    fun geometryKeysDoNotWarnAsUnknownRoles() {
-        val (roles, warnings) = KeyStyleParser.parseRoles(
-            "s",
-            entry("""{"face": "#FFFFFF", "geometry": {}, "animations": []}"""),
-        )
-        assertEquals(mapOf(KeyStyleRole.FACE to "#FFFFFF"), roles)
-        assertTrue(warnings.isEmpty())
-    }
 
     @Test
     fun boundsWidthOutOfRangeIsDropped() {

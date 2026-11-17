@@ -61,7 +61,7 @@ internal data class BackupManifest(
             "phrasesCount", "prefersCount", "sortingsCount",
             "aiProvidersCount", "aiInstructionsCount",
             "aiConversationsCount", "aiMessagesCount",
-            "inputStatsPresent", "skinLibraryPresent", "skinLibraryFiles",
+            "inputStatsPresent",
         )
 
         /** 不符时的显示名（与 JSON 键不同的几项；未列出的即键本身）。 */
@@ -76,12 +76,11 @@ internal data class BackupManifest(
             "aiConversationsCount" to "ai_conversations",
             "aiMessagesCount" to "ai_messages",
             "inputStatsPresent" to "inputStats",
-            "skinLibraryPresent" to "skinLibrary",
         )
 
         /** Boolean 存在标记键（其余一律为 Int 计数）。 */
         private val BOOLEAN_KEYS: Set<String> = setOf(
-            "inputStatsPresent", "skinLibraryPresent",
+            "inputStatsPresent",
         )
 
         /** v2 清单之后新增的计数键（旧清单无这些键，解析与校验都跳过）。 */
@@ -128,8 +127,6 @@ internal fun manifestCounts(
     aiConversationsCount: Int = 0,
     aiMessagesCount: Int = 0,
     inputStatsPresent: Boolean,
-    skinLibraryPresent: Boolean,
-    skinLibraryFiles: Int,
 ): Map<String, Any> = linkedMapOf(
     "prefsFiles" to prefsFiles,
     "prefsEntries" to prefsEntries,
@@ -143,6 +140,4 @@ internal fun manifestCounts(
     "aiConversationsCount" to aiConversationsCount,
     "aiMessagesCount" to aiMessagesCount,
     "inputStatsPresent" to inputStatsPresent,
-    "skinLibraryPresent" to skinLibraryPresent,
-    "skinLibraryFiles" to skinLibraryFiles,
 )

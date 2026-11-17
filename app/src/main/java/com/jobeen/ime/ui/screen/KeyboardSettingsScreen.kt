@@ -106,8 +106,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
         mutableStateOf(
             com.jobeen.ime.input.keyboard.window.FloatingKeyboardPrefs.effectiveEnabled(
                 context,
-                com.jobeen.ime.skin.runtime.SkinSnapshotProvider.peek()
-                    ?.floatingKeyboardWindow?.enabled == true,
+                false,
             ),
         )
     }

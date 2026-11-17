@@ -6,7 +6,6 @@ import android.content.Context
 import android.graphics.Typeface
 import androidx.core.content.edit
 import com.jobeen.ime.skin.diag.DiagLog
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.ui.theme.AppAppearance
 import java.io.File
 
@@ -299,26 +298,6 @@ object GlobalFonts {
         loggedMissingSkinFonts.clear()
     }
 
-    /**
-     * IO 预热（第 5 批 §2）：快照安装后在 IO 段把皮肤内嵌字体
-     * 常用字形先建进缓存，使绘制期首次加载不加异步回调（否则
-     * 闪烁，对方 R19 同款）；坏字体逐个返回 null、调用方继续
-     * 下一级（整条链保留，见 typefaceFor），绝不拖垮整组回落。
-     * 调用方必须在 IO 线程调本函数（Typeface.createFromFile
-     * 不进 UI 线程）；失败静默（缺失／损坏已在 bundledTypeface
-     * 内记一次日志，渲染回落下一级）。
-     */
-    @Synchronized
-    fun prewarmSkinFonts(
-        context: Context,
-        snapshot: com.jobeen.ime.skin.model.SkinSnapshot,
-    ) {
-        val assetIds = snapshot.skinFontFaces.map { it.assetId }.distinct()
-        for (assetId in assetIds) {
-            runCatching { bundledTypeface(context, assetId, Typeface.NORMAL) }
-            runCatching { bundledTypeface(context, assetId, Typeface.BOLD) }
-        }
-    }
 
     private fun sha12(bytes: ByteArray): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
@@ -358,67 +337,6 @@ object GlobalFonts {
         }
     }
 
-    /**
-     * 皮肤候选值解析（审计 C 项）：内嵌字体名优先于系统字族名。
-     * 内嵌字体字节缺失／损坏返回 null，调用方继续下一级（绝不
-     * 以缺失字体占位）；系统族名经白名单复核，未知值返回 null
-     * （调用方继续下一级，与旧“未知回落全局”同口径）。
-     */
-    private fun skinCandidateTypeface(
-        context: Context,
-        snapshot: com.jobeen.ime.skin.model.SkinSnapshot,
-        candidate: String,
-        style: Int,
-    ): Typeface? {
-        // P5：同名字族按字重匹配——请求粗体取字重 ≥600 的文件，
-        // 请求常规取字重 <600 的文件；未声明字重的文件匹配任意
-        // 请求（不过滤）。无字重匹配时返回 null，调用方继续下
-        // 一候选（不以错字重文件占位）。
-        val faces = snapshot.skinFontFaces.filter {
-            it.name.equals(candidate.trim(), ignoreCase = true)
-        }
-        val bold = (style and Typeface.BOLD) != 0
-        val face = faces.firstOrNull { face -> fontWeightMatches(face.weight, bold) }
-        if (face != null) return bundledTypeface(context, face.assetId, style)
-        val family = SkinFonts.resolveFamily(candidate) ?: return null
-        return systemTypeface(family, style)
-    }
-
-    /**
-     * 内嵌字体 Typeface（审计 C 项）：字节经注入源取，落盘到
-     * cacheDir/skin-fonts/<内容哈希>.bin 后 createFromFile（与
-     * 全局导入同款建族口径，minSdk 24 下无 ByteBuffer 方案）。
-     * 字节缺失／建族失败返回 null（调用方回落下一级），只记
-     * 资产 id，不记字体内容；缓存文件按内容哈希命名，旧皮肤
-     * 残留文件不影响新皮肤（cacheDir 由系统按需清理）。
-     */
-    private fun bundledTypeface(context: Context, assetId: String, style: Int): Typeface? {
-        skinFontCache[assetId to style]?.let { return it }
-        val bytes = runCatching { skinFontBytesProvider?.invoke(assetId) }.getOrNull()
-        if (bytes == null || bytes.isEmpty()) {
-            if (loggedMissingSkinFonts.add(assetId)) {
-                DiagLog.w("font", "skin_font_missing", mapOf("asset" to assetId))
-            }
-            return null
-        }
-        return try {
-            val dir = File(context.cacheDir, "skin-fonts")
-            if (!dir.exists()) dir.mkdirs()
-            val file = File(dir, sha12(bytes) + ".bin")
-            if (!file.isFile) file.writeBytes(bytes)
-            val typeface = Typeface.createFromFile(file)
-            skinFontCache[assetId to style] = typeface
-            typeface
-        } catch (e: Exception) {
-            if (loggedMissingSkinFonts.add(assetId)) {
-                DiagLog.w(
-                    "font", "skin_font_invalid",
-                    mapOf("asset" to assetId, "reason" to (e.javaClass.simpleName ?: "unknown")),
-                )
-            }
-            null
-        }
-    }
 
     /**
      * 区间段字族 Typeface（审计 C 项，渲染层按段调用）：
@@ -428,10 +346,6 @@ object GlobalFonts {
      */
     @Synchronized
     fun typefaceForFamily(context: Context, family: String, style: Int): Typeface? {
-        val snapshot = SkinSnapshotProvider.peek()
-        if (snapshot != null) {
-            return skinCandidateTypeface(context, snapshot, family, style)
-        }
         return SkinFonts.resolveFamily(family)?.let { systemTypeface(it, style) }
     }
 
@@ -451,37 +365,6 @@ object GlobalFonts {
             fileCache.clear()
             skinFontCache.clear()
             cachedVersion = v
-        }
-        val snapshot = SkinSnapshotProvider.peek()
-        if (snapshot != null) {
-            // 审计 C 项：按候选顺序试取，首个可解析者胜出；
-            // 内嵌缺失／未知族名都继续下一候选、下一级。
-            // 旧手工快照可能只填单值字段：列表为空时回落单值。
-            val roleCandidates = snapshot.roleFontFamilies[role]
-                ?: snapshot.roleFonts[role]?.let { listOf(it) } ?: emptyList()
-            for (candidate in roleCandidates) {
-                skinCandidateTypeface(context, snapshot, candidate, style)?.let { return it }
-            }
-            val familyCandidates = snapshot.fontFamilies.ifEmpty {
-                snapshot.fontFamily?.let { listOf(it) } ?: emptyList()
-            }
-            for (candidate in familyCandidates) {
-                skinCandidateTypeface(context, snapshot, candidate, style)?.let { return it }
-            }
-        }
-        val rawSkin = snapshot?.fontFamily
-        val isFace = rawSkin != null && snapshot?.skinFontFaces?.any {
-            it.name.equals(rawSkin.trim(), ignoreCase = true)
-        } == true
-        if (rawSkin != null && rawSkin.isNotBlank() &&
-            !rawSkin.trim().equals("default", ignoreCase = true) &&
-            !isFace && SkinFonts.resolveFamily(rawSkin) == null &&
-            loggedUnknownSkinFamilies.add(rawSkin.trim())
-        ) {
-            DiagLog.w(
-                "font", "skin_font_unknown_family",
-                mapOf("family" to rawSkin.trim()),
-            )
         }
         return when (val choice = getChoice(context, role)) {
             FontChoice.Follow -> null

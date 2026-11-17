@@ -40,7 +40,6 @@ import com.jobeen.ime.skin.symbolbar.SymbolBarConfig
 import com.jobeen.ime.skin.symbolbar.SymbolBarConfigLoader
 import com.jobeen.ime.skin.symbolbar.SymbolBarLoadResult
 import com.jobeen.ime.skin.symbolbar.resolveCurrentType
-import com.jobeen.ime.skin.symbolbar.symbolBarConfigFromSkinSpec
 import com.jobeen.ime.data.manager.CandidateLinePolicy
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.SchemaManager
@@ -90,22 +89,11 @@ import com.jobeen.ime.input.TypedUndoLedger
 import com.jobeen.ime.input.ImeInputConnection
 import com.jobeen.ime.input.dialog.SchemaPickerDialog
 import com.jobeen.ime.input.keyboard.impl.GenericLayoutKeyboard
-import com.jobeen.ime.skin.model.GeometryField
-import com.jobeen.ime.skin.model.KeyboardGeometryField
 import com.jobeen.ime.skin.model.OptionLabelResolver
 import com.jobeen.ime.skin.model.OptionStateMapper
-import com.jobeen.ime.skin.notify.ConditionCurrent
-import com.jobeen.ime.skin.notify.ConditionStyleParser
-import com.jobeen.ime.skin.notify.NotificationEvent
-import com.jobeen.ime.skin.notify.NotificationSource
 import com.jobeen.ime.skin.runtime.BuiltinFallbackLayout
-import com.jobeen.ime.skin.runtime.CustomLayoutRuntime
-import com.jobeen.ime.skin.runtime.PlaceholderValues
+import com.jobeen.ime.skin.runtime.LayoutTypeRouting
 import com.jobeen.ime.skin.runtime.SkinColorMode
-import com.jobeen.ime.skin.runtime.SkinRuntime
-import com.jobeen.ime.skin.runtime.SkinRuntimeState
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
-import com.jobeen.ime.skin.store.SkinLibrary
 import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.core.IRimeJob
@@ -147,7 +135,7 @@ class KeyboardWindowView(
     context: Context,
     private val keyboardStateManager: KeyboardStateManager,
     private val panelListener: PanelListener? = null,
-) : FrameLayout(context), IManagedView, SkinRuntime.SkinWindow {
+) : FrameLayout(context), IManagedView {
 
     // ── 浮动候选窗（WO52 1.4） ──
     /** 浮动候选窗控制器（纯状态＋决策）；窗口本体见 floatingWindow。 */
@@ -191,8 +179,7 @@ class KeyboardWindowView(
 
     /** 当前皮肤的悬浮键盘样式（缺省 = 关／宽比 0.9／中心 0.5）。 */
     private val skinFloatingWindow: com.jobeen.ime.skin.model.FloatingKeyboardWindowStyle
-        get() = SkinSnapshotProvider.peek()?.floatingKeyboardWindow
-            ?: com.jobeen.ime.skin.model.FloatingKeyboardWindowStyle()
+        get() = com.jobeen.ime.skin.model.FloatingKeyboardWindowStyle()
 
     /**
      * 生效开关：偏好覆写优先，未覆写取皮肤键
@@ -396,19 +383,6 @@ class KeyboardWindowView(
             ?: (if (isLandscape) skinLandscapePercent ?: skinPercent else skinPercent)
             ?: (if (isLandscape) appLandscapePercent else appPortraitPercent)
 
-        /**
-         * 类型高度（多主槽一期，纯函数，可单测）：快照类型表该
-         * 类型该方向的高度百分比；无表项/无高度/无类型时为 null，
-         * 调用方走既有高度链。类型高度取自表项本身，与布局文件
-         * 顶层高度是两级（表项优先于布局，见 contentHeight）。
-         */
-        fun typeHeightPercent(
-            snapshot: com.jobeen.ime.skin.model.SkinSnapshot?,
-            type: String?,
-            isLandscape: Boolean,
-        ): Int? = type?.let {
-            snapshot?.resolvedKeyboards?.get(it)?.heightPercentFor(isLandscape)?.roundToInt()
-        }
 
         const val PANEL_HEIGHT_DP = 48
 
@@ -510,11 +484,9 @@ class KeyboardWindowView(
             // 引擎作业队列读值，天然排在应用作业之后，不读到旧值。
             if (key != null && OptionsApplier.isOptionDependency(key)) refreshOptionStateAsync()
         }
-    private val runtimeStateListener: () -> Unit = { post { refreshNotificationState() } }
 
     init {
-        // 接线轮 R1/R2：运行态变化监听（post 重建）与选项偏好监听。
-        SkinRuntimeState.addStateChangedListener(runtimeStateListener)
+        // 选项偏好监听。
         optionPrefs.registerOnSharedPreferenceChangeListener(optionPrefsListener)
         panel.onRecordingStop = {
             if (cloudVoiceActive) {
@@ -591,18 +563,8 @@ class KeyboardWindowView(
     }
 
     private fun openSymbolBar() {
-        // P1-8：皮肤规格优先——快照有 symbolBar 时按皮肤规格建条，
-        // 不读应用级 symbol-bar.yaml；无皮肤规格时走旧应用级路径。
-        val skinSpec = SkinSnapshotProvider.peek()?.symbolBar
-        val loaded: Pair<SymbolBarConfig, String> = if (skinSpec != null) {
-            val types = skinSymbolBarTypes()
-            if (types.isEmpty()) {
-                showImeToast(context.getString(R.string.symbol_bar_config_invalid))
-                return
-            }
-            val config = symbolBarConfigFromSkinSpec(skinSpec, types)
-            config to resolveCurrentType(config.types, symbolBarTypeStore.load())
-        } else {
+        // 皮肤 v3 死壳删除后恒走旧应用级 symbol-bar.yaml 路径。
+        val loaded: Pair<SymbolBarConfig, String> =
             when (val result = SymbolBarConfigLoader.load(SymbolBarConfigLoader.defaultFile(context))) {
                 SymbolBarLoadResult.Missing -> {
                     showImeToast(context.getString(R.string.symbol_bar_not_configured))
@@ -622,7 +584,6 @@ class KeyboardWindowView(
                     config to type
                 }
             }
-        }
         val (config, type) = loaded
         symbolBarTypeStore.save(type)
         val bar = SymbolBarView(
@@ -642,13 +603,6 @@ class KeyboardWindowView(
         requestLayout()
     }
 
-    /** 皮肤符号栏的类型表（P1-8）：皮肤二级父类标签优先，缺省内置符号分类。 */
-    private fun skinSymbolBarTypes(): List<String> {
-        val parents = SkinSnapshotProvider.peek()?.subClassifiedSymbols?.parents
-            ?.map { it.label }?.filter { it.isNotEmpty() }
-        if (!parents.isNullOrEmpty()) return parents
-        return com.jobeen.ime.data.Symbol.Symbol.map { it.first.label }
-    }
 
     private fun closeSymbolBar() {
         val bar = symbolBarView ?: return
@@ -711,13 +665,7 @@ class KeyboardWindowView(
                 // 或内置名可反查类型时走类型切换（类型解析含内置回
                 // 退，永不空白）；查不到时沿用旧按名切换（类型不动，
                 // 语义与旧路径一致）。
-                val landscape = context.resources.configuration.orientation ==
-                    android.content.res.Configuration.ORIENTATION_LANDSCAPE
-                val type = CustomLayoutRuntime.typeForLayoutName(
-                    SkinSnapshotProvider.current(context),
-                    action.target,
-                    landscape,
-                )
+                val type = LayoutTypeRouting.typeForLayoutName(action.target)
                 if (type != null) {
                     keyboardStateManager.switchKeyboardType(type)
                 } else {
@@ -938,7 +886,7 @@ class KeyboardWindowView(
             when {
                 // 自创布局在 else 兜底之前显式认领（B3 §3.3）：认领失败
                 // 走 buildCustomKeyboard 的回退链，绝不静默变 Qwerty 而不留痕
-                name.startsWith(CustomLayoutRuntime.PREFIX) -> buildCustomKeyboard(name)
+                name.startsWith(LayoutTypeRouting.PREFIX) -> buildCustomKeyboard(name)
                 else -> when (name) {
                     T14Keyboard.NAME -> T14Keyboard(context, cachedColors)
                     T18Keyboard.NAME -> T18Keyboard(context, cachedColors)
@@ -982,61 +930,21 @@ class KeyboardWindowView(
     }
 
     /**
-     * 自创布局键盘构建（B3 §3.5 第 3 项回退链）：快照已解析布局
-     * 过覆写装配后喂通用键盘类；解析缺失（运行期数据竞态，如
-     * 构建后布局被删）→ 记 ERROR 并回退方案默认键盘，绝不空白。
+     * 自创布局键盘构建（B3 §3.5 第 3 项回退链）：皮肤 v3 死壳删除后
+     * 快照恒为 null，自创布局恒解析失败，记 ERROR 并回退方案默认键盘，绝不空白。
      */
     private fun buildCustomKeyboard(name: String): IKeyboard {
-        val snapshot = SkinSnapshotProvider.current(context)
-        // 横屏取横屏结构（2026-10-27 第一组）：方向来自当前视图
-        // 配置；有横屏专属绑定时取绑定布局，否则取竖屏布局的
-        // 横屏权重变体；旋转重建键盘时自动切换，无须重建快照。
-        val landscape = context.resources.configuration.orientation ==
-            android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        // Wave-4 类型表优先：按布局 id 反查类型表（含旧顶层
-        // 绑定）；查不到时沿用旧顶层绑定生效布局（旧路径语义，
-        // 类型表外自创布局仍可建出，永不空白）。
-        val layoutId = CustomLayoutRuntime.layoutIdOf(name)
-        val effective = layoutId?.let {
-            CustomLayoutRuntime.effectiveLayoutForLayoutId(
-                snapshot, it, PlaceholderValues.current(context), landscape = landscape,
-                isDark = SkinColorMode.isDark(context),
-                mnemonicEnabled = KeyboardManager.Keyboard.Mnemonic.isEnabled(context),
-                decorationEnabled = KeyboardManager.Keyboard.Decoration.isEnabled(context),
-            )
-        } ?: CustomLayoutRuntime.effectiveLayout(
-            snapshot, PlaceholderValues.current(context), landscape = landscape,
-            isDark = SkinColorMode.isDark(context),
-            mnemonicEnabled = KeyboardManager.Keyboard.Mnemonic.isEnabled(context),
-            decorationEnabled = KeyboardManager.Keyboard.Decoration.isEnabled(context),
+        DiagLog.e(
+            "layout", "layout_keyboard_build_failed",
+            mapOf("layout" to name, "stage" to "factory_resolve"),
         )
-        if (effective == null) {
-            DiagLog.e(
-                "layout", "layout_keyboard_build_failed",
-                mapOf("layout" to name, "stage" to "factory_resolve"),
-            )
-            val schemaDefault = keyboardStateManager.getCurrentSchema()?.layout
-            val fallback = schemaDefault?.takeIf {
-                !it.startsWith(CustomLayoutRuntime.PREFIX)
-            } ?: QwertyKeyboard.NAME
-            return createKeyboard(fallback)
-        }
-        // 日志用实际布局 id：表查命中即该 id，否则旧顶层绑定 id。
-        val effectiveLayoutId = layoutId ?: if (landscape && snapshot?.resolvedLayoutLandscape != null) {
-            snapshot.resolvedLayoutLandscape.layoutId
-        } else {
-            snapshot?.resolvedLayout?.layoutId
-        }
-        DiagLog.d(
-            "layout", "layout_applied_to_keyboard",
-            mapOf(
-                "layoutId" to effectiveLayoutId,
-                "orientation" to if (landscape) "landscape" else "portrait",
-                "overrideHits" to CustomLayoutRuntime.overrideHitCount(snapshot, landscape),
-            ),
-        )
-        return GenericLayoutKeyboard(context, cachedColors, name, effective)
+        val schemaDefault = keyboardStateManager.getCurrentSchema()?.layout
+        val fallback = schemaDefault?.takeIf {
+            !it.startsWith(LayoutTypeRouting.PREFIX)
+        } ?: QwertyKeyboard.NAME
+        return createKeyboard(fallback)
     }
+
 
     private val keyboardFactory: (String) -> IKeyboard = { name -> createKeyboard(name) }
 
@@ -1199,9 +1107,6 @@ class KeyboardWindowView(
         super.onAttachedToWindow()
         refreshToolbarHidden()
         applyWindowCorners()
-        // 皮肤运行态注册：应用事务的首帧等待与延迟验证推进挂在本窗口上
-        SkinRuntime.attachWindow(this)
-        SkinRuntime.onWindowAttached()
         // 性能埋点（2026-10-29 item-1 B）：冷启动结算（仅首个
         // 窗口）＋掉帧计数（帧间隔＞100ms 记一次，回调本身只做
         // 一次减法比较，不进热路径）。
@@ -1234,8 +1139,6 @@ class KeyboardWindowView(
         com.jobeen.ime.input.stats.InputStats.flush()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) gifDrawable?.stop()
         gifDrawable = null
-        SkinRuntime.detachWindow(this)
-        SkinRuntimeState.removeStateChangedListener(runtimeStateListener)
         optionPrefs.unregisterOnSharedPreferenceChangeListener(optionPrefsListener)
         panel.onFinishInputView(true)
         // 方案选择弹窗挂在本窗口的 token 上，窗口销毁时一并关掉，
@@ -1259,8 +1162,8 @@ class KeyboardWindowView(
     private fun refreshToolbarHidden() {
         // 皮肤压制（区域门控）与用户隐藏偏好取或：任一成立即藏
         // 中间按钮区（条区视图本身仍 VISIBLE，候选照常画）。
-        val skinSuppressed =
-            SkinSnapshotProvider.peek()?.suppressToolbar == true
+        // 皮肤 v3 死壳删除后快照恒为 null，皮肤压制恒 false。
+        val skinSuppressed = false
         val hidden = skinSuppressed || runCatching {
             ToolbarUserStore.load(File(context.filesDir, ToolbarUserStore.FILE_NAME)).data.hideToolbar
         }.getOrDefault(false)
@@ -1631,52 +1534,14 @@ class KeyboardWindowView(
         // 解码失败回落制备位图（原有口径）；28 以下静态首帧。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) gifDrawable?.stop()
         gifDrawable = null
-        val bg = SkinSnapshotProvider.peek()?.background
-        if (bg != null && bg.backgroundAssetExt == "gif" &&
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-        ) {
-            val raw = SkinLibrary.layout.assetFiles(bg.assetSha256)
-                .firstOrNull { it.isFile }
-            val animated = raw?.let {
-                runCatching {
-                    val source = android.graphics.ImageDecoder.createSource(it)
-                    android.graphics.ImageDecoder.decodeDrawable(source)
-                        as? android.graphics.drawable.AnimatedImageDrawable
-                }.getOrNull()
-            }
-            if (animated != null) {
-                gifDrawable = animated
-                background = animated
-                animated.start()
-                return
-            }
-        }
-        val bitmap = SkinSnapshotProvider.currentBackgroundBitmap()
-        // S8：背景优先级——位图＞渐变＞纯色（GIF 在上层另处理，
-        // 此处只定窗口底；渐变缺省时回落纯色，位图失效时回落渐变）。
-        val base: android.graphics.drawable.Drawable? =
-            if (bitmap != null && !bitmap.isRecycled) {
-                android.graphics.drawable.BitmapDrawable(resources, bitmap)
-            } else {
-                SkinSnapshotProvider.peek()?.backgroundGradient?.let {
-                    GradientBackgroundDrawable(it)
-                }
-            }
-        if (base != null) {
-            // 全局样式已删：磨砂叠加层是纯全局样式值，无主题／皮肤来源，不再盖遮罩。
-            background = base
-        } else {
-            background = null
-            setBackgroundColor(cachedColors.background)
-        }
+        // 皮肤 v3 死壳删除后快照恒为 null，无背景位图／渐变／GIF，
+        // 恒回落主题纯色背景。
+        background = null
+        setBackgroundColor(cachedColors.background)
     }
 
     /** 底部安全间距生效值：皮肤 presence 指定时取皮肤值，否则全局偏好（定稿四.3）。 */
     private fun effectiveBottomInsetDp(): Int {
-        val snapshot = SkinSnapshotProvider.peek()
-        if (snapshot != null && GeometryField.BOTTOM_INSET in snapshot.geometryPresence) {
-            return snapshot.effectiveGeometry.getValue(GeometryField.BOTTOM_INSET).roundToInt()
-        }
         return KeyboardManager.Keyboard.Padding.getBottomDp(context)
     }
 
@@ -1685,26 +1550,14 @@ class KeyboardWindowView(
      * 否则左右沿用全局水平边距、顶部为 0（无皮肤值时布局与旧版一致）。
      */
     private fun effectiveTopInsetDp(): Int {
-        val snapshot = SkinSnapshotProvider.peek()
-        if (snapshot != null && GeometryField.TOP_INSET in snapshot.geometryPresence) {
-            return snapshot.effectiveGeometry.getValue(GeometryField.TOP_INSET).roundToInt()
-        }
         return 0
     }
 
     private fun effectiveLeftInsetDp(): Int {
-        val snapshot = SkinSnapshotProvider.peek()
-        if (snapshot != null && GeometryField.LEFT_INSET in snapshot.geometryPresence) {
-            return snapshot.effectiveGeometry.getValue(GeometryField.LEFT_INSET).roundToInt()
-        }
         return KeyboardManager.Keyboard.Padding.getHorizontalDp(context)
     }
 
     private fun effectiveRightInsetDp(): Int {
-        val snapshot = SkinSnapshotProvider.peek()
-        if (snapshot != null && GeometryField.RIGHT_INSET in snapshot.geometryPresence) {
-            return snapshot.effectiveGeometry.getValue(GeometryField.RIGHT_INSET).roundToInt()
-        }
         return KeyboardManager.Keyboard.Padding.getHorizontalDp(context)
     }
 
@@ -1714,52 +1567,9 @@ class KeyboardWindowView(
      * onMeasure 与 onLayout 同调本函数，度量与布局不得各算一套。
      */
     private fun panelBarHeightPx(density: Float): Int {
-        val spec = SkinSnapshotProvider.peek()
-            ?.toolbarHeightFor(keyboardStateManager.currentKeyboardType)
-            ?: return (PANEL_HEIGHT_DP * density).roundToInt()
-        val screenHeightDp = fullScreenHeight() / density
-        return (spec.resolveDp(screenHeightDp, PANEL_HEIGHT_DP.toFloat()) * density).roundToInt()
+        return (PANEL_HEIGHT_DP * density).roundToInt()
     }
 
-    /**
-     * 窗口是否真在绘制：键盘隐藏时本视图仍 attached 在 IME 窗口上，
-     * 只有 isShown 且窗口可见性为 VISIBLE 才说明屏幕上看得见、
-     * onDraw 会发生（皮肤应用事务的选路判据，见 SkinRuntime）。
-     */
-    override fun isVisibleNow(): Boolean =
-        isShown && windowVisibility == View.VISIBLE
-
-    /** 皮肤应用事务的窗口接口：刷新一次，刷新后的首帧回调一次（详设 §2.4）。 */
-    override fun refreshSkinTheme(onFirstDraw: (() -> Unit)?) {
-        post {
-            if (onFirstDraw != null) {
-                lateinit var listener: android.view.ViewTreeObserver.OnDrawListener
-                listener = object : android.view.ViewTreeObserver.OnDrawListener {
-                    // Android 禁止在 onDraw 回调内注销 OnDrawListener
-                    // （抛 IllegalStateException）：旧代码在此自注销，
-                    // 此前因窗口不绘制从未触发；延迟验证让首帧真正
-                    // 到达后立即整进程闪退（真机实证 16:28:58），
-                    // 随后启动对账把未验证的 pending 回滚，表现为
-                    // 「应用不成功」。修复：注销推迟到下一消息循环，
-                    // fired 保证注销前即使再绘制也不重复回调。
-                    var fired = false
-
-                    override fun onDraw() {
-                        if (fired) return
-                        fired = true
-                        post {
-                            runCatching {
-                                viewTreeObserver.removeOnDrawListener(listener)
-                            }
-                        }
-                        onFirstDraw()
-                    }
-                }
-                viewTreeObserver.addOnDrawListener(listener)
-            }
-            refreshColors()
-        }
-    }
 
     // 仅当解析出的配色与当前缓存不一致时才全量刷新（主题/跟随系统深浅变化等场景）。
     // 2026-10-27 第一组旋转加固：方向变化同样触发全量刷新——
@@ -1807,16 +1617,6 @@ class KeyboardWindowView(
     private var lastKnownOptionValues: Map<String, Boolean> = emptyMap()
     private var optionRefreshSeq = 0
 
-    /**
-     * 接线轮 R1：锁定／条件变化后的键盘刷新（post 投递，不在
-     * 事件分发中途同步重建）。键盘重建让装配器取最新锁定与门
-     * 控；面板刷新让工具栏钮取最新锁定动作。
-     */
-    fun refreshNotificationState() {
-        keyboardStateManager.rebuild()
-        panel.refreshTheme(keyboardStateManager.currentKeyboardType)
-        refreshToolbarHidden()
-    }
 
     /** 接线轮 R1：方案／回车类型变化时喂给通知状态（变化才喂）。 */
     private fun feedSchemeAndReturnKeyEvents() {
@@ -1824,31 +1624,11 @@ class KeyboardWindowView(
         val schemaId = schema?.id
         if (schemaId != lastFedSchemaId) {
             lastFedSchemaId = schemaId
-            if (schemaId != null) {
-                // P1：方案事件带名（ID 或名二选一匹配，名空时只带 ID）。
-                SkinRuntimeState.onEvent(
-                    NotificationEvent(
-                        NotificationSource.SCHEME, schemaId,
-                        schema?.name?.takeIf { it.isNotEmpty() },
-                    ),
-                )
-            }
             refreshOptionStateAsync()
         }
         val returnType = keyboardStateManager.currentReturnKeyType()
         if (returnType != lastFedReturnKeyType) {
             lastFedReturnKeyType = returnType
-            SkinRuntimeState.onEvent(
-                NotificationEvent(NotificationSource.RETURN_KEY_TYPE, returnType, null),
-            )
-            // A6：回车类型现值同步进条件表（条件样式门控用，
-            // 与通知事件同触发，键盘重建时装配器取用）。
-            SkinRuntimeState.updateConditionCurrent(
-                SkinRuntimeState.conditionCurrent() + mapOf(
-                    ConditionStyleParser.RETURN_KEY_TYPE_KEY to
-                        ConditionCurrent.StringValue(returnType),
-                ),
-            )
         }
     }
 
@@ -1867,12 +1647,8 @@ class KeyboardWindowView(
     fun refreshOptionStateAsync() {
         val seq = ++optionRefreshSeq
         val schemaId = keyboardStateManager.getCurrentSchema()?.id ?: return
-        val snapshot = SkinSnapshotProvider.peek()
-        val conditionOptionNames = snapshot?.conditionStyles
-            ?.mapNotNull { entry ->
-                entry.conditionKey.removePrefix(ConditionStyleParser.RIME_OPTION_PREFIX)
-                    .takeIf { entry.conditionKey.startsWith(ConditionStyleParser.RIME_OPTION_PREFIX) }
-            }.orEmpty()
+        // 皮肤 v3 死壳删除后快照恒为 null，条件选项名恒为空。
+        val conditionOptionNames = emptyList<String>()
         appScope.launch {
             val engine = EngineFactory.current() as? IRimeJob ?: return@launch
             // 切方案竞态自愈（动态值刷新口径）：引擎切方案走 actions
@@ -1908,24 +1684,7 @@ class KeyboardWindowView(
                 }
             }
             if (seq != optionRefreshSeq) return@launch
-            for ((name, value) in values) {
-                if (lastKnownOptionValues[name] != value) {
-                    SkinRuntimeState.onEvent(
-                        NotificationEvent(
-                            NotificationSource.RIME_OPTION, name, value.toString(),
-                        ),
-                    )
-                }
-            }
             lastKnownOptionValues = values
-            // 接线轮 R2：条件现值经纯映射写入运行态（门控集与
-            // 激活集由装配器构建期取用，见 KeyStyleResolver）。
-            SkinRuntimeState.updateConditionCurrent(
-                OptionStateMapper.mapConditionCurrent(
-                    conditionOptionNames, values,
-                    currentKeyboard?.name() == SymbolKeyboard.NAME,
-                ),
-            )
             // 接线轮 R3：选项标签经纯映射填入钩子并原地推送
             // （无值项缺席，键回落静态 label）。
             optionLabelValues = OptionStateMapper.mapOptionLabels(switches, values)
@@ -2223,15 +1982,7 @@ class KeyboardWindowView(
         val joined = items.joinToString("") { it.text }
         // 藏 span 校验的比对基线（I-S4）：组字串以此为准，空串即清除。
         TypedUndoLedger.noteComposingText(joined)
-        if (joined != lastFedPreedit) {
-            lastFedPreedit = joined
-            SkinRuntimeState.onEvent(
-                NotificationEvent(
-                    NotificationSource.PREEDIT, null,
-                    if (items.isEmpty()) "empty" else "nonempty",
-                ),
-            )
-        }
+        lastFedPreedit = joined
         lastComposing = items.joinToString("") { it.text }.takeIf { it.isNotEmpty() }
         pushDynamicTexts()
     }
@@ -2255,38 +2006,11 @@ class KeyboardWindowView(
         // 不改类型，故场景键盘高度不受上一个类型高度牵连，仍走
         // 既有链；类型高度只在类型键盘显示时生效。
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val snapshot = SkinSnapshotProvider.peek()
-        val currentName = currentKeyboard?.name()
-        val layoutPercent: Int? = when {
-            snapshot == null || currentName == null -> null
-            currentName.startsWith(CustomLayoutRuntime.PREFIX) -> {
-                val resolved = if (isLandscape) {
-                    snapshot.resolvedLayoutLandscape ?: snapshot.resolvedLayout
-                } else {
-                    snapshot.resolvedLayout
-                }
-                resolved?.heightPercent?.roundToInt()
-            }
-            else -> snapshot.builtinLayouts[currentName]?.heightPercent?.roundToInt()
-        }
-        val geometry = snapshot?.keyboardGeometry
-        val skinPercent = geometry
-            ?.takeIf { KeyboardGeometryField.HEIGHT_PERCENT in it.presence }
-            ?.values
-            ?.getValue(KeyboardGeometryField.HEIGHT_PERCENT)
-            ?.roundToInt()
-        val skinLandscapePercent = geometry
-            ?.takeIf { KeyboardGeometryField.HEIGHT_PERCENT_LANDSCAPE in it.presence }
-            ?.values
-            ?.getValue(KeyboardGeometryField.HEIGHT_PERCENT_LANDSCAPE)
-            ?.roundToInt()
-        val typePercent = typeHeightPercent(
-            snapshot, keyboardStateManager.currentKeyboardType, isLandscape,
-        )
-        val percent = typePercent ?: resolveHeightPercent(
-            layoutPercent,
-            skinPercent,
-            skinLandscapePercent,
+        // 皮肤 v3 死壳删除后快照恒为 null，全部皮肤级高度恒缺席，走 App 设置。
+        val percent = resolveHeightPercent(
+            null,
+            null,
+            null,
             isLandscape,
             KeyboardManager.Keyboard.getHeightPercent(context),
             KeyboardManager.Keyboard.getHeightPercentLandscape(context),

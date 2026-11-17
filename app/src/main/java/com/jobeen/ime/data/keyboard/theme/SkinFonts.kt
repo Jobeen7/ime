@@ -1,13 +1,11 @@
 package com.jobeen.ime.data.keyboard.theme
 
-import com.jobeen.ime.skin.model.SkinValidator
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 /**
  * 皮肤字族解析（2026-10-27 新增分流；2026-10-28 截图 6 项补渲染侧回退）。
  *
  * 来源：当前已验证快照的 [fontFamily]（校验期已白名单化，见
- * SkinValidator.SYSTEM_FONT_FAMILIES）；无快照或未指定时返回 null，
+ * SYSTEM_FONT_FAMILIES）；无快照或未指定时返回 null，
  * 调用方保留原有字体（绝不把“未指定”变成一次字体切换）。
  *
  * 渲染侧回退（2026-10-29 外观轮起由 GlobalFonts 承接）：
@@ -16,8 +14,27 @@ import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
  */
 object SkinFonts {
 
-    /** 当前皮肤字族名；无皮肤/未指定时为 null。 */
-    fun familyName(): String? = SkinSnapshotProvider.peek()?.fontFamily
+    /** 当前皮肤字族名；快照恒为 null，恒返回 null（调用方保留原有字体）。 */
+    fun familyName(): String? = null
+
+    /**
+     * 系统字族白名单（2026-10-27 新增分流）：Typeface.create 对
+     * 未知族名静默回落默认字体、无法与“指定了默认字体”区分，故
+     * 校验期只接受 Android 系统字族；其它名字一律按非法值回退并
+     * 记 issue，不进快照。`default` 为显式默认别名（等价于未指定）。
+     */
+    val SYSTEM_FONT_FAMILIES: Set<String> = setOf(
+        "sans-serif",
+        "sans-serif-light",
+        "sans-serif-thin",
+        "sans-serif-condensed",
+        "sans-serif-medium",
+        "sans-serif-black",
+        "sans-serif-smallcaps",
+        "serif",
+        "monospace",
+        "serif-monospace",
+    )
 
     /**
      * 字族名归一化（纯函数，可 JVM 单测）：null/空白/"default"
@@ -28,7 +45,7 @@ object SkinFonts {
         if (raw.isNullOrBlank()) return null
         val normalized = raw.trim().lowercase()
         if (normalized == "default") return null
-        return normalized.takeIf { it in SkinValidator.SYSTEM_FONT_FAMILIES }
+        return normalized.takeIf { it in SYSTEM_FONT_FAMILIES }
     }
 
     /**

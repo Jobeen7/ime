@@ -11,6 +11,15 @@ import kotlinx.serialization.json.put
 import kotlin.math.max
 import kotlin.random.Random
 
+// 校验限值（内联自已删的 LayoutValidator 常量：本类是唯一使用方，
+// 只用常量、不调 validate()；值与 HEAD LayoutValidator.kt:56-63 一致）。
+private const val MAX_ROWS = 8
+private const val MAX_KEYS_PER_ROW = 12
+private const val MAX_TOTAL_KEYS = 64
+private const val MIN_WEIGHT = 0.05
+private const val MAX_WEIGHT = 20.0
+private const val DEFAULT_WEIGHT = 1.0
+
 /**
  * 可视化布局编辑器的数据模型（2026-11-16 松烟可取项 3a：只学思路
  * 自己重写，不搬 GPL 代码）。
@@ -20,11 +29,9 @@ import kotlin.random.Random
  * 未知节点不剥除）。所有操作返回新树（不可变，Compose 状态友好），
  * 入参非法（行／键不存在、越限）返回 null，调用方不写盘。
  *
- * 校验口径与 [LayoutValidator] 同源：行 ≤ [LayoutValidator.MAX_ROWS]、
- * 每行键 ≤ [LayoutValidator.MAX_KEYS_PER_ROW]、键权重
- * [LayoutValidator.MIN_WEIGHT]–[LayoutValidator.MAX_WEIGHT]、
- * stableId 必填且唯一。保存时仍由 [LayoutValidator.validate] 全量
- * 复核（本类只做操作期防呆，不代替保存校验）。
+ * 校验口径：行 ≤ 8、每行键 ≤ 12、总键 ≤ 64、键权重 0.05–20.0、
+ * stableId 必填且唯一（限值内联自已删的 LayoutValidator 常量；
+ * 保存校验随验证器一并删除，本类只做操作期防呆）。
  *
  * 键身份 = stableId（文件 `stableId` 字段）：重排／增删其他键时
  * 存量键 stableId 不变。新增键的 stableId 由 [newStableId] 生成
@@ -92,7 +99,7 @@ object LayoutEditorModel {
     /** 改键宽度权重（钳制到校验域内；非法输入返回 null）。 */
     fun setWeight(tree: JsonObject, stableId: String, weight: Double): JsonObject? {
         if (!weight.isFinite()) return null
-        val clamped = weight.coerceIn(LayoutValidator.MIN_WEIGHT, LayoutValidator.MAX_WEIGHT)
+        val clamped = weight.coerceIn(MIN_WEIGHT, MAX_WEIGHT)
         return updateKey(tree, stableId) { key ->
             JsonObject(key + (FIELD_WIDTH_WEIGHT to JsonPrimitive(clamped)))
         }
@@ -138,13 +145,13 @@ object LayoutEditorModel {
     ): JsonObject? {
         val currentRows = rows(tree)
         if (rowIndex !in currentRows.indices) return null
-        if (currentRows[rowIndex].size >= LayoutValidator.MAX_KEYS_PER_ROW) return null
+        if (currentRows[rowIndex].size >= MAX_KEYS_PER_ROW) return null
         val totalKeys = currentRows.sumOf { it.size }
-        if (totalKeys >= LayoutValidator.MAX_TOTAL_KEYS) return null
+        if (totalKeys >= MAX_TOTAL_KEYS) return null
         val newKey = buildJsonObject {
             put(FIELD_STABLE_ID, newStableId(allStableIds(tree)))
             put(FIELD_LABEL, label)
-            put(FIELD_WIDTH_WEIGHT, LayoutValidator.DEFAULT_WEIGHT)
+            put(FIELD_WIDTH_WEIGHT, DEFAULT_WEIGHT)
             put(FIELD_TAP, tap)
         }
         return replaceRow(tree, rowIndex, currentRows[rowIndex] + newKey)
@@ -187,7 +194,7 @@ object LayoutEditorModel {
             MoveDirection.UP -> {
                 if (loc.rowIndex <= 0) return null
                 val target = currentRows[loc.rowIndex - 1]
-                if (target.size >= LayoutValidator.MAX_KEYS_PER_ROW) return null
+                if (target.size >= MAX_KEYS_PER_ROW) return null
                 val key = row[loc.keyIndex]
                 val newRow = row.filterIndexed { i, _ -> i != loc.keyIndex }
                 replaceRow(tree, loc.rowIndex, newRow)?.let {
@@ -197,7 +204,7 @@ object LayoutEditorModel {
             MoveDirection.DOWN -> {
                 if (loc.rowIndex >= currentRows.size - 1) return null
                 val target = currentRows[loc.rowIndex + 1]
-                if (target.size >= LayoutValidator.MAX_KEYS_PER_ROW) return null
+                if (target.size >= MAX_KEYS_PER_ROW) return null
                 val key = row[loc.keyIndex]
                 val newRow = row.filterIndexed { i, _ -> i != loc.keyIndex }
                 replaceRow(tree, loc.rowIndex, newRow)?.let {
@@ -210,11 +217,11 @@ object LayoutEditorModel {
     /** 末尾加空行（行数上限内；新行先放一个默认键，空行保存校验会判无效）。 */
     fun addRow(tree: JsonObject): JsonObject? {
         val currentRows = rows(tree)
-        if (currentRows.size >= LayoutValidator.MAX_ROWS) return null
+        if (currentRows.size >= MAX_ROWS) return null
         val newKey = buildJsonObject {
             put(FIELD_STABLE_ID, newStableId(allStableIds(tree)))
             put(FIELD_LABEL, "键")
-            put(FIELD_WIDTH_WEIGHT, LayoutValidator.DEFAULT_WEIGHT)
+            put(FIELD_WIDTH_WEIGHT, DEFAULT_WEIGHT)
             put(FIELD_TAP, actionText("键"))
         }
         val rowsArray = (tree[FIELD_ROWS] as? JsonArray)?.toMutableList() ?: return null

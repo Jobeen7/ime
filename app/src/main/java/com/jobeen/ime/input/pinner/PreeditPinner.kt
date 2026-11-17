@@ -8,7 +8,6 @@ import android.view.View
 import android.view.WindowManager
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.panel.panelColorScheme
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 class PreeditPinner(context: Context) : IPinner {
 
@@ -54,10 +53,8 @@ class PreeditPinner(context: Context) : IPinner {
         // 样式其余项在 applyTheme 之后覆盖令牌值。
         val density = context.resources.displayMetrics.density
         val screenHeightDp = context.resources.displayMetrics.heightPixels / density
-        val snapshot = SkinSnapshotProvider.peek()
-        view.applySkinStyle(snapshot?.preeditStyle)
-        view.pillHeightDp = snapshot?.preeditHeightFor(panelType)?.resolveDp(screenHeightDp, 30f)
-            ?: snapshot?.preeditStyle?.heightDp ?: 30f
+        view.applySkinStyle(null)
+        view.pillHeightDp = 30f
         // 主题变化可能改变尺寸，失效 measure 缓存
         lastMeasuredItems = null
     }

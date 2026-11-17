@@ -25,7 +25,6 @@ import com.jobeen.ime.skin.perf.PerfRow
 import com.jobeen.ime.skin.perf.PerfSnapshot
 import com.jobeen.ime.skin.perf.buildPerfSections
 import com.jobeen.ime.skin.perf.formatPerfReport
-import com.jobeen.ime.skin.runtime.SkinKeyImageStore
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -386,8 +385,8 @@ class PerformancePanelView(
             lastCpuWallMs = wallMs
         }
 
-        val (skinCount, skinBytes) = runCatching { SkinKeyImageStore.cacheStats() }
-            .getOrDefault(0 to 0L)
+        // 皮肤 v3 死壳删除后图片缓存恒空（旧 cacheStats 恒 (0, 0)）。
+        val (skinCount, skinBytes) = 0 to 0L
         val (userdbCount, userdbBytes, leveldbNames) = userdbStats()
         // 键盘窗口层级视图总数：面板挂在键盘窗口内，rootView 即窗口根；
         // 未挂接时退回面板自身层级。

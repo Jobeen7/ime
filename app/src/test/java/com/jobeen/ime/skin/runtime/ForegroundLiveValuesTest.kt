@@ -7,10 +7,6 @@ import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.skin.model.DynamicTextSource
-import com.jobeen.ime.skin.model.KeyForegroundLayer
-import com.jobeen.ime.skin.model.KeyOverride
-import com.jobeen.ime.skin.model.SkinSnapshot
-import com.jobeen.ime.skin.store.SkinGenRef
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -64,78 +60,6 @@ class ForegroundLiveValuesTest {
         assertNull(DynamicTextSource.fromPeerVariable("rimeCandidate"))
     }
 
-    @Test
-    fun liveTextResolvesKnownVariablesAndEmptiesMissing() {
-        val values = mapOf(
-            DynamicTextSource.CANDIDATE_FIRST.jsonName to "你好",
-            DynamicTextSource.SCHEME_NAME.jsonName to "万象",
-        )
-        assertEquals(
-            "首选：你好",
-            KeyOverrideApplier.resolveForegroundLiveText("首选：\$rimeCandidate", values),
-        )
-        // 无值变量替为空串，永不原样露出记号。
-        assertEquals(
-            "组字：",
-            KeyOverrideApplier.resolveForegroundLiveText("组字：\$rimePreedit", values),
-        )
-        // 未知记号原样保留（再走占位替换口径）。
-        assertEquals(
-            "\$rimeUnknown",
-            KeyOverrideApplier.resolveForegroundLiveText("\$rimeUnknown", values),
-        )
-        assertEquals(
-            "万象·你好",
-            KeyOverrideApplier.resolveForegroundLiveText(
-                "\$rimeSchemaName·\$rimeCandidate", values,
-            ),
-        )
-    }
 
-    @Test
-    fun liveTemplateKeptOnlyWhenTemplateHasLiveVariable() {
-        assertEquals(
-            "首选：\$rimeCandidate",
-            KeyOverrideApplier.foregroundLiveTemplate("首选：\$rimeCandidate"),
-        )
-        assertNull(KeyOverrideApplier.foregroundLiveTemplate("静态文字"))
-        assertNull(KeyOverrideApplier.foregroundLiveTemplate(null))
-        assertNull(KeyOverrideApplier.foregroundLiveTemplate("\$rimeUnknown"))
-    }
 
-    @Test
-    fun applyResolvesForegroundLiveTextAndKeepsTemplate() {
-        val snapshot = SkinSnapshot(
-            ref = SkinGenRef("skin-1", "h".repeat(64), 1),
-            name = "test",
-            colorScheme = scheme,
-            geometryPresence = emptySet(),
-            effectiveGeometry = emptyMap(),
-            background = null,
-            degradations = emptySet(),
-            layoutId = null,
-            keyOverrides = mapOf(
-                "KEY_Q" to KeyOverride(
-                    foregroundLayers = listOf(
-                        KeyForegroundLayer(type = "text", text = "首选：\$rimeCandidate"),
-                        KeyForegroundLayer(type = "text", text = "静态层"),
-                    ),
-                ),
-            ),
-        )
-        val result = KeyOverrideApplier.apply(
-            "Qwerty",
-            QwertyKeyboard.buildLayout(Variant.Accent),
-            snapshot,
-            emptyMap(),
-            dynamicTexts = mapOf(DynamicTextSource.CANDIDATE_FIRST to "你好"),
-        )
-        val copied = result.flatten().first { it.id == "KEY_Q" }
-        val layers = copied.appearance.skinForegroundLayers!!
-        assertEquals(2, layers.size)
-        assertEquals("首选：你好", layers[0].text)
-        assertEquals("首选：\$rimeCandidate", layers[0].dynamicTemplate)
-        assertEquals("静态层", layers[1].text)
-        assertNull(layers[1].dynamicTemplate)
-    }
 }

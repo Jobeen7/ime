@@ -62,7 +62,6 @@ import com.jobeen.ime.input.panel.toolbar.ToolbarUserData
 import com.jobeen.ime.input.panel.toolbar.ToolbarUserStore
 import com.jobeen.ime.skin.model.WhitelistAction
 import com.jobeen.ime.skin.diag.DiagLog
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
@@ -118,11 +117,11 @@ fun ToolbarScreen(onBack: () -> Unit) {
     // 服务面板创建后的 peek() 口径一致（设置页进程可能尚未加载
     // 快照，直接 peek 会误取 builtin 键、与键盘侧串台）。
     val skinId = remember {
-        SkinSnapshotProvider.current(context)?.ref?.skinId
-            ?: ToolbarUserStore.BUILTIN_SKIN_KEY
+        ToolbarUserStore.BUILTIN_SKIN_KEY
     }
     // 皮肤栏按钮 id（与 ToolbarMainPage 同口径）：列表行回落计数用。
-    val skinButtonIds = SkinSnapshotProvider.current(context)?.toolbar?.buttons?.map { it.id }
+    // 皮肤 v3 死壳删除后皮肤栏按钮 id 恒为空（回落默认计数）。
+    val skinButtonIds: List<String>? = null
     var data by remember { mutableStateOf(ToolbarUserStore.load(storeFile).data) }
     // U-M1：页内导航与编辑草稿随页内态保存——旋转不再丢编辑页与未保存
     // 的草稿（data 本身由防抖盘＋退出刷盘覆盖，不进 rememberSaveable）。
@@ -198,8 +197,7 @@ fun ToolbarScreen(onBack: () -> Unit) {
         val targetId = currentSkinState().activeToolbarId
         editToolbarId = targetId
         if (targetId == null && currentSkinState().buttons.isEmpty()) {
-            val skinButtonIds =
-                SkinSnapshotProvider.current(context)?.toolbar?.buttons?.map { it.id }
+            val skinButtonIds: List<String>? = null
             editSeed = ToolbarUserStore.seedEntries(skinButtonIds)
             editDraft = editSeed!!
         } else {
@@ -476,7 +474,8 @@ private fun ToolbarMainPage(
 ) {
     val state = data.skins[skinId] ?: ToolbarSkinState()
     val context = LocalContext.current
-    val skinIds = SkinSnapshotProvider.current(context)?.toolbar?.buttons?.map { it.id }
+    // 皮肤 v3 死壳删除后皮肤栏按钮 id 恒为空（回落默认计数）。
+    val skinIds: List<String>? = null
     val currentCount = ToolbarUserStore.mainPageCount(
         skinId,
         data,

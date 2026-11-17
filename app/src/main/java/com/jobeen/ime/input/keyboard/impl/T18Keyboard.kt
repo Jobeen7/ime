@@ -7,12 +7,8 @@ import android.content.Context
 import android.content.res.Configuration
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.input.keyboard.key.KeyIds
-import com.jobeen.ime.skin.layout.BuiltinLayoutApplier
 import com.jobeen.ime.skin.layout.CompactLayoutGenerator
-import com.jobeen.ime.skin.runtime.KeyOverrideApplier
-import com.jobeen.ime.skin.runtime.PlaceholderValues
 import com.jobeen.ime.skin.runtime.SkinColorMode
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.input.keyboard.key.backspaceKey
@@ -63,24 +59,7 @@ class T18Keyboard(
          */
         fun effectiveLayout(context: Context, returnVariant: Variant): List<List<KeyDef>> {
             val raw = buildLayout(returnVariant)
-            val snapshot = SkinSnapshotProvider.current(context) ?: return raw
-            val arranged = snapshot.builtinLayouts[NAME]?.let { override ->
-                BuiltinLayoutApplier.apply(
-                    raw, override,
-                    landscape = context.resources.configuration.orientation ==
-                        Configuration.ORIENTATION_LANDSCAPE,
-                    placeholders = PlaceholderValues.current(context),
-                )
-            } ?: raw
-            return KeyOverrideApplier.apply(
-                NAME, arranged, snapshot, PlaceholderValues.current(context),
-                scheme = snapshot.effectiveColorScheme(SkinColorMode.isDark(context)),
-                notifications = com.jobeen.ime.skin.runtime.SkinRuntimeState.latchedNotifications(),
-                gatedStyleNames = com.jobeen.ime.skin.runtime.SkinRuntimeState.gatedStyleNames(),
-                activeStyleNames = com.jobeen.ime.skin.runtime.SkinRuntimeState.activeStyleNames(),
-                mnemonicEnabled = com.jobeen.ime.data.manager.KeyboardManager.Keyboard.Mnemonic.isEnabled(context),
-                decorationEnabled = com.jobeen.ime.data.manager.KeyboardManager.Keyboard.Decoration.isEnabled(context),
-            )
+            return raw
         }
 
         /** 出厂布局（纯函数）：分组按 QWERTY 顺序流排，行宽和见类注释。 */

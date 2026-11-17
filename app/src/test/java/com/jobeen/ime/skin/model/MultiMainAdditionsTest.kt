@@ -2,7 +2,6 @@ package com.jobeen.ime.skin.model
 
 import com.jobeen.ime.input.keyboard.window.KeyboardTypeState
 import com.jobeen.ime.input.keyboard.window.shouldPersistType
-import com.jobeen.ime.skin.layout.LandscapePatch
 import com.jobeen.ime.skin.layout.LayoutKeyModel
 import com.jobeen.ime.skin.layout.LayoutModel
 import kotlinx.serialization.json.Json
@@ -46,87 +45,7 @@ class MultiMainAdditionsTest {
     }
 
 
-    @Test
-    fun swipeKeyboardFieldsSynthesizeTypeSwitch() {
-        val parsed = SkinKeyMappingsParser.parse(
-            Json.parseToJsonElement(
-                """{"symbol_key": {
-                    "swipeUpKeyboard": "symbolic",
-                    "swipeDownKeyboard": "emojis",
-                    "showSwipeIndicators": true
-                }}""",
-            ) as JsonObject,
-            isOverridable = { true },
-            isAnchor = { false },
-        )
-        val override = parsed.overrides["symbol_key"]
-        assertEquals(SkinAction.KeyboardType("symbolic"), override?.swipeUp)
-        assertEquals(SkinAction.KeyboardType("emojis"), override?.swipeDown)
-        assertTrue(override?.showSwipeIndicators == true)
-    }
 
-    @Test
-    fun explicitSwipeWinsOverSwipeKeyboardField() {
-        val parsed = SkinKeyMappingsParser.parse(
-            Json.parseToJsonElement(
-                """{"symbol_key": {
-                    "swipeUp": {"type": "keyboardType", "value": "alphabetic"},
-                    "swipeUpKeyboard": "symbolic"
-                }}""",
-            ) as JsonObject,
-            isOverridable = { true },
-            isAnchor = { false },
-        )
-        assertEquals(
-            SkinAction.KeyboardType("alphabetic"),
-            parsed.overrides["symbol_key"]?.swipeUp,
-        )
-    }
 
-    @Test
-    fun blankSwipeKeyboardFieldIsRejected() {
-        val parsed = SkinKeyMappingsParser.parse(
-            Json.parseToJsonElement(
-                """{"symbol_key": {"swipeUpKeyboard": "  "}}""",
-            ) as JsonObject,
-            isOverridable = { true },
-            isAnchor = { false },
-        )
-        assertTrue(parsed.overrides["symbol_key"] == null)
-        assertTrue(parsed.rejections.isNotEmpty())
-    }
 
-    @Test
-    fun landscapePatchExpandsOntoPortrait() {
-        val portrait = LayoutModel(
-            layoutId = "t9", name = "T9",
-            rows = listOf(
-                listOf(key("a", "a"), key("b", "b")),
-                listOf(key("c", "c")),
-            ),
-            heightPercent = 55.0,
-        )
-        val patch = LayoutModel(
-            layoutId = "t9-land", name = "patch",
-            rows = listOf(
-                listOf(key("b", "B-wide")),
-                listOf(key("c", "c"), key("d", "d")),
-            ),
-            heightPercent = 48.0,
-        )
-        val expanded = LandscapePatch.expand(portrait, patch)
-        assertEquals("t9", expanded.layoutId)
-        assertEquals(48.0, expanded.heightPercent)
-        // 行 0：b 被替换，a 保留；行 1：c 保留，d 追加。
-        assertEquals(listOf("a", "B-wide"), expanded.rows[0].map { it.label })
-        assertEquals(listOf("c", "d"), expanded.rows[1].map { it.label })
-        // 补丁缺行时竖屏行原样保留。
-        val partial = LandscapePatch.expand(
-            portrait,
-            LayoutModel("p", "p", listOf(listOf(key("a", "A")))),
-        )
-        assertEquals(listOf("A", "b"), partial.rows[0].map { it.label })
-        assertEquals(listOf("c"), partial.rows[1].map { it.label })
-        assertEquals(55.0, partial.heightPercent)
-    }
 }

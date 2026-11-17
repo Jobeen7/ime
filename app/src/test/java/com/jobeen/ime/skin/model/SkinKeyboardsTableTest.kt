@@ -79,18 +79,4 @@ class SkinKeyboardsTableTest {
         assertEquals(44.0, withLandscape.heightPercentFor(false))
     }
 
-    @Test
-    fun validatorAcceptsSkinWithKeyboardsTable() {
-        val result = SkinValidator.validate(
-            tree(
-                """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
-                    "stylesDark": {"keyBackground": "#FF222222"},
-                    "keyboards": {"pinyin": {"layoutId": "pin-lay"}}}""",
-            ),
-            157,
-            GeometryFallbacks(12f, 6f, 5f, 10f),
-            assetKind = { null },
-        )
-        assertTrue("keyboards 表不得导致校验拒绝，实际：$result", result is SkinValidator.Result.Valid)
-    }
 }

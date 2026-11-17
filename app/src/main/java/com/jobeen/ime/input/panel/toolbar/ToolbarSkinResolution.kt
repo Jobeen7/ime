@@ -1,7 +1,6 @@
 package com.jobeen.ime.input.panel.toolbar
 
 import com.jobeen.ime.input.panel.PanelAction
-import com.jobeen.ime.skin.model.SkinToolbarSnapshot
 
 /**
  * 皮肤工具栏 vs 出厂默认的优先级抉择（纯函数，可直接单测；
@@ -50,40 +49,19 @@ object ToolbarSkinResolution {
         val collapseIconSymbol: String?,
     )
 
+    /**
+     * 皮肤 v3 死壳删除后快照恒为 null，恒返回出厂默认分支。
+     */
     fun resolve(
-        skinToolbar: SkinToolbarSnapshot?,
         fallbackActions: List<PanelAction>,
-    ): Resolved {
-        val skinButtons = skinToolbar?.buttons
-        return if (skinButtons != null) {
-            val actions = skinButtons.mapNotNull { ToolbarConfig.item(it.id)?.action }
-            val assets = skinButtons.mapNotNull { button ->
-                button.icon?.let { button.id to it.assetId }
-            }.toMap()
-            val symbols = skinButtons.mapNotNull { button ->
-                button.symbol?.let { button.id to it }
-            }.toMap()
-            Resolved(
-                centerActions = actions,
-                centerIconAssets = assets,
-                centerIconSymbols = symbols,
-                hasSkinCenter = true,
-                expandIconAsset = skinToolbar.expandIcon?.assetId,
-                collapseIconAsset = skinToolbar.collapseIcon?.assetId,
-                expandIconSymbol = skinToolbar.expandSymbol,
-                collapseIconSymbol = skinToolbar.collapseSymbol,
-            )
-        } else {
-            Resolved(
-                centerActions = fallbackActions,
-                centerIconAssets = emptyMap(),
-                centerIconSymbols = emptyMap(),
-                hasSkinCenter = false,
-                expandIconAsset = skinToolbar?.expandIcon?.assetId,
-                collapseIconAsset = skinToolbar?.collapseIcon?.assetId,
-                expandIconSymbol = skinToolbar?.expandSymbol,
-                collapseIconSymbol = skinToolbar?.collapseSymbol,
-            )
-        }
-    }
+    ): Resolved = Resolved(
+        centerActions = fallbackActions,
+        centerIconAssets = emptyMap(),
+        centerIconSymbols = emptyMap(),
+        hasSkinCenter = false,
+        expandIconAsset = null,
+        collapseIconAsset = null,
+        expandIconSymbol = null,
+        collapseIconSymbol = null,
+    )
 }

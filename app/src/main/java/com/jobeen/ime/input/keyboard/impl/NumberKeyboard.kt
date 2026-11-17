@@ -9,11 +9,7 @@ import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.input.keyboard.key.KeyIds
-import com.jobeen.ime.skin.layout.BuiltinLayoutApplier
-import com.jobeen.ime.skin.runtime.KeyOverrideApplier
-import com.jobeen.ime.skin.runtime.PlaceholderValues
 import com.jobeen.ime.skin.runtime.SkinColorMode
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.atKey
 import com.jobeen.ime.input.keyboard.key.backspaceKey
@@ -58,28 +54,7 @@ class NumberKeyboard(
          */
         fun effectiveLayout(context: Context, returnVariant: Variant): List<List<KeyDef>> {
             val raw = buildLayout(returnVariant)
-            val snapshot = SkinSnapshotProvider.current(context) ?: return raw
-            // 内置布局覆盖（2026-10-28）：皮肤含本键盘的内置布局文件时
-            // 按文件重排（出厂键本体 + 文件排版/动作槽），再走既有覆写
-            // 装配（样式/图片/字号等）；无覆盖/排空时恒用出厂布局。
-            val arranged = snapshot.builtinLayouts[NAME]?.let { override ->
-                BuiltinLayoutApplier.apply(
-                    raw, override,
-                    landscape = context.resources.configuration.orientation ==
-                        Configuration.ORIENTATION_LANDSCAPE,
-                    placeholders = PlaceholderValues.current(context),
-                )
-            } ?: raw
-            return KeyOverrideApplier.apply(
-                NAME, arranged, snapshot, PlaceholderValues.current(context),
-                scheme = snapshot.effectiveColorScheme(SkinColorMode.isDark(context)),
-                // 接线轮 R1/R2：构建期取当前锁定通知与条件门控集。
-                notifications = com.jobeen.ime.skin.runtime.SkinRuntimeState.latchedNotifications(),
-                gatedStyleNames = com.jobeen.ime.skin.runtime.SkinRuntimeState.gatedStyleNames(),
-                activeStyleNames = com.jobeen.ime.skin.runtime.SkinRuntimeState.activeStyleNames(),
-                mnemonicEnabled = com.jobeen.ime.data.manager.KeyboardManager.Keyboard.Mnemonic.isEnabled(context),
-                decorationEnabled = com.jobeen.ime.data.manager.KeyboardManager.Keyboard.Decoration.isEnabled(context),
-            )
+            return raw
         }
 
         // 行宽账（行内和＋跨行键宽须恰为 1.0）：右列与 T9 对齐为

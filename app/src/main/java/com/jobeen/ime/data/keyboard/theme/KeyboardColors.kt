@@ -4,10 +4,7 @@ import android.content.Context
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.skin.library.SkinColorMode as LibraryColorMode
 import com.jobeen.ime.skin.library.SkinLibraryPrefs
-import com.jobeen.ime.skin.model.GeometryField
-import com.jobeen.ime.skin.model.KeyboardGeometryField
 import com.jobeen.ime.skin.runtime.SkinColorMode
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import kotlinx.serialization.Serializable
 
 object KeyboardColors {
@@ -103,46 +100,6 @@ object KeyboardColors {
     }
 
     fun resolve(context: Context): ColorScheme {
-        // v3 分流（详设 §2.7，新增分支、旧路径不动）：存在已验证的 v3
-        // 快照时由快照构造配色——几何按 presence 决定读快照值还是全局
-        // 偏好（定稿三.4.2）。B3 旧裁定「快照优先于跟随系统深浅色」
-        // 已于 2026-10-27 第一组修订：一包双色板跟随系统——模式
-        // （SkinColorMode：跟随系统/浅色/深色）决定快照取浅色板
-        // 还是深色板；旧单色板皮肤无深色板，恒取浅色板，与修订前一致。
-        // 无快照时走下方现行路径，行为与 v1.1.14 逐字节一致。
-        val snapshot = SkinSnapshotProvider.current(context)
-        if (snapshot != null) {
-            val isDark = SkinColorMode.isDark(context)
-            val base = snapshot.effectiveColorScheme(isDark)
-            val presence = snapshot.geometryPresence
-            val keyboardPresence = snapshot.keyboardGeometry.presence
-            val skinHasRadius = GeometryField.CORNER_RADIUS in presence ||
-                KeyboardGeometryField.KEY_RADIUS in keyboardPresence
-            // 圆角/间距最终优先级：geometry > appearance > App 设置。
-            // 构建器已按此优先级把胜出值写进 base；此处只需判断
-            // “皮肤是否指定了该项”（两级任一 presence），未指定读偏好。
-            return base.copy(
-                    cornerRadius = if (skinHasRadius) {
-                        base.cornerRadius
-                    } else {
-                        KeyboardManager.Keyboard.KeyRadius.getDp(context).toFloat()
-                    },
-                    keyHMargin = if (GeometryField.KEY_H_MARGIN in presence ||
-                        KeyboardGeometryField.KEY_H_GAP in keyboardPresence
-                    ) {
-                        base.keyHMargin
-                    } else {
-                        KeyboardManager.Keyboard.Gap.getHorizontalDp(context).toFloat()
-                    },
-                    keyVMargin = if (GeometryField.KEY_V_MARGIN in presence ||
-                        KeyboardGeometryField.KEY_V_GAP in keyboardPresence
-                    ) {
-                        base.keyVMargin
-                    } else {
-                        KeyboardManager.Keyboard.Gap.getVerticalDp(context).toFloat()
-                    },
-                )
-        }
         val theme = themeFor(context)
         // 莫奈色是动态主题：Android 12+ 跟随系统 Material You 取色，
         // 低版本或取色失败时 MonetPalette 内部回落静态色板。

@@ -44,22 +44,6 @@ class KeyActionListener(
         // 末尾 noteStage 即 no-op。早返回路径（MultiReturnAction 取不到
         // 输入连接）不产生样本——该路径本就不走到引擎分发。
         val dispatchStart = com.jobeen.ime.skin.perf.PerfMonitor.stageStart()
-        // 接线轮 R1：键盘动作事件喂给通知状态（锁定变化时窗口
-        // 经回调以 post 重建键盘，不在分发中途同步重建）。
-        // A5：事件带区分值（切方案／切类型／rime 选项取参数值，
-        // 其余动作空），通知可按参数值匹配，不只按种类。
-        // 性能 §6：无通知表时不构造事件对象（nameOf／valueOf 查表
-        // ＋一次分配每键都在主线程）；onEvent 内部同样先判空，
-        // 此处只是把构造挪到判空之后。
-        if (com.jobeen.ime.skin.runtime.SkinRuntimeState.hasNotificationState) {
-            com.jobeen.ime.skin.runtime.SkinRuntimeState.onEvent(
-                com.jobeen.ime.skin.notify.NotificationEvent(
-                    com.jobeen.ime.skin.notify.NotificationSource.KEYBOARD_ACTION,
-                    com.jobeen.ime.skin.notify.NotificationActionNames.nameOf(action),
-                    com.jobeen.ime.skin.notify.NotificationActionNames.valueOf(action),
-                ),
-            )
-        }
         when (action) {
             is KeyboardAction.KeySequenceAction -> {
                 engine?.processKey(service, action.asKeyEvent())

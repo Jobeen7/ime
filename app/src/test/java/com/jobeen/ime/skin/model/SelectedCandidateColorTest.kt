@@ -52,23 +52,7 @@ class SelectedCandidateColorTest {
         assertEquals(605, panel.selectedCandidateText)
     }
 
-    @Test
-    fun styleFieldValueInReadsSlot() {
-        val s = scheme(green)
-        assertEquals(green, StyleField.PANEL_SELECTED_CANDIDATE_TEXT.valueIn(s))
-        assertEquals("panel.selectedCandidateText", StyleField.PANEL_SELECTED_CANDIDATE_TEXT.path)
-    }
 
-    @Test
-    fun withStyleOverridesSelectedOnly() {
-        val base = scheme()
-        val updated = SkinSnapshotBuilder.run {
-            base.withStyle(StyleField.PANEL_SELECTED_CANDIDATE_TEXT, green)
-        }
-        assertEquals(green, updated.panel.selectedCandidateText)
-        assertEquals(605, updated.panel.candidateText)
-        assertEquals(base.panel.background, updated.panel.background)
-    }
 
     @Test
     fun compactThemeRoundTripPreservesSlot() {

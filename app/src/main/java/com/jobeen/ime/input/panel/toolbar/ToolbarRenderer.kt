@@ -17,14 +17,11 @@ import com.jobeen.ime.skin.icon.IconAlias
 import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.model.MenuAction
-import com.jobeen.ime.skin.model.SkinToolbarSnapshot
 import com.jobeen.ime.skin.model.ToolbarLayoutSpec
 import com.jobeen.ime.skin.model.ToolbarSlot
 import com.jobeen.ime.skin.model.ToolbarStyleSpec
 import com.jobeen.ime.skin.model.contentRect
 import com.jobeen.ime.skin.model.toolbarSlotGeometry
-import com.jobeen.ime.skin.runtime.KeyStyleResolver
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 /**
  * 自定义钮按压态：涟漪动画进行中（alpha>0 且半径未到峰值）且按压点落在该槽内。
@@ -132,15 +129,6 @@ class ToolbarRenderer(
     centerActions: List<PanelAction> = ToolbarConfig.DEFAULT_ACTIONS,
     centerIconOverrides: Map<String, String> = emptyMap(),
     /**
-     * 皮肤工具栏构成（2026-10-27 工具栏进皮肤）：快照承载构成，
-     * [skinToolbarIcons] 为按资产 id 解码好的图标（只含成功项，
-     * 查无 = 该图标回退内置）。null = 无皮肤构成，用出厂默认。
-     * 构造点统一经 SkinToolbarApplier 解析（StateRenders /
-     * KawaiiPanelView），此处不读快照、不解码。
-     */
-    skinToolbar: SkinToolbarSnapshot? = null,
-    skinToolbarIcons: Map<String, Drawable?> = emptyMap(),
-    /**
      * Symbol 名解析接线（参考项）：工具栏按钮 icon 不是包内
      * 资产 id 时查 Material Symbols 注册表。由构造点注入
      * （MaterialSymbols.drawable）；null = 无符号源，按旧口径绘制空白。
@@ -159,12 +147,6 @@ class ToolbarRenderer(
      * refreshTheme 重设；null = 未定义（出厂排列）。
      */
     var toolbarLayout: ToolbarLayoutSpec? = null,
-    /**
-     * 工具栏钮背景图（审计 D 项）：构造点经 SkinToolbarApplier
-     * 解析结果传入；null = 未定义（钮无背景，旧口径）。
-     * 长驻渲染器由 updateSkinToolbar 重设，回落时清掉。
-     */
-    var buttonBackground: ToolbarButtonBackgroundResolver.Resolved? = null,
     /**
      * 开关启用判定（E6）：构造点注入（StateRenders /
      * KawaiiPanelView，以 ToolbarToggleState.isActive 绑定上下文）；
@@ -284,46 +266,15 @@ class ToolbarRenderer(
         drawable.draw(canvas)
     }
 
-    /**
-     * 工具栏钮背景（审计 D 项）：在图标下画一层 32dp 方框内的
-     * 描述图（描述自身含 9-patch／内容模式，不再 tint）；按压态
-     * （涟漪锚点落在本槽）用高亮变体。无背景时零操作。
-     * 自定义钮（自有背景面）与剪贴板条不走此钩子。
-     */
-    private fun drawButtonBackground(
-        canvas: Canvas,
-        slotLeft: Float,
-        slotRight: Float,
-        cy: Float,
-        density: Float,
-    ) {
-        val bg = buttonBackground ?: return
-        if (slotRight <= slotLeft) return
-        // 方框边 = 32dp，但不超出槽宽（中央区钮多致槽窄时不压邻槽）。
-        val size = minOf(32f * density, slotRight - slotLeft)
-        val cx = (slotLeft + slotRight) / 2f
-        val pressed = pressAlpha > 0 && pressCx in slotLeft..slotRight
-        val drawable = if (pressed) bg.highlight else bg.normal
-        drawable.setBounds(
-            (cx - size / 2f).toInt(), (cy - size / 2f).toInt(),
-            (cx + size / 2f).toInt(), (cy + size / 2f).toInt(),
-        )
-        drawable.draw(canvas)
-    }
 
     private fun dimColor(color: Int): Int {
         return if (recording) (color and 0x00FFFFFF) or 0x5A000000 else color
     }
 
     // 中央区按钮来源（优先级见 ToolbarSkinResolution）：
-    // 皮肤定义中央区 → 皮肤清单 + 皮肤图标（出厂默认全忽略）；
-    // 否则出厂默认。长驻实例经
-    // updateCenterActions（回落出厂默认）或 updateSkinToolbar
-    // （应用皮肤）热更新；边缘图标在绘制期从皮肤字段直读。
+    // 出厂默认。长驻实例经 updateCenterActions（回落出厂默认）热更新。
     private var fallbackCenterActions: List<PanelAction> = centerActions
     private var fallbackCenterIconOverrides: Map<String, String> = centerIconOverrides
-    private var skinToolbarSnapshot: SkinToolbarSnapshot? = skinToolbar
-    private var skinIconDrawables: Map<String, Drawable?> = skinToolbarIcons
 
     private var centerButtons: List<ImageButton> = buildCenterButtons()
 
@@ -441,7 +392,6 @@ class ToolbarRenderer(
                     if (disabled) {
                         paints.toolbarIconColor = (savedColor and 0x00FFFFFF) or 0x62000000.toInt()
                     }
-                    drawButtonBackground(canvas, slot.left, slot.right, cy, density)
                     ImageButton(
                         iconFor(item.action, emptyMap()), item.action, iconScale = iconScale,
                     ).draw(canvas, cx, cy, paints, density)
@@ -533,116 +483,24 @@ class ToolbarRenderer(
     }
 
     private fun buildCenterButtons(): List<ImageButton> {
-        val resolved = ToolbarSkinResolution.resolve(skinToolbarSnapshot, fallbackCenterActions)
-        // 接线轮 R1：锁定通知按按钮 id 命中工具栏键时替换点按动作
-        // （图标保持原钮身份，不跟新动作走；无映射的命令不替换）。
-        // P4：同项的背景／前景样式一并覆盖（与键覆写同口径：背景
-        // 样式取 face 色作钮底，前景样式取 text 色作图标色；无
-        // scheme 时不解析样式，只换动作）。
-        val latched = com.jobeen.ime.skin.runtime.SkinRuntimeState.latchedNotifications()
-        val snapshot = SkinSnapshotProvider.peek()
-        val currentScheme = scheme
+        // 皮肤 v3 死壳删除后通知锁存与键样式恒为空，中央区恒为出厂默认。
+        val resolved = ToolbarSkinResolution.resolve(fallbackCenterActions)
         return resolved.centerActions.map { action ->
-            val actionId = ToolbarConfig.POOL.find { it.action == action }?.id
-            val notification = actionId?.let { latched[it] }
-            val effective = notification?.action
-                ?.let { ToolbarNotificationAction.panelActionFor(it) } ?: action
-            fun styleColor(styleName: String?, pick: (KeyStyleResolver.ResolvedKeyStyle) -> Int?): Int? {
-                if (styleName == null || currentScheme == null) return null
-                val resolution = KeyStyleResolver.resolve(
-                    styleRef = styleName,
-                    overrides = null,
-                    keyStyles = snapshot?.keyStyles ?: emptyMap(),
-                    scheme = currentScheme,
-                )
-                return resolution.style?.let(pick)
-            }
             ImageButton(
-                iconForResolved(action, resolved), effective, iconScale = iconScale,
-                bgColor = styleColor(notification?.backgroundStyle) { it.face },
-                iconTint = styleColor(notification?.foregroundStyle) { it.text },
+                iconFor(action, fallbackCenterIconOverrides), action, iconScale = iconScale,
             )
         }
     }
 
-    /**
-     * 皮肤中央区一钮的图标：皮肤资产解码成功用皮肤图；资产缺失/
-     * 解码失败（图标表查无）回退该钮内置图标。
-     * 符号名（resolved.centerIconSymbols）暂不解析：本分流无
-     * 符号注册表，符号钮同样回退内置图标；图标主题分流在此
-     * 接线（注册表命中用符号字形，未知名记日志并回退内置）。
-     */
-    private fun iconForResolved(
-        action: PanelAction,
-        resolved: ToolbarSkinResolution.Resolved,
-    ): Drawable? {
-        val actionId = ToolbarConfig.POOL.find { it.action == action }?.id ?: return null
-        val assetId = resolved.centerIconAssets[actionId]
-        if (assetId != null) {
-            skinIconDrawables[assetId]?.let { return it }
-            return drawableForIconId(actionId)
-        }
-        // 集成接线（工具栏符号闭合）：皮肤中央区符号名经注册表解析；
-        // 命中用符号字形，未知名记日志并回落该钮内置图标，永不崩溃。
-        val symbol = resolved.centerIconSymbols[actionId]
-        if (symbol != null) {
-            val drawable = symbolIconProvider?.invoke(symbol)
-            if (drawable != null) return drawable
-            com.jobeen.ime.skin.diag.DiagLog.w(
-                "toolbar", "toolbar_icon_unresolved",
-                mapOf("actionId" to actionId, "icon" to symbol),
-            )
-            return drawableForIconId(actionId)
-        }
-        return if (resolved.hasSkinCenter) {
-            drawableForIconId(actionId)
-        } else {
-            iconFor(action, fallbackCenterIconOverrides)
-        }
-    }
 
-    /**
-     * 最左侧展开图标（皮肤资产解码成功时用皮肤图，否则内置菜单/
-     * 返回；符号名 expandSymbol 暂不解析，注册表分流在此接线）。
-     */
-    private fun skinExpandDrawable(): Drawable? =
-        skinToolbarSnapshot?.expandIcon?.assetId?.let { skinIconDrawables[it] }
 
-    /**
-     * 最右侧收起图标（皮肤资产解码成功时用皮肤图，否则内置收起图；
-     * 符号名 collapseSymbol 暂不解析，注册表分流在此接线）。
-     */
-    private fun skinCollapseDrawable(): Drawable? =
-        skinToolbarSnapshot?.collapseIcon?.assetId?.let { skinIconDrawables[it] }
 
-    /**
-     * 集成接线：皮肤边缘符号名（资产优先于符号，见
-     * ToolbarSkinResolution）。命中用符号字形；未知名记日志并返回
-     * null（调用方再回落结构覆盖/内置图），永不崩溃。
-     */
-    private fun skinSymbolDrawable(symbol: String?, actionId: String): Drawable? {
-        if (symbol == null) return null
-        val canonical = IconAlias.resolve(symbol, MaterialSymbols.NAMES.keys) ?: return null
-        val drawable = symbolIconProvider?.invoke(canonical)
-        if (drawable != null) return drawable
-        com.jobeen.ime.skin.diag.DiagLog.w(
-            "toolbar", "toolbar_icon_unresolved",
-            mapOf("actionId" to actionId, "icon" to symbol),
-        )
-        return null
-    }
 
-    private fun skinExpandSymbolDrawable(): Drawable? =
-        skinSymbolDrawable(skinToolbarSnapshot?.expandSymbol, "expand")
 
-    private fun skinCollapseSymbolDrawable(): Drawable? =
-        skinSymbolDrawable(skinToolbarSnapshot?.collapseSymbol, "collapse")
 
     /**
      * 热更新中央区按钮（长驻渲染器刷新用；面板态渲染器
-     * 每次新建、本就读最新默认）。直接调用 = 明确回落出厂默认，
-     * 会清除皮肤态；皮肤刷新走 [updateSkinToolbar]（经
-     * SkinToolbarApplier 抉择，见 KawaiiPanelView.refreshTheme）。
+     * 每次新建、本就读最新默认）。直接调用 = 明确回落出厂默认。
      */
     fun updateCenterActions(
         actions: List<PanelAction>,
@@ -650,23 +508,9 @@ class ToolbarRenderer(
     ) {
         fallbackCenterActions = actions
         fallbackCenterIconOverrides = iconOverrides
-        skinToolbarSnapshot = null
-        skinIconDrawables = emptyMap()
-        buttonBackground = null
         centerButtons = buildCenterButtons()
     }
 
-    /** 热更新皮肤工具栏构成（快照 + 已解码图标；中央区按抉择重建）。 */
-    fun updateSkinToolbar(
-        snapshot: SkinToolbarSnapshot,
-        icons: Map<String, Drawable?>,
-        buttonBackground: ToolbarButtonBackgroundResolver.Resolved? = null,
-    ) {
-        skinToolbarSnapshot = snapshot
-        skinIconDrawables = icons
-        this.buttonBackground = buttonBackground
-        centerButtons = buildCenterButtons()
-    }
 
     /**
      * 按钮图标：先查该动作的图标覆盖（换图标），无覆盖则用动作
@@ -824,9 +668,7 @@ class ToolbarRenderer(
         // 剪贴板态（drawClipbar）不走此分支，仍用内置返回箭头。
         // 布局无菜单槽时整段跳过（menuCenter 为 null）。
         if (menuCenter != null) run {
-            drawButtonBackground(canvas, menuCenter - fixedW / 2f, menuCenter + fixedW / 2f, barCy, density)
-            val d = skinExpandDrawable() ?: skinExpandSymbolDrawable()
-                ?: if (textEditingMode || copyText != null || showArrow) resources.arrow else resources.menu
+            val d = if (textEditingMode || copyText != null || showArrow) resources.arrow else resources.menu
             if (d != null) {
                 d.setTint(dimColor(paints.toolbarIconColor))
                 val iw = d.intrinsicWidth.toFloat() * iconScale
@@ -926,10 +768,6 @@ class ToolbarRenderer(
                 } else if (toggleOn) {
                     paints.toolbarIconColor = paints.toolbarActivedColor
                 }
-                drawButtonBackground(
-                    canvas, centerAreaLeft + otherW * i,
-                    centerAreaLeft + otherW * (i + 1), barCy, density,
-                )
                 btn.draw(
                     canvas, centerAreaLeft + otherW * i + otherW / 2f,
                     barCy, paints, density,
@@ -944,9 +782,8 @@ class ToolbarRenderer(
         // 最右侧槽：皮肤收起图标优先（资产 > 符号名 > 结构覆盖），
         // 均缺失回落内置收起图；展开态仍旋转 180°（与内置图行为一致）。
         // 布局无收起槽时整段跳过。
-        val expandIcon = skinCollapseDrawable() ?: skinCollapseSymbolDrawable() ?: expandDrawable()
+        val expandIcon = expandDrawable()
         if (expandCenter != null && expandIcon != null) {
-            drawButtonBackground(canvas, expandCenter - fixedW / 2f, expandCenter + fixedW / 2f, barCy, density)
             expandIcon.setTint(paints.toolbarIconColor)
             val iw = expandIcon.intrinsicWidth.toFloat() * iconScale
             val ih = expandIcon.intrinsicHeight.toFloat() * iconScale
@@ -1372,7 +1209,7 @@ class ToolbarRenderer(
             if (x in clipMenuTouchLeft..clipMenuTouchRight) {
                 setPress(clipMenuCenter)
                 return KawaiiPanel.TouchResult.ToolbarAction(
-                    menuSlotAction(SkinSnapshotProvider.peek()?.menuAction ?: MenuAction.MENU),
+                    menuSlotAction(MenuAction.MENU),
                     tapX = x, tapY = y
                 )
             }
@@ -1469,7 +1306,7 @@ class ToolbarRenderer(
             pressRadiusMax = height * 0.55f
             pressRadius = 0f
             return KawaiiPanel.TouchResult.ToolbarAction(
-                menuSlotAction(SkinSnapshotProvider.peek()?.menuAction ?: MenuAction.MENU),
+                menuSlotAction(MenuAction.MENU),
                 tapX = x,
                 tapY = y,
             )
