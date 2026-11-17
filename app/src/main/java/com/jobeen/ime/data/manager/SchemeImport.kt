@@ -179,35 +179,6 @@ fun determineDirName(topDir: String?, fallbackName: String): String {
     return named.takeIf { it.isNotBlank() && it != "." && it != ".." } ?: "imported"
 }
 
-/**
- * 预检 zip：一次开包返回（顶层目录，解压后会落到根级的方案主干名）。
- * 根级判定与 [extractZip] 同口径（剥离顶层前缀后单段、`.schema.yaml` 结尾、
- * 非穿越、非绝对路径）；受保护规则不影响 `.schema.yaml`（它从不是保护项）。
- */
-private fun inspectZip(zipFile: File): Pair<String?, List<String>> {
-    ZipFile(zipFile).use { zip ->
-        val fileNames = zip.entries().asSequence().filter { !it.isDirectory }.map { it.name }.toList()
-        val topDir = stripTopDir(fileNames)
-        val prefix = topDir?.let { it + "/" } ?: ""
-        val stems = fileNames.mapNotNull { name ->
-            val rel = if (prefix.isNotEmpty() && name.startsWith(prefix)) {
-                name.substring(prefix.length)
-            } else {
-                name
-            }
-            if (rel.isEmpty()) return@mapNotNull null
-            if (rel.startsWith("/") || rel.split("/").any { it == ".." }) return@mapNotNull null
-            val parts = rel.split("/")
-            if (parts.size == 1 && rel.endsWith(".schema.yaml")) {
-                rel.removeSuffix(".schema.yaml")
-            } else {
-                null
-            }
-        }
-        return topDir to stems
-    }
-}
-
 /** T9 字段注入映射：按 [parseSchemaFile] 读出的 schema_id 命中，与文件名无关。 */
 private val T9_FIELD_INJECTIONS: Map<String, Map<String, String>> = mapOf(
     "wanxiang_t9" to mapOf(

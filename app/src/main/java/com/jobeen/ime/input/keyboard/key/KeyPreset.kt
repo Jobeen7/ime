@@ -398,21 +398,6 @@ fun zeroKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
     ),
 )
 
-fun infiniteKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
-    id = id,
-    appearance = KeyDef.Appearance.ImageText(
-        displayText = "0",
-        textSize = 11f,
-        src = R.drawable.ic_keyboard_infinite,
-        percentWidth = percentWidth,
-        variant = Variant.Alternative,
-    ),
-    behaviors = setOf(
-        KeyDef.Behavior.Press(KeyboardAction.CommitAction("0")),
-        KeyDef.Behavior.LongPress(KeyboardAction.CommitAction("∞")),
-    ),
-)
-
 fun miniSpaceKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.Image(

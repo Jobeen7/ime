@@ -52,35 +52,6 @@ internal enum class ToolbarHitRegion { MENU, CLOSE, CENTER }
 internal fun menuSlotAction(menuAction: MenuAction): PanelAction =
     if (menuAction == MenuAction.PANEL) PanelAction.ShortcutPanel else PanelAction.SwitchKeyboard
 
-/**
- * 工具栏触摸分区（左右内边距可不对称版）：皮肤 toolbarStyle
- * 的左右 insets 叠加到 App 横向内边距上后，首尾槽中心随之移动，
- * 分区必须用生效后的内边距算，否则隐藏压制在样式条上错位。
- * centerHorizontalPaddingDp 仅为签名兼容（分区不依赖中央内边距）。
- */
-internal fun toolbarHitRegionPads(
-    x: Float,
-    width: Int,
-    density: Float,
-    leftPadDp: Float,
-    rightPadDp: Float,
-    centerHorizontalPaddingDp: Float,
-): ToolbarHitRegion {
-    val fixedW = 32f * density
-    val edgeTouchW = 48f * density
-    val menuCenter = (leftPadDp + 4) * density + fixedW / 2f
-    val closeCenter = width - (rightPadDp + 4) * density - fixedW / 2f
-    val menuTouchLeft = (menuCenter - edgeTouchW / 2f).coerceAtLeast(0f)
-    val menuTouchRight = (menuCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
-    val closeTouchLeft = (closeCenter - edgeTouchW / 2f).coerceAtLeast(0f)
-    val closeTouchRight = (closeCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
-    return when (x) {
-        in closeTouchLeft..closeTouchRight -> ToolbarHitRegion.CLOSE
-        in menuTouchLeft..menuTouchRight -> ToolbarHitRegion.MENU
-        else -> ToolbarHitRegion.CENTER
-    }
-}
-
 /** 隐藏时中间区命中被压制；首尾固定槽不受影响。纯函数，供 JVM 测试。 */
 internal fun toolbarCenterHitSuppressed(
     toolbarHidden: Boolean,

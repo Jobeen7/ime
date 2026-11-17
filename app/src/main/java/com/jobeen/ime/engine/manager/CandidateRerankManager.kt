@@ -1,14 +1,12 @@
 package com.jobeen.ime.engine.manager
 
 import android.content.Context
-import androidx.annotation.VisibleForTesting
 import com.jobeen.ime.base.ngram.GramDb
 import com.jobeen.ime.base.priority.CandidateFeature
 import com.jobeen.ime.base.priority.PriorityCalculator
 import com.jobeen.ime.base.priority.WeightConfig
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
 import com.jobeen.ime.engine.rime.core.isKeycapSequence
-import java.util.Collections
 
 class CandidateRerankManager(context: Context) {
     private val calculator = PriorityCalculator()
@@ -27,33 +25,7 @@ class CandidateRerankManager(context: Context) {
          * 是错的；现改按个数表达，值即个数，不再误读。
          */
         const val RERANK_WINDOW = 10
-
-        /** gram 分缓存上限（条）。 */
-        const val GRAM_CACHE_MAX = 512
     }
-
-    /**
-     * gram 分缓存（2026-11-16 性能 ②）：同一组字会话内按（上下文，
-     * 词）缓存 gram 分——query 是 (preparedCtx, 词, gramDb 文件) 的
-     * 纯函数（trie 只读、prepareContext 只随上下文变），同一上下文
-     * 重复查同一词必得同一分；命中后不再走 trie。上限 512 条 LRU；
-     * 两路 restore job 可并发调 rerank（循环内无挂起点、但 job 可
-     * 重叠），故用 synchronizedMap。gramDb 实例变化时整表清掉
-     * （文件运行期不变，引用比对只是兜底；落点时再校验一次引用，
-     * 防“清表后旧实例的查询结果又写回”的交错）。
-     */
-    private val gramScoreCache: MutableMap<Pair<String, String>, Double> =
-        Collections.synchronizedMap(
-            object : LinkedHashMap<Pair<String, String>, Double>(16, 0.75f, true) {
-                override fun removeEldestEntry(
-                    eldest: MutableMap.MutableEntry<Pair<String, String>, Double>?,
-                ): Boolean = size > GRAM_CACHE_MAX
-            },
-        )
-    private var cachedGramDb: GramDb? = null
-
-    @VisibleForTesting
-    internal fun gramCacheSize(): Int = gramScoreCache.size
 
     suspend fun rerank(
         candidates: List<Candidate>, inputContext: String, gramDb: GramDb?,
@@ -78,27 +50,10 @@ class CandidateRerankManager(context: Context) {
         } else {
             null
         }
-        // gramDb 实例变化时清掉旧文件的分（见 gramScoreCache 说明）。
-        if (gramDb != null && preparedCtx != null) {
-            synchronized(gramScoreCache) {
-                if (gramDb !== cachedGramDb) {
-                    gramScoreCache.clear()
-                    cachedGramDb = gramDb
-                }
-            }
-        }
-
         for (index in restoreStart until restoreEnd) {
             val it = candidates[index]
             val gramScore = if (preparedCtx != null && gramDb != null) {
-                val key = inputContext to it.text
-                gramScoreCache[key] ?: run {
-                    val score = gramDb.query(preparedCtx, it.text)
-                    synchronized(gramScoreCache) {
-                        if (gramDb === cachedGramDb) gramScoreCache[key] = score
-                    }
-                    score
-                }
+                gramDb.query(preparedCtx, it.text)
             } else {
                 0.0
             }

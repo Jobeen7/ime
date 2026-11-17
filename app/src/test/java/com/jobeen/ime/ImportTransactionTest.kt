@@ -698,8 +698,8 @@ class ImportTransactionTest {
             assertEquals(ImportFailure.NO_SCHEMA, (o1 as ImportOutcome.Failed).failure)
             assertFalse(File(roots, "newdir").exists())
             // 只有嵌套方案：规划成功但根级 id 为空，同样 NO_SCHEMA。
-            // 注意：全包同属单一顶目录会被当成包装目录剥掉（与今天
-            // inspectZip 同口径），故嵌套用例须混一个根文件破包装。
+            // 注意：全包同属单一顶目录会被当成包装目录剥掉（与
+            // extractZip 同口径），故嵌套用例须混一个根文件破包装。
             val zip2 = File(root, "pkg2.zip")
             writeZip(
                 zip2,

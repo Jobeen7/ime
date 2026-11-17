@@ -20,7 +20,6 @@ import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.input.keyboard.key.backspaceKey
 import com.jobeen.ime.input.keyboard.key.newlineKey
-import com.jobeen.ime.input.keyboard.key.infiniteKey
 import com.jobeen.ime.input.keyboard.key.layoutSwitchKey
 import com.jobeen.ime.input.keyboard.key.mixedAlphabetKey
 import com.jobeen.ime.input.keyboard.key.peroidKey

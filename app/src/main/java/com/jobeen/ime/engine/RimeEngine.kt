@@ -2712,8 +2712,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // （PredictionManager.modelPredictions）仍用 gramDb
                     // 出联想。重排每批至多 10 个候选的 gram 查询
                     // （trie 走 ~400MB .gram）就此省掉；gram 分缓存
-                    // 仍保留在 CandidateRerankManager 内（单测覆盖），
-                    // 供重排函数本身的 gramDb 入参使用。
+                    // 已随之删除（2026-11-17 阶段 4：生产恒传 null，
+                    // 缓存不可达，查询本身仍保留在 rerank 的 gramDb
+                    // 入参路径上）。
                     val sortedList = rerankManager?.rerank(
                         filteredMsg.list, inputContext, null, prefers
                     )

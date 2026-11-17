@@ -47,7 +47,6 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -207,21 +206,7 @@ fun SettingsPageLazyScaffold(
 }
 
 /**
- * 节标题：一段内再分段时的段上标题（比组标题大一级：16sp 正文色）。
- * 组标题（14sp 强调色）与节标题分层，不混用。
- */
-@Composable
-fun SettingsSectionTitle(title: String) {
-    Text(
-        text = title,
-        fontSize = 16.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 6.dp),
-    )
-}
-
-/** 对话框操作字：默认主题强调色；传 color 可覆盖（如错误色用于破坏性确认）。 */
+ * 对话框操作字：默认主题强调色；传 color 可覆盖（如错误色用于破坏性确认）。 */
 data class SettingsDialogAction(
     val text: String,
     val onClick: () -> Unit,

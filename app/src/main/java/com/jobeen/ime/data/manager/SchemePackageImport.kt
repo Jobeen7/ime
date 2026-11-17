@@ -1777,7 +1777,7 @@ object SchemePackageImport {
                 }
                 val extracted = (extract as ExtractResult.Ok).extracted
                 val staged = stagedPackageOf(stagingDir, extracted.entries)
-                // 包装目录与今天 inspectZip 同口径（stripTopWrapper 规则与
+                // 包装目录与 extractZip 同口径（stripTopWrapper 规则与
                 // stripTopDir 等价：全部条目共享单一顶段才剥）。
                 val rawPaths = extracted.entries.map { it.relPath }
                 val stripped = stripTopWrapper(rawPaths)

@@ -199,52 +199,6 @@ class UiAuditFixesTest {
         assertNull(state.onDragEnd(1))
     }
 
-    // ── U-M8：BusyCounter ──
-
-    @Test
-    fun busyCounter_initiallyIdle() {
-        val counter = BusyCounter()
-        assertEquals(0, counter.count)
-        assertFalse(counter.isBusy)
-    }
-
-    @Test
-    fun busyCounter_oneAcquire_isBusy() {
-        val counter = BusyCounter()
-        counter.acquire()
-        assertEquals(1, counter.count)
-        assertTrue(counter.isBusy)
-    }
-
-    @Test
-    fun busyCounter_firstRelease_keepsBusyWhileSecondRuns() {
-        // 旧 Boolean 实现的回归态：先完成的任务把后完成者的忙态提前清零。
-        val counter = BusyCounter()
-        counter.acquire()
-        counter.acquire()
-        counter.release()
-        assertEquals(1, counter.count)
-        assertTrue(counter.isBusy)
-        counter.release()
-        assertEquals(0, counter.count)
-        assertFalse(counter.isBusy)
-    }
-
-    @Test
-    fun busyCounter_extraRelease_neverGoesNegative() {
-        val counter = BusyCounter()
-        counter.release()
-        counter.acquire()
-        counter.release()
-        counter.release()
-        assertEquals(0, counter.count)
-        assertFalse(counter.isBusy)
-    }
-
-    // 注：不测多线程 acquire/release——BusyCounter 持 Compose 快照态，
-    // 调用点只在主线程（runBusy 的同步抢占也在主线程）；SnapshotState
-    // 的 count++/-- 本身不是原子操作，并发测是无效前提。
-
     // ── U-L2：shouldFollowTail ──
 
     @Test
