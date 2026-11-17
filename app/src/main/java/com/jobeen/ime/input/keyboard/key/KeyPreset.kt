@@ -222,8 +222,7 @@ fun peroidKey(
     behaviors = setOfNotNull(
         KeyDef.Behavior.Press(KeyboardAction.KeySequenceAction(".")),
         // 弹窗在位时不另挂长按（与 layoutSwitchKey 同口径：弹窗接管
-        // 长按槽；T9 句号键挂快捷符号弹窗时，长按进符号板由 ?123→
-        // 数字键符号键接替，见 T9Keyboard）。
+        // 长按槽）；无弹窗时长按进符号板（SymbolKeyboard）。
         if (popup == null) {
             KeyDef.Behavior.LongPress(KeyboardAction.LayoutSwitchAction(SymbolKeyboard.NAME))
         } else {

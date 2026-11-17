@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  紧凑布局（14/18 键）／双拼韵母提示／T9 快捷符号的新增字符串。
+  紧凑布局（14/18 键）／双拼韵母提示的新增字符串。
   与 strings.xml 分离：本批新增文案只放这里，不改 strings.xml。
 -->
 <resources>
@@ -9,10 +9,4 @@
 
     <string name="shuangpin_hint_title">双拼韵母提示</string>
     <string name="shuangpin_hint_note">26 键字母键的角标改为小鹤双拼韵母（如 Q 键显示 iu），只显示、不改按键动作；已有自定义角标的键仍显示自定义角标。</string>
-
-    <string name="t9_quick_symbols_title">T9 快捷符号</string>
-    <string name="t9_quick_symbols_add_hint">输入符号后保存</string>
-    <string name="t9_quick_symbols_save">保存</string>
-    <string name="t9_quick_symbols_list_desc">长按九宫格句号键弹出这些符号，滑动选择后上屏；最多 12 个，改动下次打开键盘生效。</string>
-    <string name="t9_quick_symbols_empty">删到空即恢复默认符号</string>
 </resources>

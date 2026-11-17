@@ -107,13 +107,6 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
-            android:name=".ui.T9QuickSymbolsSettingsActivity"
-            android:exported="false"
-            android:label="@string/t9_quick_symbols_title"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
             android:name=".ui.KeyboardMenuSettingsActivity"
             android:exported="false"
             android:label="@string/keyboard_menu_title"

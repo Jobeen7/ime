@@ -1,6 +1,5 @@
 package com.jobeen.ime.ui.screen
 
-import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,7 +32,6 @@ import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.manager.KeyboardManager
-import com.jobeen.ime.ui.T9QuickSymbolsSettingsActivity
 import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
@@ -545,15 +543,6 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                 text = stringResource(R.string.shuangpin_hint_note),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            NavRow(
-                                title = stringResource(R.string.t9_quick_symbols_title),
-                                subtitle = stringResource(R.string.t9_quick_symbols_list_desc),
-                                onClick = {
-                                    context.startActivity(
-                                        Intent(context, T9QuickSymbolsSettingsActivity::class.java),
-                                    )
-                                },
                             )
                             SliderRow(
                                 title = stringResource(R.string.key_corner_radius),

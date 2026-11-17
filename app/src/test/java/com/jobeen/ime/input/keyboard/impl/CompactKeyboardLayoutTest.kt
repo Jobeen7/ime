@@ -13,7 +13,7 @@ import kotlin.math.abs
 
 /**
  * 14/18 键紧凑键盘出厂布局：分组、键动作、行和 1.0 不变量、
- * T9 句号键快捷符号弹窗。
+ * T9 句号键长按进符号板。
  */
 class CompactKeyboardLayoutTest {
 
@@ -96,45 +96,20 @@ class CompactKeyboardLayoutTest {
     }
 
     @Test
-    fun t9PeriodKeyShowsQuickSymbolsPopupByDefault() {
+    fun t9PeriodKeyLongPressOpensSymbolBoard() {
         val layout = T9Keyboard.buildLayout(KeyDef.Appearance.Variant.Accent)
         val period = layout.flatten().single { it.id == "T9_PERIOD" }
-        val popup = period.popups?.single() as KeyDef.Popup.Keyboard
-        assertEquals(
-            listOf("，", "。", "？", "！", "、", "…").map { KeyboardAction.CommitAction(it) },
-            popup.keys,
-        )
-        // 弹窗接管长按槽：不再挂长按进符号板（符号板走 ?123→数字键）。
-        assertTrue(period.behaviors.none { it is KeyDef.Behavior.LongPress })
-        // 点按仍是句号。
-        assertEquals(
-            KeyboardAction.KeySequenceAction("."),
-            (period.behaviors.filterIsInstance<KeyDef.Behavior.Press>().single().action),
-        )
-    }
-
-    @Test
-    fun t9PeriodKeyWithEmptyQuickSymbolsKeepsOldLongPress() {
-        val layout = T9Keyboard.buildLayout(KeyDef.Appearance.Variant.Accent, emptyList())
-        val period = layout.flatten().single { it.id == "T9_PERIOD" }
+        // 无弹窗：长按直进符号板（正式版 v1.1.20 原行为）。
         assertNull(period.popups)
         val longPress = period.behaviors.filterIsInstance<KeyDef.Behavior.LongPress>().single()
         assertEquals(
             KeyboardAction.LayoutSwitchAction("Symbol"),
             longPress.action,
         )
-    }
-
-    @Test
-    fun t9PeriodKeyWithCustomQuickSymbols() {
-        val layout = T9Keyboard.buildLayout(
-            KeyDef.Appearance.Variant.Accent, listOf("；", "：", "、"),
-        )
-        val period = layout.flatten().single { it.id == "T9_PERIOD" }
-        val popup = period.popups?.single() as KeyDef.Popup.Keyboard
+        // 点按仍是句号。
         assertEquals(
-            listOf("；", "：", "、").map { KeyboardAction.CommitAction(it) },
-            popup.keys,
+            KeyboardAction.KeySequenceAction("."),
+            (period.behaviors.filterIsInstance<KeyDef.Behavior.Press>().single().action),
         )
     }
 }
