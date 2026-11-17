@@ -42,7 +42,23 @@ abstract class CompactKeyboard(
     var punctuations = fullWidthPunctuations
     private var state: PunctuationMode = PunctuationMode.FullWidth
 
+    /**
+     * 最近一次下发的候选拼音（P1-7 重放，与 T9Keyboard 同款）：
+     * updatePunctuationMode 切标点时重放它，而不是喂空列表——
+     * 有候选时侧栏保持拼音，无候选时重放空列表、符号栏按新标点
+     * 模式重算。
+     */
+    private var lastCandidatePinYin: List<CandidatePinYin> = emptyList()
+
     private val userSymbolStore: UserSymbolBarStore = SharedPrefsUserSymbolBarStore(context)
+
+    /**
+     * 左竖栏符号 KeyDef 缓存：按标点模式两份（全角／半角）。每份
+     * 记下构建时的原始符号列；用户改符号栏后符号列变化即失效
+     * 重建，只标点模式变化不丢另一份。
+     */
+    private val symbolDefsCache =
+        mutableMapOf<PunctuationMode, Pair<List<String>, List<KeyDef>>>()
 
     init {
         this.updatePunctuationMode(state)
@@ -61,8 +77,11 @@ abstract class CompactKeyboard(
     )
 
     /** 左竖栏符号 KeyDef：用户 16 符号＋末尾“自定义”入口（与 T9 同款）。 */
-    private fun symbolItemDefs(): List<KeyDef> =
-        userSymbolStore.load().symbols.map { ch ->
+    private fun symbolItemDefs(): List<KeyDef> {
+        val symbols = userSymbolStore.load().symbols
+        val cached = symbolDefsCache[state]
+        if (cached != null && cached.first == symbols) return cached.second
+        val defs = symbols.map { ch ->
             val display = UserSymbolBarOps.displaySymbol(ch, state)
             KeyDef(
                 appearance = KeyDef.Appearance.Text(
@@ -75,8 +94,12 @@ abstract class CompactKeyboard(
                 behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(display))),
             )
         } + customEntryDef()
+        symbolDefsCache[state] = symbols to defs
+        return defs
+    }
 
     override fun onPossibleCandidatePinYin(data: List<CandidatePinYin>) {
+        lastCandidatePinYin = data
         if (data.isEmpty()) {
             super.updateSidePanel(symbolItemDefs())
             return
@@ -108,7 +131,9 @@ abstract class CompactKeyboard(
             PunctuationMode.HalfWidth -> halfWidthPunctuations
         }
         if (changed) {
-            this.onPossibleCandidatePinYin(emptyList())
+            // P1-7：重放最近一次候选拼音，不喂空列表——有候选时
+            // 侧栏不被刷成符号栏，无候选时重放空列表才刷符号栏。
+            this.onPossibleCandidatePinYin(lastCandidatePinYin)
         }
         super.updatePunctuationMode(mode)
     }

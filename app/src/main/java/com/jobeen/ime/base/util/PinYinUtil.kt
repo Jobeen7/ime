@@ -2,6 +2,7 @@ package com.jobeen.ime.base.util
 
 import com.jobeen.ime.skin.layout.CompactGrouping
 import com.jobeen.ime.skin.layout.CompactLayoutGenerator
+import java.util.concurrent.ConcurrentHashMap
 
 object PinYinUtil {
     const val CandidateKindT9 = "T9PinYin"
@@ -555,6 +556,29 @@ object PinYinUtil {
      * i/u/v 不产出。T9 分组走本函数的结果与 [possibleT9Combinations]
      * 逐项一致（CompactPinyinExpanderTest 锁死），旧 T9 路径本身不动。
      */
+    /**
+     * 紧凑分组→音节映射表缓存（P0-2）：groupBy 结果只与分组
+     * 有关（allPinyin 是静态音节表），按分组字母串 key 缓存；
+     * 生产调用只有 9／14／18 三种默认分组，最多 3 份。分组对
+     * 象不可变（CompactGrouping／CompactKeyGroup 均为 val 字
+     * 段，groupingFor 每次新建且建成后无人改写），可安全缓存；
+     * key 取分组字母串而不用 keyCount，保留自定义 alphabet
+     * 能力。computeIfAbsent 保证同一分组只建一次表，调用方
+     * 不再在 BehaviorHost queueLock 内重建。
+     */
+    private val compactMapCache = ConcurrentHashMap<String, Map<String, List<String>>>()
+
+    private fun compactMapFor(grouping: CompactGrouping): Map<String, List<String>> =
+        compactMapCache.computeIfAbsent(
+            grouping.groups.joinToString("|") { it.letters },
+        ) {
+            allPinyin.groupBy { pinyin ->
+                buildString(pinyin.length) {
+                    pinyin.forEach { c -> append(grouping.codeForInput(c) ?: c) }
+                }
+            }
+        }
+
     fun possibleCompactCombinations(
         grouping: CompactGrouping,
         sequence: String?,
@@ -567,19 +591,17 @@ object PinYinUtil {
         }
         val numString = mappedSequence.take(6)
         if (numString.isEmpty()) return emptyArray()
-        val compactMap: Map<String, List<String>> = buildMap {
-            allPinyin.groupBy { pinyin ->
-                buildString(pinyin.length) {
-                    pinyin.forEach { c -> append(grouping.codeForInput(c) ?: c) }
-                }
-            }.forEach { (key, value) -> put(key, value) }
-        }
+        val compactMap = compactMapFor(grouping)
         val result = ArrayList<String>()
         for (length in numString.length downTo 1) {
             compactMap[numString.substring(0, length)]?.let { matches ->
-                result.addAll(
-                    matches.filterNot { it.length == 1 && it in NO_SPELLING_SINGLE_LETTERS },
-                )
+                // P1-4：一次遍历直接追加，省掉 filterNot＋addAll
+                // 的中间复制（toTypedArray 的终态复制仍保留）。
+                for (item in matches) {
+                    if (item.length != 1 || item !in NO_SPELLING_SINGLE_LETTERS) {
+                        result.add(item)
+                    }
+                }
             }
         }
         return result.toTypedArray()

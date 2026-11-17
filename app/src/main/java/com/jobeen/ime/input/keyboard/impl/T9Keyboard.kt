@@ -49,6 +49,13 @@ class T9Keyboard(
     private var state: PunctuationMode = PunctuationMode.FullWidth
 
     /**
+     * 最近一次下发的候选拼音（P1-7 重放）：updatePunctuationMode
+     * 切标点时重放它，而不是喂空列表——有候选时侧栏保持拼音，
+     * 无候选时重放空列表、符号栏按新标点模式重算。
+     */
+    private var lastCandidatePinYin: List<CandidatePinYin> = emptyList()
+
+    /**
      * 左竖栏符号源（2026-11-12 九宫格左竖栏重做）：与符号面板共用
      * 同一份用户符号偏好；设置页改动后下次无候选即跟变。
      */
@@ -97,6 +104,7 @@ class T9Keyboard(
         } + customEntryDef()
 
     override fun onPossibleCandidatePinYin(data: List<CandidatePinYin>) {
+        lastCandidatePinYin = data
         if (data.isEmpty()) {
             // 无候选：左竖栏改用户 16 符号（替 7 标点），末尾跟“自定义”入口。
             super.updateSidePanel(symbolItemDefs())
@@ -184,7 +192,9 @@ class T9Keyboard(
             PunctuationMode.HalfWidth -> halfWidthPunctuations
         }
         if (changed) {
-            this.onPossibleCandidatePinYin(emptyList())
+            // P1-7：重放最近一次候选拼音，不喂空列表——有候选时
+            // 侧栏不被刷成符号栏，无候选时重放空列表才刷符号栏。
+            this.onPossibleCandidatePinYin(lastCandidatePinYin)
         }
         super.updatePunctuationMode(mode)
     }

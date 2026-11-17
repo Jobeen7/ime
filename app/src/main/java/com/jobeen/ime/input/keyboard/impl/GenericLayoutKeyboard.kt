@@ -35,8 +35,7 @@ import com.jobeen.ime.ui.SymbolBarSettingsActivity
  * - 数字布局：恒喂数字符号集（皮肤 numericSymbols 为准，未声明时
  *   按源包 13 项），＋末尾“自定义”入口，与 T9 符号栏同交互；
  * - 无集合键的布局不喂面板。
- * 初始喂数在 init＋onAttach（与出厂 NumberKeyboard／T9Keyboard
- * 同口径），标点模式变化时重喂。
+ * 初始喂数在 onAttach（与出厂 T9Keyboard 同口径），标点模式变化时重喂。
  *
  * updatePunctuationMode / updateEditorInfo / updateSpaceKeyText
  * 均由 BaseKeyboard 实现，本类只重写标点模式（为左栏换算记态，
@@ -61,9 +60,16 @@ class GenericLayoutKeyboard(
 
     private var punctuationState: PunctuationMode = PunctuationMode.FullWidth
 
+    /**
+     * T9 左竖栏项缓存：按标点模式两份（全角／半角）。每份记下
+     * 构建时的换算后符号列；用户改符号栏后符号列变化即失效
+     * 重建，只标点模式变化不丢另一份。
+     */
+    private val t9PanelCache =
+        mutableMapOf<PunctuationMode, Pair<List<String>, List<KeyDef>>>()
+
     init {
         setSidePanelItemListener { action -> onAction(action) }
-        onPossibleCandidatePinYin(emptyList())
     }
 
     override fun onAttach() {
@@ -106,12 +112,16 @@ class GenericLayoutKeyboard(
     }
 
     /** T9 左竖栏项：用户 16 符号（按标点模式换算）＋末尾“自定义”入口（共 17 项）。 */
-    private fun t9PanelItems(): List<KeyDef> =
-        SymbolKeyboard.buildSidePanelItemDefs(
-            userSymbolStore.load().symbols.map { ch ->
-                UserSymbolBarOps.displaySymbol(ch, punctuationState)
-            },
-        )
+    private fun t9PanelItems(): List<KeyDef> {
+        val displays = userSymbolStore.load().symbols.map { ch ->
+            UserSymbolBarOps.displaySymbol(ch, punctuationState)
+        }
+        val cached = t9PanelCache[punctuationState]
+        if (cached != null && cached.first == displays) return cached.second
+        val defs = SymbolKeyboard.buildSidePanelItemDefs(displays)
+        t9PanelCache[punctuationState] = displays to defs
+        return defs
+    }
 
     /** 数字左竖栏项：皮肤 numericSymbols 为准，未声明时按源包 13 项，＋末尾“自定义”入口。 */
     private fun numericPanelItems(): List<KeyDef> =

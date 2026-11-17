@@ -570,6 +570,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         cachedTraditionalChineseEnabled = CandidateManager.isTraditionalChineseEnabled(context)
     }
 
+    /**
+     * 候选开关 dirty 位（P1-1）：prefsListener 在主线程回调里
+     * 只置位，不直接重读 5 次偏好；下一次候选还原／预测 job
+     * 在引擎线程批量重读一次——设置页连切多开关只读一次。
+     * 重读是幂等全量读，失败时 dirty 保留、下批再读。
+     */
+    @Volatile
+    private var candidateFlagsDirty = false
+
+    private fun refreshCachedCandidateFlagsIfDirty(context: Context) {
+        if (!candidateFlagsDirty) return
+        refreshCachedCandidateFlags(context)
+        candidateFlagsDirty = false
+    }
+
     /** 热路径开关的偏好键（监听刷新口径，见 cached*Enabled）。 */
     private val candidateFlagKeys = setOf(
         CandidateManager.KEY_RERANK_ENABLED,
@@ -581,7 +596,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key in candidateFlagKeys) {
-            context?.let { refreshCachedCandidateFlags(it) }
+            // P1-1：主线程回调只标 dirty，不直接重读 5 次偏好。
+            candidateFlagsDirty = true
         }
         if (OptionsApplier.isOptionDependency(key)) {
             sendJob {
@@ -2595,6 +2611,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     actions.send(Action.CandidatesReady(requestId, filteredMsg))
                     return@launch
                 }
+                // P1-1：读开关前先把 prefsListener 标的 dirty 批量
+                // 重读掉（本批即用新开关值；连切多开关只读一次）。
+                refreshCachedCandidateFlagsIfDirty(ctx)
 
                 // 常用语输入码候选（WO52 6.1）：组字码与输入码完整匹配时，
                 // 拼到候选前。组字码随候选消息的 composition 快照下发
@@ -2946,6 +2965,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         predictionJob?.cancel()
         predictionJob = scope.launch {
             try {
+                // P1-1：读开关前先把 prefsListener 标的 dirty 批量
+                // 重读掉（本批即用新开关值；连切多开关只读一次）。
+                context?.let { refreshCachedCandidateFlagsIfDirty(it) }
                 // 邮箱后缀（默认开，独立开关，不受预测开关影响）：
                 // 光标前是「邮箱名@…」时给对得上的后缀，走同一
                 // PredictionReady 通道上候选栏。放预测开关检查之前：
