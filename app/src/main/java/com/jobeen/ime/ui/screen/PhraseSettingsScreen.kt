@@ -115,15 +115,6 @@ fun PhraseSettingsScreen(
                     PhraseManager.setShortcutEnabled(context, it)
                 },
             )
-            Text(
-                text = stringResource(
-                    if (shortcutEnabled) R.string.phrase_shortcut_on_info
-                    else R.string.phrase_shortcut_off_info,
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
-            )
             ScreenComponent.SwitchRow(
                 title = stringResource(R.string.phrase_auto_sort_title),
                 checked = autoSortEnabled,
@@ -132,12 +123,6 @@ fun PhraseSettingsScreen(
                     PhraseManager.setAutoSortEnabled(context, it)
                     refreshTick++
                 },
-            )
-            Text(
-                text = stringResource(R.string.phrase_auto_sort_info),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
             )
         }
         Spacer(Modifier.height(12.dp))

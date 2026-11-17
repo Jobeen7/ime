@@ -11,7 +11,7 @@ import androidx.room.PrimaryKey
  * - `tags` 标签（逗号分隔的纯文本列）；
  * - `variables` 变量（JSON 数组串，元素 key/value/isSecure，见 PhraseVariables）；
  * - `lastUsedAt` 最近使用时间（自动排序开关的排序键，见 04 §2.3
- *   `phrase_auto_sort_info`“最近使用的排在前面”；0＝从未使用。
+ *   “最近使用的排在前面”；0＝从未使用。
  *   单子只列了前四列，本列是实现已定开关语义所必需的唯一追加列）。
  */
 @Entity(

@@ -49,15 +49,14 @@ object PhraseManager {
     /**
      * 常用语输入码开关（WO52 6.1，04 §2.2 `phrase_shortcut_mode`“常用语
      * 输入码”／`isPhraseShortcutEnabled`）：开时完整匹配输入码才在候选
-     * 前显示常用语；关时不显示输入码候选，保留已设置的输入码。
+     * 前显示常用语；关时不展示输入码匹配的常用语，输入码设置予以保留。
      * 默认开——单子定的输入码行为出厂即生效，关是用户的显式选择。
      */
     const val KEY_SHORTCUT_ENABLED = "isPhraseShortcutEnabled"
 
     /**
      * 自动排序开关（WO52 6.1，04 §2.3 `isPhraseAutoSortEnabled`）：
-     * 开时最近使用的排在前面（`phrase_auto_sort_info`）；关时按手动
-     * 拖动顺序。默认关——保原有行为（现行列表即手动顺序）。
+     * 开时最近使用的排在前面；关时按手动拖动顺序。默认关——保原有行为（现行列表即手动顺序）。
      */
     const val KEY_AUTO_SORT_ENABLED = "isPhraseAutoSortEnabled"
 

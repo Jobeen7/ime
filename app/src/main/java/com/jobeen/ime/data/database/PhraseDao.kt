@@ -21,8 +21,7 @@ interface PhraseDao {
     suspend fun getAll(): List<PhraseRecord>
 
     /**
-     * 自动排序（WO52 6.1，04 §2.3 `phrase_auto_sort_info`“最近使用的
-     * 排在前面”）：置顶优先，其余按最近使用在前、未用过的按新建在前；
+     * 自动排序（WO52 6.1，04 §2.3“最近使用的排在前面”）：置顶优先，其余按最近使用在前、未用过的按新建在前；
      * 手动 sortOrder 在此口径下不参与排序。
      */
     @Query("SELECT * FROM phrase_records ORDER BY pinned DESC, lastUsedAt DESC, createdAt DESC")
