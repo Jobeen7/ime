@@ -2,21 +2,34 @@
 
 package com.jobeen.ime.ui.screen
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.jobeen.ime.R
+import com.jobeen.ime.data.ThemeStore
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.data.keyboard.theme.KeyboardThemePresets
 import com.jobeen.ime.data.keyboard.theme.MonetPalette
+import com.jobeen.ime.data.keyboard.theme.ThemeCode
+import com.jobeen.ime.data.keyboard.theme.ThemeImport
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 /** 键盘皮肤页“默认”选项的选中键（非主题 id：它对应浅/深双槽位）。 */
 internal const val THEME_KEY_DEFAULT = "default"
@@ -110,6 +123,79 @@ fun KeyboardThemeScreen(onBack: () -> Unit) {
     // 自定义主题（扫码导入落盘，ThemeStore.refresh 在启动时已读盘；
     // 本页导入后由导入流程同步更新本态，不在组合中做文件 IO）。
     var customThemes by remember { mutableStateOf(KeyboardThemePresets.customThemes) }
+    // 扫码导入结果提示（标题＋正文）与满槽待覆盖项（正式版库页扫码同流程）。
+    var dialogText by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var pendingImport by remember { mutableStateOf<KeyboardTheme?>(null) }
+    var showOverwriteDialog by remember { mutableStateOf(false) }
+
+    fun applyImportedTheme(theme: KeyboardTheme) {
+        ThemeImport.apply(context, theme)
+        themeId = theme.id
+        customThemes = KeyboardThemePresets.customThemes
+    }
+
+    // 扫码导入（正式版库页扫码的旧主题码分支原样移入，v3 皮肤码分流不恢复）：
+    // IMEKBTHEME: 前缀 → ThemeCode.decode → ThemeImport.import 落槽位。
+    // 文案一律在组合期内用 stringResource 读好（回调里调
+    // context.getString 会触 LocalContextGetResourceValueCall lint）。
+    val scanPrompt = stringResource(R.string.theme_scan_prompt)
+    val qrInvalidTitle = stringResource(R.string.theme_qr_invalid_title)
+    val qrInvalidBody = stringResource(R.string.theme_qr_invalid_body)
+    val importedTitle = stringResource(R.string.theme_imported_title)
+    val importedFormat = stringResource(R.string.theme_imported)
+    val overwrittenFormat = stringResource(R.string.theme_overwritten)
+    val qrScanOptions = ScanOptions().apply {
+        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+        setPrompt(scanPrompt)
+        setOrientationLocked(false)
+        setBeepEnabled(false)
+    }
+    val qrScanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val contents = result.contents
+        if (contents.isNullOrBlank()) return@rememberLauncherForActivityResult
+        if (!contents.trim().startsWith(ThemeCode.PREFIX)) {
+            dialogText = qrInvalidTitle to qrInvalidBody
+            return@rememberLauncherForActivityResult
+        }
+        val importedTheme = ThemeCode.decode(contents.trim())
+        if (importedTheme == null) {
+            dialogText = qrInvalidTitle to qrInvalidBody
+            return@rememberLauncherForActivityResult
+        }
+        when (ThemeImport.import(importedTheme)) {
+            is ThemeImport.Outcome.Applied -> {
+                applyImportedTheme(importedTheme)
+                dialogText = importedTitle to importedFormat.format(importedTheme.name)
+            }
+            is ThemeImport.Outcome.NeedsOverwriteSlot -> {
+                pendingImport = importedTheme
+                showOverwriteDialog = true
+            }
+        }
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            qrScanLauncher.launch(qrScanOptions)
+        } else {
+            android.widget.Toast.makeText(
+                context,
+                R.string.theme_camera_permission_needed,
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+    fun launchQrScan() {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, Manifest.permission.CAMERA,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            qrScanLauncher.launch(qrScanOptions)
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
 
     val selectedKey = resolveSelectedThemeKey(
         themeId,
@@ -160,6 +246,13 @@ fun KeyboardThemeScreen(onBack: () -> Unit) {
                 )
             }
         }
+        SettingsGroup(title = stringResource(R.string.keyboard_theme_import)) {
+            ThemeRow(
+                title = stringResource(R.string.theme_scan),
+                subtitle = null,
+                onClick = { launchQrScan() },
+            )
+        }
         if (customThemes.isNotEmpty()) {
             SettingsGroup(title = stringResource(R.string.keyboard_theme_custom)) {
                 for (theme in customThemes) {
@@ -175,6 +268,70 @@ fun KeyboardThemeScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+
+    // 扫码导入结果提示。
+    val info = dialogText
+    if (info != null) {
+        SettingsDialog(
+            onDismissRequest = { dialogText = null },
+            title = info.first,
+            body = { Text(text = info.second) },
+            actions = listOf(
+                SettingsDialogAction(
+                    text = stringResource(R.string.theme_dialog_ok),
+                    onClick = { dialogText = null },
+                ),
+            ),
+        )
+    }
+
+    // 满槽覆盖选择（正式版库页同流程：选定后 ThemeStore.overwrite＋ThemeImport.apply）。
+    val pending = pendingImport
+    if (showOverwriteDialog && pending != null) {
+        SettingsDialog(
+            onDismissRequest = {
+                showOverwriteDialog = false
+                pendingImport = null
+            },
+            title = stringResource(R.string.theme_custom_full),
+            body = {
+                if (customThemes.isEmpty()) {
+                    Text(text = stringResource(R.string.theme_no_theme_to_overwrite))
+                } else {
+                    Column {
+                        Text(text = stringResource(R.string.theme_choose_theme_to_overwrite))
+                        for ((index, theme) in customThemes.withIndex()) {
+                            TextButton(
+                                onClick = {
+                                    showOverwriteDialog = false
+                                    pendingImport = null
+                                    ThemeStore.overwrite(index, pending)
+                                    applyImportedTheme(pending)
+                                    dialogText = importedTitle to
+                                        overwrittenFormat.format(theme.name, pending.name)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    text = theme.name,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            actions = listOf(
+                SettingsDialogAction(
+                    text = stringResource(R.string.cancel),
+                    onClick = {
+                        showOverwriteDialog = false
+                        pendingImport = null
+                    },
+                ),
+            ),
+        )
     }
 }
 
