@@ -62,6 +62,14 @@ class FloatingCandidateWindow(
         onCandidateSelected = { onCandidateSelected?.invoke(it) },
         onSidePanelAction = { onSidePanelAction?.invoke(it) },
     ).apply {
+        // 根因（.2/.3 不能打字）：ComponentView 构造即 GONE，浮动窗
+        // 路径只调 grid.updateCandidates、从不调 grid.show()，网格永
+        // 为 GONE——LinearLayout 量/排都跳过 GONE 子项，gridCanvas
+        // .width 恒 0，recomputeLayout() 每帧清空 positions，
+        // contentRowCount() 恒 0，窗只剩翻页行。内嵌栏走 show() 才
+        // 可见；浮动窗的显隐由 PopupWindow 管，网格本身必须常
+        // VISIBLE 才能参与布局。
+        visibility = View.VISIBLE
         // 浮动窗内翻页钮门改皮肤键（网格自身底部钮行未启用，此覆写只
         // 防将来某路又把皮肤钮行带进来时门错）。
         pagingButtonsEnabledOverride = currentStyle().pagingButtonDisplayed
