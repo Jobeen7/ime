@@ -5,17 +5,6 @@ package com.jobeen.ime.skin.model
  * 工具栏／符号栏／动作编辑等活代码共用）。
  */
 
-/** 覆写槽位（定稿四.5 + G1 左右滑）。jsonName = 皮肤文件中的字段名。
- * （自已删的 SkinKeyModel.kt 迁入：WhitelistAction.allowedSlots 仍在用。） */
-enum class KeySlot(val jsonName: String) {
-    TAP("tap"),
-    SWIPE_UP("swipeUp"),
-    SWIPE_DOWN("swipeDown"),
-    SWIPE_LEFT("swipeLeft"),
-    SWIPE_RIGHT("swipeRight"),
-    LONG_PRESS("longPress"),
-}
-
 /** 命令动作白名单（封闭集；定稿四.1–四.3 + delete_forward +
  * 确认记录九冻结的补充格式名）。新增条目须先改定稿/裁定。
  */
@@ -184,18 +173,7 @@ enum class WhitelistAction(
 
     enum class ValueRule { REQUIRED, FORBIDDEN }
 
-    /** 绑定位限制（定稿四.5）：voice_input 仅长按，shift 仅点按，其余任意槽。 */
-    val allowedSlots: Set<KeySlot>
-        get() = when (this) {
-            VOICE_INPUT -> setOf(KeySlot.LONG_PRESS)
-            MOMENTARY_SHIFT -> setOf(KeySlot.TAP)
-            else -> ALL_SLOTS
-        }
-
     companion object {
-        /** 全部槽位（默认口径：任意槽均可绑定）。 */
-        val ALL_SLOTS: Set<KeySlot> = KeySlot.entries.toSet()
-
         fun fromFormatName(name: String): WhitelistAction? =
             when (name) {
                 // 板锁已删（.22）：旧皮肤里的锁切换名作兼容别名，映射到

@@ -6,14 +6,10 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.skin.model.SkinAction
 import com.jobeen.ime.skin.model.WhitelistAction
 import com.jobeen.ime.skin.runtime.KeyActionMapping
-import com.jobeen.ime.skin.symbol.BarSide
 import com.jobeen.ime.skin.symbol.SubClassifiedBoardState
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbolsParser
-import com.jobeen.ime.skin.symbol.SymbolBarKey
-import com.jobeen.ime.skin.symbol.SymbolBarSpec
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
-import com.jobeen.ime.skin.symbolbar.symbolBarConfigFromSkinSpec
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,7 +17,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * C 组皮肤保真项（皮肤 v3 死壳删除后分流：只留测活代码的 12 项；
+ * C 组皮肤保真项（皮肤 v3 死壳删除后分流：只留测活代码的 10 项；
  * 通知 label／死解析器接线／前景层上限／几何边距／span 校验等
  * 均随已删的 KeyOverrideApplier／SkinValidator／LayoutValidator
  * 一并删除）。
@@ -116,51 +112,6 @@ class BatchCSkinFidelityTest {
         state.selectSub(1)
         assertEquals(0, state.page)
         assertEquals(2, state.visibleItems.size)
-    }
-
-    // ---------- P1-8：皮肤 symbolBar ----------
-
-    private fun barSpec(
-        keys: List<SymbolBarKey>,
-        close: BarSide = BarSide.LEFT,
-    ) = SymbolBarSpec(keys = keys, closePosition = close, typeSwitchPosition = BarSide.RIGHT)
-
-    @Test
-    fun skinSymbolBar_padsToEightAndMapsCorners() {
-        val spec = barSpec(
-            listOf(
-                SymbolBarKey("，", listOf("、", "。", "；", "：")),
-                SymbolBarKey("！", emptyList()),
-                SymbolBarKey("？", emptyList()),
-            ),
-            close = BarSide.RIGHT,
-        )
-        val config = symbolBarConfigFromSkinSpec(spec, listOf("标点", "数字"))
-        assertEquals(8, config.panels.getValue("标点").keys.size)
-        assertFalse(config.closeButtonOnLeft)
-        val first = config.panels.getValue("标点").keys[0]
-        assertEquals("，", first.center.text)
-        assertEquals(
-            SkinAction.Command(WhitelistAction.SYMBOL, "，"),
-            first.center.action,
-        )
-        assertEquals("、", first.topLeft?.text)
-        assertEquals("。", first.topRight?.text)
-        assertEquals("；", first.bottomLeft?.text)
-        assertEquals("：", first.bottomRight?.text)
-        // 各类型共用同一面板（皮肤只有一套面板）。
-        assertEquals(
-            config.panels.getValue("标点").keys,
-            config.panels.getValue("数字").keys,
-        )
-    }
-
-    @Test
-    fun skinSymbolBar_truncatesBeyondEight() {
-        val spec = barSpec((1..10).map { SymbolBarKey("$it", emptyList()) })
-        val config = symbolBarConfigFromSkinSpec(spec, listOf("数字"))
-        assertEquals(8, config.panels.getValue("数字").keys.size)
-        assertEquals("8", config.panels.getValue("数字").keys[7].center.text)
     }
 
     // ---------- L5：符号项动作 ----------

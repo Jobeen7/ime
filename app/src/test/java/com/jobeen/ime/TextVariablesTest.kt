@@ -15,39 +15,6 @@ import org.junit.Test
 class TextVariablesTest {
 
     @Test
-    fun fixedSources_parse() {
-        assertEquals(DynamicTextSource.SCHEME_NAME, DynamicTextSource.byJsonName("schemeName"))
-        assertEquals(
-            DynamicTextSource.RETURN_KEY_TYPE, DynamicTextSource.byJsonName("returnKeyType"),
-        )
-        assertEquals(
-            DynamicTextSource.CANDIDATE_COMMENT, DynamicTextSource.byJsonName("candidateComment"),
-        )
-        assertEquals(DynamicTextSource.CANDIDATE_FIRST, DynamicTextSource.byJsonName("candidateFirst"))
-        assertEquals(DynamicTextSource.COMPOSING, DynamicTextSource.byJsonName("composing"))
-    }
-
-    @Test
-    fun optionLabelKeys_parse() {
-        assertEquals(
-            DynamicTextSource.OptionLabel("ascii_mode", false),
-            DynamicTextSource.byJsonName("optionLabel\$ascii_mode"),
-        )
-        assertEquals(
-            DynamicTextSource.OptionLabel("ascii_mode", true),
-            DynamicTextSource.byJsonName("optionLabelAbbreviated\$ascii_mode"),
-        )
-        assertEquals(
-            "optionLabel\$ascii_mode",
-            (DynamicTextSource.byJsonName("optionLabel\$ascii_mode") as DynamicTextSource.OptionLabel).jsonName,
-        )
-        assertNull(DynamicTextSource.byJsonName("optionLabel\$"))
-        assertNull(DynamicTextSource.byJsonName("optionLabelAbbreviated\$"))
-        assertNull(DynamicTextSource.byJsonName("optionLabel"))
-        assertNull(DynamicTextSource.byJsonName("clipboard"))
-    }
-
-    @Test
     fun optionLabel_resolve() {
         val switches = listOf(
             Switch("ascii_mode", listOf("ascii_mode"), listOf("中文", "英文")),

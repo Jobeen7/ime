@@ -1,7 +1,5 @@
 package com.jobeen.ime.skin.model
 
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -10,71 +8,6 @@ import org.junit.Test
 
 /** 图像描述机制（审计 D 项）：精灵图／描述解析／切片几何的纯层核对。 */
 class SkinImageDescriptorTest {
-
-    private fun parseDescriptor(json: String): Pair<SkinImageDescriptor?, List<SkinIssue>> {
-        val issues = mutableListOf<SkinIssue>()
-        val node: JsonElement = Json.parseToJsonElement(json)
-        return parseImageDescriptor(node, "style", issues) to issues
-    }
-
-    @Test
-    fun toolbarButtonBackgroundStyle_parsesPeerShape() {
-        // 对端工具栏钮背景实测形：双帧圆图 + 样式层横向拉伸边 + 等比适应。
-        val (descriptor, issues) = parseDescriptor(
-            """{"buttonStyleType": "fileImage", "contentMode": "scaleAspectFit",
-               "highlightImage": {"file": "toolbar_circle", "image": "IMG2"},
-               "insets": {"bottom": 0, "left": 19, "right": 19, "top": 0},
-               "normalImage": {"file": "toolbar_circle", "image": "IMG1"}}""",
-        )
-        assertTrue(issues.isEmpty())
-        val file = descriptor as SkinImageDescriptor.File
-        assertEquals(SkinImageRef("toolbar_circle", "IMG1"), file.normal)
-        assertEquals(SkinImageRef("toolbar_circle", "IMG2"), file.highlight)
-        assertEquals(ImageContentMode.SCALE_ASPECT_FIT, file.contentMode)
-        assertEquals(SpriteInsets(left = 19, top = 0, right = 19, bottom = 0), file.insets)
-    }
-
-    @Test
-    fun floatBackgroundStyle_defaultsToFillAndNoHighlight() {
-        // 对端浮层背景实测形：常态／高亮同帧、无模式、无样式层 insets。
-        val (descriptor, issues) = parseDescriptor(
-            """{"buttonStyleType": "fileImage",
-               "highlightImage": {"file": "float_back", "image": "IMG1"},
-               "normalImage": {"file": "float_back", "image": "IMG1"}}""",
-        )
-        assertTrue(issues.isEmpty())
-        val file = descriptor as SkinImageDescriptor.File
-        assertEquals(SkinImageRef("float_back", "IMG1"), file.normal)
-        assertEquals(SkinImageRef("float_back", "IMG1"), file.highlight)
-        assertEquals(ImageContentMode.SCALE_TO_FILL, file.contentMode)
-        assertNull(file.insets)
-    }
-
-    @Test
-    fun spriteMap_parsesPeerYamlShape() {
-        val issues = mutableListOf<SkinIssue>()
-        val node: JsonElement = Json.parseToJsonElement(
-            """{"IMG1": {"rect": {"x": 0, "y": 0, "width": 200, "height": 200}},
-               "IMG2": {"rect": {"x": 200, "y": 0, "width": 200, "height": 200}}}""",
-        )
-        val map = parseSpriteMap(node, "toolbar_circle", issues)
-        assertTrue(issues.isEmpty())
-        assertEquals(SpriteFrame(SpriteRect(0, 0, 200, 200)), map["IMG1"])
-        assertEquals(SpriteFrame(SpriteRect(200, 0, 200, 200)), map["IMG2"])
-    }
-
-    @Test
-    fun spriteFrame_floatBackInsetsParsedAndClamped() {
-        val issues = mutableListOf<SkinIssue>()
-        val node: JsonElement = Json.parseToJsonElement(
-            """{"rect": {"x": 0, "y": 0, "width": 130, "height": 130},
-               "insets": {"top": 63, "bottom": 63, "left": 63, "right": 63}}""",
-        )
-        val frame = parseSpriteFrame(node, "float_back.IMG1", issues)
-        assertTrue(issues.isEmpty())
-        assertEquals(SpriteRect(0, 0, 130, 130), frame!!.rect)
-        assertEquals(SpriteInsets(63, 63, 63, 63), frame.insets)
-    }
 
     @Test
     fun effectiveInsets_styleBeatsFrameAndFrameBeatsZero() {
@@ -123,34 +56,6 @@ class SkinImageDescriptorTest {
         assertEquals("CENTER", ImageContentMode.CENTER.scaleTypeName)
         assertEquals(ImageContentMode.SCALE_ASPECT_FILL, ImageContentMode.byJsonName("scaleAspectFill"))
         assertNull(ImageContentMode.byJsonName("stretch"))
-    }
-
-    @Test
-    fun invalidDescriptorInputs_fallBackFieldWise() {
-        // 常态缺失 → 整描述 null；未知模式 → 默认铺满 + issue；未知类型 → null。
-        val (noNormal, _) = parseDescriptor("""{"buttonStyleType": "fileImage"}""")
-        assertNull(noNormal)
-        val (badMode, badModeIssues) = parseDescriptor(
-            """{"buttonStyleType": "fileImage", "contentMode": "stretch",
-               "normalImage": {"file": "s", "image": "IMG1"}}""",
-        )
-        val badFile = badMode as SkinImageDescriptor.File
-        assertEquals(ImageContentMode.SCALE_TO_FILL, badFile.contentMode)
-        assertTrue(badModeIssues.any { it.detail == "content_mode_invalid" })
-        val (badType, badTypeIssues) = parseDescriptor(
-            """{"buttonStyleType": "geometry", "normalColor": "#FFFFFFFF"}""",
-        )
-        assertNull(badType)
-        assertTrue(badTypeIssues.any { it.detail == "image_descriptor_type_invalid" })
-    }
-
-    @Test
-    fun assetImage_parsesNameAndSheetsEmpty() {
-        val (descriptor, issues) = parseDescriptor(
-            """{"buttonStyleType": "assetImage", "name": "toolbar_menu"}""",
-        )
-        assertTrue(issues.isEmpty())
-        assertEquals(SkinImageDescriptor.Asset("toolbar_menu"), descriptor)
     }
 
     @Test

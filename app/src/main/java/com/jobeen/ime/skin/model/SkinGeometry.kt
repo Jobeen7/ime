@@ -5,40 +5,6 @@ package com.jobeen.ime.skin.model
  * 配色／键盘类型等活代码在用）。
  */
 
-/** 几何字段全集（定稿三.4）：只出现在 appearance，单位 dp 浮点。 */
-enum class GeometryField(val jsonName: String) {
-    CORNER_RADIUS("cornerRadius"),
-    KEY_H_MARGIN("keyHMargin"),
-    KEY_V_MARGIN("keyVMargin"),
-    BOTTOM_INSET("bottomInsetDp"),
-    /** 容器内边距（S5；缺省 0，与 bottomInsetDp 同口径 0..48）。 */
-    TOP_INSET("topInsetDp"),
-    LEFT_INSET("leftInsetDp"),
-    RIGHT_INSET("rightInsetDp"),
-}
-
-/**
- * 键盘级几何字段（2026-10-27 新增分流）：只出现在顶层 `geometry`
- * 对象，与 appearance 几何是两套字段、同一消费点。
- *
- * - keyRadiusDp / keyHGapDp / keyVGapDp 分别对应圆角、键横/纵间距，
- *   区间与 appearance 几何一致（0..40 / 0..20 / 0..20）；
- * - heightPercent 为键盘高度百分比，区间取 App 现有竖屏滑条
- *   20..50 与横屏滑条 30..70 的并集 20..70，竖横屏同值生效；
- * - heightPercentLandscape 为横屏专属高度百分比（同区间），仅横屏
- *   生效、优先于 heightPercent；未指定时横屏回落 heightPercent。
- * 优先级：geometry 有效值 > appearance 有效值 > App 设置（见
- * [SkinSnapshotBuilder] 与 [KeyboardColors.resolve]，冲突时记
- * INFO issue，不静默覆盖）。
- */
-enum class KeyboardGeometryField(val jsonName: String) {
-    KEY_RADIUS("keyRadiusDp"),
-    KEY_H_GAP("keyHGapDp"),
-    KEY_V_GAP("keyVGapDp"),
-    HEIGHT_PERCENT("heightPercent"),
-    HEIGHT_PERCENT_LANDSCAPE("heightPercentLandscape"),
-}
-
 /** 校验问题（逐项进导入报告，无静默项；详设 §3.1）。 */
 data class SkinIssue(
     val path: String,

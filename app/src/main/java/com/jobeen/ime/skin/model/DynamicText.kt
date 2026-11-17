@@ -100,26 +100,5 @@ sealed interface DynamicTextSource {
             "\$returnKeyType" -> RETURN_KEY_TYPE
             else -> null
         }
-
-        fun byJsonName(name: String): DynamicTextSource? {
-            when (name) {
-                CANDIDATE_FIRST.jsonName -> return CANDIDATE_FIRST
-                COMPOSING.jsonName -> return COMPOSING
-                SCHEME_NAME.jsonName -> return SCHEME_NAME
-                RETURN_KEY_TYPE.jsonName -> return RETURN_KEY_TYPE
-                CANDIDATE_COMMENT.jsonName -> return CANDIDATE_COMMENT
-            }
-            if (name.startsWith(OPTION_LABEL_ABBREV_PREFIX)) {
-                val switchName = name.removePrefix(OPTION_LABEL_ABBREV_PREFIX)
-                if (switchName.isNotBlank()) return OptionLabel(switchName, true)
-                return null
-            }
-            if (name.startsWith(OPTION_LABEL_PREFIX)) {
-                val switchName = name.removePrefix(OPTION_LABEL_PREFIX)
-                if (switchName.isNotBlank()) return OptionLabel(switchName, false)
-                return null
-            }
-            return null
-        }
     }
 }

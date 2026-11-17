@@ -6,7 +6,6 @@ import com.jobeen.ime.data.keyboard.theme.fontWeightMatches
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.skin.notify.NotificationActionNames
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -22,8 +21,6 @@ import org.junit.Test
  */
 class Preview13AdditionsTest {
 
-
-
     private fun base(extra: String): String =
         """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
             "stylesDark": {"keyBackground": "#FF222222"},
@@ -31,16 +28,9 @@ class Preview13AdditionsTest {
 
     // ---- A3：失配恢复与锁定 ----
 
-
-
-
-
-
     // ---- P1：方案 ID 或名匹配 ----
 
-
     // ---- A4：PREEDIT 空／非空信号解析 ----
-
 
     // ---- A5：键盘动作值 ----
 
@@ -81,52 +71,6 @@ class Preview13AdditionsTest {
 
     // ---- A6：returnKeyType 条件 ----
 
-
-    // ---- A7／S7／S1／S2：样式几何 ----
-
-    private fun geometry(json: String): KeyStyleGeometry? {
-        val entry = Json.parseToJsonElement(json) as JsonObject
-        return KeyStyleGeometryParser.parseEntry(entry).first
-    }
-
-    @Test
-    fun shadowDefaultsAreRadius3Offset03() {
-        val parsed = geometry(
-            """{"normalShadowColor": "#80000000"}""",
-        )
-        assertNotNull(parsed)
-        val layer = parsed!!.shadow?.normal
-        assertNotNull(layer)
-        assertEquals(3f, layer!!.radiusDp)
-        assertEquals(0f, layer.offsetXDp)
-        assertEquals(3f, layer.offsetYDp)
-    }
-
-    @Test
-    fun boundsHeightAndVerticalApplied() {
-        val parsed = geometry(
-            """{"bounds": {"width": 0.5, "height": 0.6, "alignment": "bottom"}}""",
-        )
-        assertNotNull(parsed)
-        assertEquals(0.5f, parsed!!.bounds?.widthFraction)
-        assertEquals(0.6f, parsed.bounds?.heightFraction)
-        assertEquals(KeyBoundsVertical.BOTTOM, parsed.bounds?.vertical)
-    }
-
-    @Test
-    fun perStyleFontAndInsetsParsed() {
-        val parsed = geometry(
-            """{"fontSize": 22.5, "altFontSize": 16, "iconFontSize": 20,
-                "hInsetDp": 3, "vInsetDp": 2}""",
-        )
-        assertNotNull(parsed)
-        assertEquals(22.5f, parsed!!.fontSizeDp)
-        assertEquals(16f, parsed.altFontSizeDp)
-        assertEquals(20f, parsed.iconSizeDp)
-        assertEquals(3f, parsed.hInsetDp)
-        assertEquals(2f, parsed.vInsetDp)
-    }
-
     // ---- G3／G1：keyboards 表 ----
 
     @Test
@@ -144,7 +88,6 @@ class Preview13AdditionsTest {
 
     // ---- P5：字体字重 ----
 
-
     @Test
     fun fontWeightMatchesPredicate() {
         assertTrue(fontWeightMatches(null, true))
@@ -159,9 +102,6 @@ class Preview13AdditionsTest {
 
     // ---- S5／S11／S12／G1／G2：校验层 ----
 
-
-
     // ---- G4：深色布局回落链 ----
-
 
 }
