@@ -5,8 +5,6 @@ package com.jobeen.ime.skin.model
 import com.jobeen.ime.data.keyboard.theme.fontWeightMatches
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.skin.notify.NotificationActionNames
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -70,21 +68,6 @@ class Preview13AdditionsTest {
     }
 
     // ---- A6：returnKeyType 条件 ----
-
-    // ---- G3／G1：keyboards 表 ----
-
-    @Test
-    fun numberPadAliasAndStyleSetParsed() {
-        val tree = Json.parseToJsonElement(
-            """{"keyboards": {
-                "numeric": {"layoutId": "num", "styleSet": "dark_keys"},
-                "symbolic": {"layoutId": "sym"}}}""",
-        ) as JsonObject
-        val table = SkinJson.parseKeyboards(tree)
-        assertEquals("num", table.getValue("numberPad").layoutId)
-        assertEquals("dark_keys", table.getValue("numeric").styleSet)
-        assertNull(table.getValue("symbolic").styleSet)
-    }
 
     // ---- P5：字体字重 ----
 

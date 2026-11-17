@@ -7,7 +7,6 @@ import com.jobeen.ime.input.keyboard.impl.T15Keyboard
 import com.jobeen.ime.input.keyboard.impl.T9Keyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
-import com.jobeen.ime.skin.store.SkinGenRef
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -30,8 +29,6 @@ import org.junit.Test
  * （contentHeight 读快照 heightPercent）与像素渲染列为真机验证项。
  */
 class KeyboardGeometryFontMatrixTest {
-
-    private val ref = SkinGenRef("skin-matrix", "h".repeat(64), 1)
 
     private val defaultScheme = KeyboardColors.ColorScheme(
         keyBackground = 100, keyPressed = 101, keyBorderStroke = 102,
