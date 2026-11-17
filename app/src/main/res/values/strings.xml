@@ -34,8 +34,6 @@
     <!-- 候选页分组（2026-10-29 批量第 3 项） -->
     <string name="candidate_content">候选内容</string>
     <string name="candidate_window">窗口显示</string>
-    <string name="floating_candidate_prev">上一页</string>
-    <string name="floating_candidate_next">下一页</string>
     <!-- 批量第 4 项：反馈补齐 -->
     <string name="key_sound_volume">按键音量</string>
     <string name="key_custom_sound">自定义音效</string>

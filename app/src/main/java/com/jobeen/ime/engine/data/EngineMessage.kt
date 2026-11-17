@@ -164,8 +164,8 @@ internal fun candidatesContentEqual(
  * 复位，复位后小 revision 是新代次的首帧、必须放行。
  *
  * 代次边界（调用方必须在这些点调 [newGeneration]）：
- * - 浮动窗实际解散（与网格 resetRevisionGate 同一点）；
- * - 其余会话边界若有显式信号，到时再接。
+ * - 其余会话边界若有显式信号，到时再接（浮动窗解散这一路已随
+ *   浮动窗删除而消失；目前无生产调用方，epoch 回退兜底）。
  * 除显式复位外，revision 小于已应用值时也按新 epoch 放行并复位
  * 基线——这是安全的：通道同类保序（EngineMessageChannel 同类
  * 严格保序）＋发射门（RimeEngine:1691 仅当 requestId ==
@@ -228,7 +228,7 @@ internal class CandidateFrameGate {
 
     private var lastFrame: FrameFingerprint? = null
 
-    /** 新代次：复位已应用代次与帧指纹（浮动窗解散等会话边界用）。 */
+    /** 新代次：复位已应用代次与帧指纹（会话边界用）。 */
     fun newGeneration() {
         lastAppliedRevision = -1L
         lastFrame = null

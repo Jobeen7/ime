@@ -10,14 +10,13 @@ package com.jobeen.ime.engine
  * - NATIVE（native 分页）：调 changeCandidatePage；高亮进
  *   引擎（页内下标），下标是当前页内下标。
  *
- * 浮动候选窗激活时强制 NATIVE（与 1.4 联动；1.4 未接入前
- * 该分支恒 false，由调用方传 floatingActive）。
+ * floatingActive 分支恒 false（浮动候选窗已删，调用方传 false）。
  */
 enum class CandidatePagingMode { SWIPE, NATIVE }
 
 object CandidatePagingPolicy {
 
-    /** 模式分派：浮动窗激活一律 native，否则跟开关。 */
+    /** 模式分派：floatingActive 时 native，否则跟开关。 */
     fun resolveMode(swipePagingEnabled: Boolean, floatingActive: Boolean): CandidatePagingMode =
         if (!swipePagingEnabled || floatingActive) CandidatePagingMode.NATIVE
         else CandidatePagingMode.SWIPE
@@ -40,9 +39,8 @@ object CandidatePagingPolicy {
     }
 
     /**
-     * 上一页/下一页按钮可见性（1.1＋1.4 共用口径）：
-     * - 门：浮动窗内看皮肤键 floatingCandidatePagingButtonDisplayed，
-     *   内嵌栏看设置开关 isManualPagingButtonEnabled；门关则两钮全隐。
+     * 上一页/下一页按钮可见性（1.1 口径）：
+     * - 门：内嵌栏看设置开关 isManualPagingButtonEnabled；门关则两钮全隐。
      * - 上一页：pageNo > 0 才可见；下一页：非末页才可见。
      * @return first = 上一页可见，second = 下一页可见。
      */

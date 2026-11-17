@@ -739,8 +739,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     /**
      * 候选分页双模式页号记账（WO52 1.1）：native 模式的当前页号；
      * 滑动模式仅在批量取空时复位 0（取空则回到第 0 页）。首屏帧
-     * 与上屏提交时复位；jobs 与 reduce 串行写，@Volatile 只保
-     * 证服务层读到的浮动窗激活标志可见。
+     * 与上屏提交时复位。
      */
     @Volatile
     private var pagingPageNo: Int = 0
@@ -750,22 +749,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     /** pageCandidates 发起的 native 翻页待下一帧 Candidates 认领的页号 */
     @Volatile
     private var pendingNativePage: Int? = null
-    /** 浮动候选窗激活标志（WO52 1.4，服务层置位）：激活时强制 native 分页 */
-    @Volatile
-    private var floatingCandidateActiveFlag: Boolean = false
 
-    /** 供服务层（1.4 浮动窗控制器）置位／复位浮动窗激活态。 */
-    override fun setFloatingCandidateActive(active: Boolean) {
-        floatingCandidateActiveFlag = active
-    }
-
-    override fun isFloatingCandidateActive(): Boolean = floatingCandidateActiveFlag
-
-    /** 当前生效分页模式（纯决策的引擎侧读口：开关＋浮动窗强制分支）。 */
+    /** 当前生效分页模式（纯决策的引擎侧读口：只看滑动翻页开关）。 */
     internal fun effectivePagingMode(): CandidatePagingMode {
         val ctx = context
         val swipeEnabled = ctx?.let { CandidateManager.isSwipePagingEnabled(it) } ?: true
-        return CandidatePagingPolicy.resolveMode(swipeEnabled, floatingCandidateActiveFlag)
+        return CandidatePagingPolicy.resolveMode(swipeEnabled, false)
     }
     /** 候选拖拽排序表判空缓存：null 语义用 false+首次查询实现，保存时由 resortCandidates 失效 */
     @Volatile
@@ -2552,7 +2541,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * - native 模式：调 changeCandidatePage；成功页号±1（下限 0），
      *   下一帧 Candidates 认领该页号；失败（已到尽头）则回到第 0 页：
      *   页号复位 0，并把高亮移回全局 0 号（首页首候选）。
-     * - 浮动候选窗激活时 effectivePagingMode() 强制 native。
      */
     override fun pageCandidates(backward: Boolean) {
         if (effectivePagingMode() == CandidatePagingMode.SWIPE && !backward) {

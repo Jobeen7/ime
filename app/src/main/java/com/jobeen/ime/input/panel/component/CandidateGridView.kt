@@ -147,14 +147,12 @@ class CandidateGridView(
      * 候选分页双模式翻页钮态（WO52 1.1）：native 模式下底部钮行
      * 的上一页/下一页按页号可见性过滤（pageNo>0／!isLastPage），
      * 滑动模式保持旧行为（皮肤定义即显示）；手动翻页按钮开关
-     * 关时两钮全隐。浮动窗实例用 [pagingButtonsEnabledOverride]
-     * 改门为皮肤键 floatingCandidatePagingButtonDisplayed。
+     * 关时两钮全隐。
      */
     var pagingMode: CandidatePagingMode = CandidatePagingMode.SWIPE
     var pagingPageNo: Int = 0
     var pagingIsLastPage: Boolean = false
     var onPageCandidates: ((backward: Boolean) -> Unit)? = null
-    var pagingButtonsEnabledOverride: Boolean? = null
     private var bottomButtonsVisible: Boolean = false
 
     /** native 模式页号／末页变化时刷新翻页钮可见性（无变化不重建）。 */
@@ -178,11 +176,10 @@ class CandidateGridView(
 
     /** 按当前钮行规范重建钮条（钮表纯函数见 [bottomRowButtons]）。 */
     private fun rebuildBottomStrip() {
-        // 翻页钮门（WO52 1.1）：浮动窗实例用皮肤键覆写，否则用设置开关；
+        // 翻页钮门（WO52 1.1）：用设置开关；
         // native 模式再按页号过滤（上一页 pageNo>0、下一页 !isLastPage），
         // 滑动模式保持旧行为（皮肤定义即显示）。
-        val manualEnabled = pagingButtonsEnabledOverride
-            ?: CandidateManager.isManualPagingButtonEnabled(context)
+        val manualEnabled = CandidateManager.isManualPagingButtonEnabled(context)
         val (prevVisible, nextVisible) = if (pagingMode == CandidatePagingMode.NATIVE) {
             CandidatePagingPolicy.pagingButtonsVisible(
                 pagingButtonsEnabled = manualEnabled,
@@ -1510,27 +1507,6 @@ class CandidateGridView(
         gridCanvas.resetPressIfOutOfBounds()
         // 列表已更新（新批次或追加页到达）：允许再次在滚到底时请求下一页
         needMoreRequested = false
-        gridCanvas.recomputeLayout()
-        gridCanvas.clampScroll()
-        gridCanvas.invalidate()
-    }
-
-    /**
-     * 复位代次门（浮动窗解散时调）：下一组字会话的首帧不再被旧会话
-     * 顶高的代次拦住（.2 诊断机制 A）。只用于浮动窗常驻网格实例；
-     * 面板展开网格不用（hide() 不复位口径不变）。
-     */
-    fun resetRevisionGate() {
-        revisionGate.reset()
-    }
-
-    /**
-     * 无门重算行布局（浮动窗 measureHeight 离线排后调）：重算的是窗
-     * 自身已存的最新表（allCandidates），不是新帧，不走代次门——
-     * 首次 setCandidates 时宽度为 0 导致行数算空，离线 layout 给了
-     * 真实宽度后重算必须落地（.2 诊断机制 B）。
-     */
-    fun refreshLayout() {
         gridCanvas.recomputeLayout()
         gridCanvas.clampScroll()
         gridCanvas.invalidate()

@@ -35,8 +35,8 @@ interface IEngine {
     fun loadMoreCandidates() {}
     /**
      * 候选翻页（WO52 1.1 双模式）：滑动模式向前走批量追加、向后空操作
-     * （网格自行上滚）；native 模式走 changeCandidatePage；浮动候选窗
-     * 激活时强制 native。缺省空实现（非 Rime 引擎无此通道时不崩溃）。
+     * （网格自行上滚）；native 模式走 changeCandidatePage。
+     * 缺省空实现（非 Rime 引擎无此通道时不崩溃）。
      */
     fun pageCandidates(backward: Boolean) {}
     /**
@@ -45,13 +45,6 @@ interface IEngine {
      * 缺省空实现。
      */
     fun highlightCandidate(index: Int) {}
-    /**
-     * 浮动候选窗是否激活（WO52 1.4）：激活时 pageCandidates 强制走
-     * native 分页。缺省 false（无浮动窗的引擎恒走开关模式）。
-     */
-    fun isFloatingCandidateActive(): Boolean = false
-    /** 置浮动候选窗激活态（WO52 1.4）：服务层在浮动窗开／关时调用。 */
-    fun setFloatingCandidateActive(active: Boolean) {}
     /**
      * 置当前紧凑键盘分组（14/18 键侧栏拼音路由）：窗口切键盘时调用，
      * T14/T18 推分组、其他键盘推 null 清除；缺省空实现（无紧凑键盘

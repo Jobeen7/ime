@@ -2,39 +2,8 @@ package com.jobeen.ime.skin.model
 
 /**
  * 皮肤几何与类型注册（自 SkinModel.kt 迁出的活声明；
- * 浮动窗／配色／键盘类型等活代码在用）。
+ * 配色／键盘类型等活代码在用）。
  */
-
-/**
- * 浮动候选窗样式（WO52 1.4）：皮肤顶层 floatingCandidate* 五键。
- * 位置值是原始字符串（跟随光标／左下／右下），消费点经
- * FloatingCandidatePosition.parse 解析，未知值回落跟随光标；
- * 背景色接受 "#RRGGBB" 字符串或 ARGB Int 字面量。
- */
-data class FloatingCandidateStyle(
-    /** 位置：缺省跟随光标（lc1.i 对应项未确认，先按跟随光标写死）。 */
-    val position: String = DEFAULT_POSITION,
-    /** 回退位置：光标取不到／被键盘盖住／窗口放不下时用，缺省左下。 */
-    val fallbackPosition: String = DEFAULT_FALLBACK_POSITION,
-    /** 深色背景，缺省 −13882322。 */
-    val backgroundColorDark: Int = DEFAULT_BACKGROUND_DARK,
-    /** 浅色背景，缺省 −855305。 */
-    val backgroundColorLight: Int = DEFAULT_BACKGROUND_LIGHT,
-    /** 圆角 dp，钳制 0–24，缺省 12。 */
-    val cornerRadiusDp: Float = DEFAULT_CORNER_RADIUS_DP,
-    /** 翻页按钮显示，缺省 true。 */
-    val pagingButtonDisplayed: Boolean = true,
-) {
-    companion object {
-        const val DEFAULT_POSITION = "cursor"
-        const val DEFAULT_FALLBACK_POSITION = "bottomLeft"
-        const val DEFAULT_BACKGROUND_DARK = -13882322
-        const val DEFAULT_BACKGROUND_LIGHT = -855305
-        const val DEFAULT_CORNER_RADIUS_DP = 12f
-        const val MIN_CORNER_RADIUS_DP = 0f
-        const val MAX_CORNER_RADIUS_DP = 24f
-    }
-}
 
 /** 几何字段全集（定稿三.4）：只出现在 appearance，单位 dp 浮点。 */
 enum class GeometryField(val jsonName: String) {
