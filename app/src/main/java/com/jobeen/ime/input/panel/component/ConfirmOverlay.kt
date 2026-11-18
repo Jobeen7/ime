@@ -29,7 +29,8 @@ class ConfirmOverlay(
 
     private val pillR = dp(10f)
     private val textSize = TEXT_SIZE_SP
-    private val marginH = dp(12)
+    // 2026-11-18 贴边：12dp→0dp，卡片右边缘贴住屏边（缝隙 20dp→8dp，只剩卡内边距）。
+    private val marginH = dp(0)
     private val marginV = dp(0)
 
     companion object {
@@ -45,8 +46,11 @@ class ConfirmOverlay(
         /** 动作菜单项间距（2026-11-18 放大：紧凑值 3dp 太小，改为 5dp）。 */
         internal const val ACTION_ITEM_GAP_DP = 5f
 
-        /** 卡片上下内边距（紧凑值 8dp）。 */
-        internal const val CARD_PADDING_V_DP = 8f
+        /** 卡片上内边距（紧凑值 8dp；贴边只改下边，顶边不动）。 */
+        internal const val CARD_PADDING_TOP_DP = 8f
+
+        /** 卡片下内边距（2026-11-18 贴边：8dp→0dp，删除钮底边贴住卡片底边）。 */
+        internal const val CARD_PADDING_BOTTOM_DP = 0f
 
         /** 卡片横向内边距（2026-11-18 改窄：12dp 留白太宽，改为 8dp）。 */
         internal const val CARD_PADDING_H_DP = 8f
@@ -59,24 +63,26 @@ class ConfirmOverlay(
 
         /**
          * 动作菜单卡片自然高（dp，P-中1 预算口径，字号倍率 1.0）：
-         * 项数×（行高＋上下内边距）＋（项数−1）×间距＋卡片上下内边距
-         * ＋滚动区顶边距。6 项＝196.5dp：竖屏默认 24%（可用 199.68dp）
-         * 一页放得下、余 3.2dp；横屏默认 44%（可用 168.96dp）放不下、
-         * 短 27.6dp，靠 showCard 钳制滚动保底（2026-11-18 放大：项内边距
-         * 2→4dp 加 24dp、项间距 3→5dp 加 10dp，共加 34dp；字号 13sp、
-         * 卡片边距 8dp、滚动区顶边距 4dp、无最小宽全不动；横向内边距
-         * 12→8dp（2026-11-18 改窄，文字两边留白太宽）。
-         * 5 项＝166.3dp，横屏余 2.7dp；4 项＝136.0dp，横屏余 33.0dp）。
+         * 项数×（行高＋上下内边距）＋（项数−1）×间距＋卡片上内边距
+         * ＋卡片下内边距＋滚动区顶边距。6 项＝188.5dp：竖屏默认 24%
+         * （可用 199.68dp）一页放得下、余 11.2dp；横屏默认 44%
+         * （可用 168.96dp）放不下、短 19.6dp，靠 showCard 钳制滚动
+         * 保底（2026-11-18 放大：项内边距 2→4dp 加 24dp、项间距
+         * 3→5dp 加 10dp，共加 34dp；字号 13sp、卡片上边距 8dp、
+         * 滚动区顶边距 4dp、无最小宽全不动；横向内边距 12→8dp
+         * （2026-11-18 改窄，文字两边留白太宽）；下边距 0dp
+         * （2026-11-18 贴边，删除钮底边贴住卡片底边）。
+         * 5 项＝158.3dp，横屏余 10.7dp；4 项＝128.0dp，横屏余 41.0dp）。
          * 放得下时 showCard 把卡片拉满可用高、各项均分（竖列放满一页）；
          * 7 项以上／大字号仍超高时靠 showCard 钳制在卡内滚动保底
          * （见 [actions]）。布局常量与本函数同源，改一处即改预算，不会漂移。
          */
         internal fun actionsMenuNaturalHeightDp(itemCount: Int): Float {
-            if (itemCount <= 0) return 2 * CARD_PADDING_V_DP + ACTIONS_SCROLL_TOP_MARGIN_DP
+            if (itemCount <= 0) return CARD_PADDING_TOP_DP + CARD_PADDING_BOTTOM_DP + ACTIONS_SCROLL_TOP_MARGIN_DP
             val itemH =
                 TEXT_SIZE_SP * ROBOTO_LINE_HEIGHT_WITH_PADDING + 2 * ACTION_ITEM_PADDING_V_DP
             return itemCount * itemH + (itemCount - 1) * ACTION_ITEM_GAP_DP +
-                2 * CARD_PADDING_V_DP + ACTIONS_SCROLL_TOP_MARGIN_DP
+                CARD_PADDING_TOP_DP + CARD_PADDING_BOTTOM_DP + ACTIONS_SCROLL_TOP_MARGIN_DP
         }
     }
 
@@ -146,7 +152,8 @@ class ConfirmOverlay(
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         background = PillBg(colors.panel.background, colors.keyBorderStroke, pillR)
-        setPadding(dp(CARD_PADDING_H_DP).toInt(), dp(CARD_PADDING_V_DP).toInt(), dp(CARD_PADDING_H_DP).toInt(), dp(CARD_PADDING_V_DP).toInt())
+        // 2026-11-18 贴边：下内边距 0dp（删除钮底边贴住卡片底边），上内边距保持 8dp。
+        setPadding(dp(CARD_PADDING_H_DP).toInt(), dp(CARD_PADDING_TOP_DP).toInt(), dp(CARD_PADDING_H_DP).toInt(), dp(CARD_PADDING_BOTTOM_DP).toInt())
         isClickable = true
         setOnClickListener { }
 
@@ -205,10 +212,10 @@ class ConfirmOverlay(
      * 菜单的「删除」就这样消失过）；去掉标题后单列放得下。
      *
      * 高度（一页放满选项：竖列放满，见 [actionsMenuNaturalHeightDp]）：
-     * 剪贴板 6 项菜单自然高 196.5dp，竖屏默认 24%（可用 199.68dp）
-     * 拉满一页（只加 3.2dp）、各项均分、不滚动；横屏默认 44%
-     * （可用 168.96dp）放不下、短 27.6dp，靠 showCard 钳制在卡内
-     * 滚动保底。常用语 4 项 136.0dp，竖屏拉满到 199.68dp、横屏拉满
+     * 剪贴板 6 项菜单自然高 188.5dp，竖屏默认 24%（可用 199.68dp）
+     * 拉满一页（只加 11.2dp）、各项均分、不滚动；横屏默认 44%
+     * （可用 168.96dp）放不下、短 19.6dp，靠 showCard 钳制在卡内
+     * 滚动保底。常用语 4 项 128.0dp，竖屏拉满到 199.68dp、横屏拉满
      * 到 168.96dp。7 项以上／大字号仍超高时靠 showCard 钳制在卡内
      * 滚动保底。
      * [message] 参数保留仅为与 [confirm] 签名对称，本模式不展示。
@@ -266,10 +273,11 @@ class ConfirmOverlay(
                 gravity = Gravity.CENTER
                 background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
                 // 放大的排布（2026-11-18：紧凑版 2dp／3dp 太小）：纵向内边距
-                // 4dp、项间距 5dp，6 项自然高 196.5dp，竖屏默认 24%
-                // （199.68dp）拉满一页（只加 3.2dp）、各项均分、不滚动；
-                // 横屏默认 44%（168.96dp）短 27.6dp、靠 showCard 钳制滚动
-                // 保底；字号 13sp、横向内边距 8dp、卡片边距 8dp、无最小宽。
+                // 4dp、项间距 5dp，6 项自然高 188.5dp，竖屏默认 24%
+                // （199.68dp）拉满一页（只加 11.2dp）、各项均分、不滚动；
+                // 横屏默认 44%（168.96dp）短 19.6dp、靠 showCard 钳制滚动
+                // 保底；字号 13sp、横向内边距 8dp、卡片上边距 8dp、
+                // 下边距 0dp（贴边）、无最小宽。
                 setPadding(dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt(), dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt())
                 setOnClickListener {
                     item.action()
