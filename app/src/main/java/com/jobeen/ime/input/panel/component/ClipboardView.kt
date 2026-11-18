@@ -286,13 +286,17 @@ class ClipboardView(
     // 查询为空时与 clipboardEntries 相同
     private var displayedEntries = listOf<ClipboardManager.Entry>()
 
-    // ── 多选态（仅剪贴板标签）：选中集合以条目文本为键（与数据层业务键一致） ──
+    // ── 多选态：剪贴板按条目文本选，常用语按词条 id 选 ──
+    // 两路互斥（进一路先清另一路），selectedCount 只计当前路
     var multiSelectActive: Boolean = false
         private set
     private val selectedTexts = LinkedHashSet<String>()
-    val selectedCount: Int get() = selectedTexts.size
+    private val selectedPhraseIds = LinkedHashSet<Long>()
+    val selectedCount: Int get() = selectedTexts.size + selectedPhraseIds.size
 
     fun selectedSnapshot(): Set<String> = LinkedHashSet(selectedTexts)
+
+    fun selectedPhraseIdsSnapshot(): Set<Long> = LinkedHashSet(selectedPhraseIds)
 
     // ── 排序模式（剪贴板/常用语共用）：长按菜单进入，工具栏「完成」退出 ──
     // 模式内按住条目拖动：条目跟随手指，同组内（剪贴板按置顶与否分组）
@@ -504,6 +508,7 @@ class ClipboardView(
             // 残留 true 会让下次进入多选的首趟手势被误截获
             thumbScrolling = false
             selectedTexts.clear()
+            selectedPhraseIds.clear()
         }
         computeRowLayouts()
         invalidate()
@@ -512,6 +517,7 @@ class ClipboardView(
     /** 进入多选并预选一条（长按菜单「多选」的入口语义）。 */
     fun beginMultiSelect(entry: ClipboardManager.Entry) {
         selectedTexts.clear()
+        selectedPhraseIds.clear()
         selectedTexts.add(entry.text)
         multiSelectActive = true
         computeRowLayouts()
@@ -522,6 +528,24 @@ class ClipboardView(
     fun toggleSelected(entry: ClipboardManager.Entry) {
         if (!selectedTexts.add(entry.text)) selectedTexts.remove(entry.text)
         // 只变勾选标记、行高不变：轻量更新各行 selected，不做全量布局重建
+        refreshRowSelection()
+        invalidate()
+        onSelectionChanged?.invoke()
+    }
+
+    /** 常用语进入多选并预选一条：按词条 id 选（与剪贴板按文本选互斥）。 */
+    fun beginPhraseMultiSelect(phrase: PhraseManager.Phrase) {
+        selectedTexts.clear()
+        selectedPhraseIds.clear()
+        selectedPhraseIds.add(phrase.id)
+        multiSelectActive = true
+        computeRowLayouts()
+        invalidate()
+        onSelectionChanged?.invoke()
+    }
+
+    fun togglePhraseSelected(phrase: PhraseManager.Phrase) {
+        if (!selectedPhraseIds.add(phrase.id)) selectedPhraseIds.remove(phrase.id)
         refreshRowSelection()
         invalidate()
         onSelectionChanged?.invoke()
@@ -752,8 +776,13 @@ class ClipboardView(
     /** 只更新各行的 selected 标记（行高不变，不做全量布局重建）。 */
     private fun refreshRowSelection() {
         rowLayouts = rowLayouts.mapIndexed { i, row ->
-            val sel = multiSelectActive &&
-                displayedEntries.getOrNull(i)?.text?.let { it in selectedTexts } == true
+            val sel = if (clipTab == ClipboardTab.CLIPBOARD) {
+                multiSelectActive &&
+                    displayedEntries.getOrNull(i)?.text?.let { it in selectedTexts } == true
+            } else {
+                multiSelectActive &&
+                    phrases.getOrNull(i)?.id?.let { it in selectedPhraseIds } == true
+            }
             if (row.selected == sel) row else row.copy(selected = sel)
         }
     }
@@ -887,9 +916,11 @@ class ClipboardView(
 
     /** 列表异步重载后调用：清掉已不存在条目的残留选中。 */
     private fun pruneSelection() {
-        if (selectedTexts.isEmpty()) return
+        if (selectedTexts.isEmpty() && selectedPhraseIds.isEmpty()) return
         val alive = clipboardEntries.mapTo(HashSet()) { it.text }
         if (selectedTexts.retainAll(alive)) onSelectionChanged?.invoke()
+        val alivePhraseIds = phrases.mapTo(HashSet()) { it.id }
+        if (selectedPhraseIds.retainAll(alivePhraseIds)) onSelectionChanged?.invoke()
     }
 
     private data class RowLayout(
@@ -1165,8 +1196,10 @@ class ClipboardView(
                 )
             }
         } else {
+            // 多选态行首要让出勾选圆的位置，与剪贴板分支同口径
+            val checkReserve = if (multiSelectActive) 26f * density else 0f
             val handleReserve = if (reorderActive) 26f * density else 0f
-            val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - 2f * density - handleReserve
+            val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - 2f * density - handleReserve - checkReserve
             phrasesToLayout.map { phrase ->
                 val lines = breakText(tp, phrase.text, maxTextW, 4)
                 RowLayout(
@@ -1176,6 +1209,7 @@ class ClipboardView(
                     secondaryLines = emptyList(),
                     cloud = false,
                     pinned = phrase.pinned,
+                    selected = multiSelectActive && phrase.id in selectedPhraseIds,
                 )
             }
         }
@@ -1325,7 +1359,7 @@ class ClipboardView(
             val pressed = i == pressedIndex || (reorderDragging && i == reorderDragIndex)
             canvas.drawRoundRect(left, y, right, y + h, 8f * density, 8f * density,
                 if (pressed) pressPaint else bgPaint)
-            if (multiSelectActive && clipTab == ClipboardTab.CLIPBOARD) {
+            if (multiSelectActive) {
                 // 行首勾选圆：选中=强调色填充+对勾，未选=描边空心
                 val ccx = left + pillPad + 8f * density
                 val ccy = y + h / 2f
@@ -1362,7 +1396,7 @@ class ClipboardView(
             }
 
             val textStartX = left + pillPad +
-                (if (multiSelectActive && clipTab == ClipboardTab.CLIPBOARD) 26f * density else 0f)
+                (if (multiSelectActive) 26f * density else 0f)
 
             val fm = textPaint.fontMetrics
             val lh = fm.descent - fm.ascent
@@ -1559,7 +1593,10 @@ class ClipboardView(
                             if (multiSelectActive) toggleSelected(entry) else onItemClick?.invoke(entry)
                         }
                     } else {
-                        phrases.getOrNull(idx)?.let { onPhraseClick?.invoke(it) }
+                        phrases.getOrNull(idx)?.let {
+                            // 多选态点行只切换勾选，绝不上屏（与剪贴板分支同构）
+                            if (multiSelectActive) togglePhraseSelected(it) else onPhraseClick?.invoke(it)
+                        }
                     }
                 }
                 longPressPending = false

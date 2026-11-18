@@ -172,6 +172,7 @@ class KawaiiPanel(
                 resetClipEditState()
                 if (clipMultiActive) {
                     clipMultiActive = false
+                    phraseMultiActive = false
                     clipboardView.setMultiSelect(false)
                 }
                 if (clipReorderActive) {
@@ -503,7 +504,7 @@ class KawaiiPanel(
             listener?.onPhraseClick(phrase)
         }
         clipboardView.onPhraseDelete = { phrase ->
-            // 与剪贴板同构的动作菜单：置顶 + 编辑 + 排序入口 + 删除（删除仍走确认）
+            // 与剪贴板同构的动作菜单：置顶 + 编辑 + 多选 + 排序入口 + 删除（删除仍走确认）
             confirmOverlay.actions(
                 message = context.getString(R.string.phrase_item_actions),
                 items = listOf(
@@ -517,6 +518,9 @@ class KawaiiPanel(
                     },
                     context.getString(R.string.clipboard_edit) to {
                         enterPhraseEdit(phrase)
+                    },
+                    context.getString(R.string.clipboard_multi_select) to {
+                        enterPhraseMulti(phrase)
                     },
                     context.getString(R.string.clipboard_reorder) to {
                         enterClipReorder()
@@ -954,6 +958,10 @@ class KawaiiPanel(
 
     private var clipMultiActive: Boolean = false
 
+    // 常用语多选：与剪贴板多选共用 clipMultiActive（模式开关）与多选工具栏，
+    // 只多这一位区分批量删除走哪条路（剪贴板按文本删／常用语按 id 删）
+    private var phraseMultiActive: Boolean = false
+
     private fun applyMultiFields(renderer: ToolbarRenderer) {
         renderer.clipMultiMode = true
         renderer.clipMultiLabel = multiLabelText()
@@ -977,7 +985,16 @@ class KawaiiPanel(
 
     private fun enterClipMulti(entry: ClipboardManager.Entry) {
         clipMultiActive = true
+        phraseMultiActive = false
         clipboardView.beginMultiSelect(entry)
+        view.currentRenderer = newClipToolbarRenderer().also { applyMultiFields(it) }
+        view.invalidate()
+    }
+
+    private fun enterPhraseMulti(phrase: PhraseManager.Phrase) {
+        clipMultiActive = true
+        phraseMultiActive = true
+        clipboardView.beginPhraseMultiSelect(phrase)
         view.currentRenderer = newClipToolbarRenderer().also { applyMultiFields(it) }
         view.invalidate()
     }
@@ -985,6 +1002,7 @@ class KawaiiPanel(
     private fun exitClipMulti() {
         if (!clipMultiActive) return
         clipMultiActive = false
+        phraseMultiActive = false
         clipboardView.setMultiSelect(false)
         // 回到进入前的工具栏：搜索态下进多选则回搜索框，否则普通剪贴板栏
         view.currentRenderer = if (clipSearchActive) {
@@ -996,6 +1014,17 @@ class KawaiiPanel(
     }
 
     private fun handleClipMultiDelete() {
+        if (phraseMultiActive) {
+            val ids = clipboardView.selectedPhraseIdsSnapshot()
+            exitClipMulti()
+            if (ids.isEmpty()) return
+            // 与单条常用语删除同一串行写法：同一协程内先等写库完成再 refresh
+            appScope.launch {
+                ids.forEach { PhraseManager.delete(context, it) }
+                clipboardView.refresh()
+            }
+            return
+        }
         val texts = clipboardView.selectedSnapshot()
         exitClipMulti()
         if (texts.isEmpty()) return
@@ -1204,6 +1233,7 @@ class KawaiiPanel(
                                 resetClipEditState()
                                 if (clipMultiActive) {
                                     clipMultiActive = false
+                                    phraseMultiActive = false
                                     clipboardView.setMultiSelect(false)
                                 }
                                 if (clipReorderActive) {
