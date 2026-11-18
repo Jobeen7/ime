@@ -98,6 +98,8 @@ data class ToolbarCustomConfig(
     val name: String,
     val buttons: List<ToolbarButtonEntry>,
     val background: ToolbarBackground,
+    /** 按按钮的图标覆盖（键＝按钮 ref，值＝图标标识；见 [ToolbarUserStore.IMAGE_ICON_PREFIX]）。 */
+    val iconOverrides: Map<String, String> = emptyMap(),
 )
 
 /** 按钮列一项：引用串（池 id 或 `custom:<id>`）＋启用开关。 */
@@ -110,6 +112,8 @@ data class ToolbarButtonEntry(
 data class ToolbarSkinState(
     val buttons: List<ToolbarButtonEntry> = emptyList(),
     val activeToolbarId: String? = null,
+    /** 按按钮的图标覆盖（键＝按钮 ref，值＝图标标识；见 [ToolbarUserStore.IMAGE_ICON_PREFIX]）。 */
+    val iconOverrides: Map<String, String> = emptyMap(),
 )
 
 /** 用户工具栏全量数据（文件根）。hideToolbar 为全局开关（不分皮肤）：开＝不渲染工具栏区。 */
@@ -131,11 +135,29 @@ sealed interface EffectiveToolbarButton {
 data class EffectiveToolbar(
     val buttons: List<EffectiveToolbarButton>,
     val background: ToolbarBackground?,
+    /** 按按钮的图标覆盖（键＝按钮 ref；渲染层只取列内池钮的项，悬空项自然忽略）。 */
+    val iconOverrides: Map<String, String> = emptyMap(),
 )
 
 object ToolbarUserStore {
     const val FILE_NAME = "toolbar_user.json"
     const val IMAGE_DIR = "toolbar_images"
+
+    /**
+     * 图标覆盖值里的上传图片前缀：值 `image:<basename>` 表示
+     * 用 `toolbar_images/` 下该文件作图标；其余值是内置资产 id
+     * 或 Material Symbols 名（渲染层 drawableForIconId 解析）。
+     */
+    const val IMAGE_ICON_PREFIX = "image:"
+
+    /** 校验一条图标覆盖值：非空；上传图片须是合法 basename（禁路径穿越）。 */
+    fun isValidIconOverride(value: String): Boolean {
+        if (value.isBlank()) return false
+        if (value.startsWith(IMAGE_ICON_PREFIX)) {
+            return sanitizeImageFile(value.removePrefix(IMAGE_ICON_PREFIX)) != null
+        }
+        return true
+    }
 
     /** 无皮肤生效时的分键（内置主题态）。 */
     const val BUILTIN_SKIN_KEY = "builtin"
@@ -330,12 +352,12 @@ object ToolbarUserStore {
             val config = data.customToolbars[activeId] ?: return null
             val buttons = resolveEntries(config.buttons, data)
             if (buttons.isEmpty()) return null
-            return EffectiveToolbar(buttons, config.background)
+            return EffectiveToolbar(buttons, config.background, config.iconOverrides)
         }
         if (state.buttons.isEmpty()) return null
         val buttons = resolveEntries(state.buttons, data)
         if (buttons.isEmpty()) return null
-        return EffectiveToolbar(buttons, null)
+        return EffectiveToolbar(buttons, null, state.iconOverrides)
     }
 
     /**
@@ -443,6 +465,13 @@ object ToolbarUserStore {
                         }
                     }))
                     state.activeToolbarId?.let { put("activeToolbarId", JsonPrimitive(it)) }
+                    if (state.iconOverrides.isNotEmpty()) {
+                        put("iconOverrides", buildJsonObject {
+                            for ((ref, iconId) in state.iconOverrides) {
+                                put(ref, JsonPrimitive(iconId))
+                            }
+                        })
+                    }
                 })
             }
         })
@@ -480,6 +509,13 @@ object ToolbarUserStore {
                             put("enabled", JsonPrimitive(entry.enabled))
                         }
                     }))
+                    if (config.iconOverrides.isNotEmpty()) {
+                        put("iconOverrides", buildJsonObject {
+                            for ((ref, iconId) in config.iconOverrides) {
+                                put(ref, JsonPrimitive(iconId))
+                            }
+                        })
+                    }
                     put("background", when (val bg = config.background) {
                         is ToolbarBackground.Color -> buildJsonObject {
                             put("kind", JsonPrimitive("color"))
@@ -577,11 +613,15 @@ object ToolbarUserStore {
                 } ?: continue
                 else -> continue
             }
+            val buttons = parseEntries(obj["buttons"])
             val config = ToolbarCustomConfig(
                 id = id,
                 name = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: "",
-                buttons = parseEntries(obj["buttons"]),
+                buttons = buttons,
                 background = background,
+                iconOverrides = parseIconOverrides(
+                    obj["iconOverrides"], buttons.map { it.ref }.toSet(),
+                ),
             )
             if (validateCustomToolbar(config, customButtons).isEmpty()) {
                 customToolbars[id] = config
@@ -591,9 +631,13 @@ object ToolbarUserStore {
         val skinsObj = root["skins"] as? JsonObject ?: JsonObject(emptyMap())
         for ((skinId, element) in skinsObj) {
             val obj = element as? JsonObject ?: continue
+            val buttons = parseEntries(obj["buttons"])
             val state = ToolbarSkinState(
-                buttons = parseEntries(obj["buttons"]),
+                buttons = buttons,
                 activeToolbarId = (obj["activeToolbarId"] as? JsonPrimitive)?.contentOrNull,
+                iconOverrides = parseIconOverrides(
+                    obj["iconOverrides"], buttons.map { it.ref }.toSet(),
+                ),
             )
             // 悬空生效栏视为无配置（抉择期同样回落）；列内悬空引用在抉择期逐项跳过。
             skins[skinId] = state
@@ -610,6 +654,24 @@ object ToolbarUserStore {
             val enabled = (obj["enabled"] as? JsonPrimitive)?.booleanOrNull ?: true
             ToolbarButtonEntry(ref, enabled)
         }
+    }
+
+    /**
+     * 解析图标覆盖：缺字段＝空；悬空 ref（不在该列内）与非法值
+     * 逐项丢弃（与按钮列悬空引用同口径），不拖垮整份配置。
+     */
+    private fun parseIconOverrides(
+        element: kotlinx.serialization.json.JsonElement?,
+        refs: Set<String>,
+    ): Map<String, String> {
+        val obj = element as? JsonObject ?: return emptyMap()
+        val out = mutableMapOf<String, String>()
+        for ((ref, valueElement) in obj) {
+            if (ref !in refs) continue
+            val value = (valueElement as? JsonPrimitive)?.contentOrNull ?: continue
+            if (isValidIconOverride(value)) out[ref] = value
+        }
+        return out
     }
 
     /** 写文件：版本号＋1、临时文件＋原子改名；失败返回 false（调用方记日志）。 */

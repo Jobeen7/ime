@@ -8,6 +8,7 @@ import com.jobeen.ime.input.panel.toolbar.EffectiveToolbarButton
 import com.jobeen.ime.input.panel.toolbar.ToolbarActionBinding
 import com.jobeen.ime.input.panel.toolbar.ToolbarBackground
 import com.jobeen.ime.input.panel.toolbar.ToolbarButtonEntry
+import com.jobeen.ime.input.panel.toolbar.ToolbarConfig
 import com.jobeen.ime.input.panel.toolbar.ToolbarCustomButton
 import com.jobeen.ime.input.panel.toolbar.ToolbarCustomConfig
 import com.jobeen.ime.input.panel.toolbar.ToolbarSkinState
@@ -431,7 +432,8 @@ class ToolbarUserStoreTest {
         // 首行新建，其后池行（emoji 已添加标灰），最后未进列表的自定义行。
         assertTrue(rows[0] is ToolbarUserStore.ToolbarAddRow.NewCustom)
         val pool = rows.filterIsInstance<ToolbarUserStore.ToolbarAddRow.Pool>()
-        assertEquals(13, pool.size)
+        // 池行数跟随池子实时项数（命令面板／语音插件等新项自动在列），不写死。
+        assertEquals(ToolbarConfig.POOL.size, pool.size)
         assertEquals("emoji", pool[0].id)
         assertEquals("表情", pool[0].label)
         assertTrue(pool[0].added)
@@ -514,5 +516,114 @@ class ToolbarUserStoreTest {
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun iconOverrides_roundTrip_skinAndToolbar() {
+        val dir = Files.createTempDirectory("toolbar-user-icons").toFile()
+        try {
+            val file = File(dir, ToolbarUserStore.FILE_NAME)
+            val config = ToolbarCustomConfig(
+                id = "toolbar:33333333",
+                name = "图标栏",
+                buttons = listOf(ToolbarButtonEntry("copy"), ToolbarButtonEntry("paste")),
+                background = ToolbarBackground.Transparent,
+                iconOverrides = mapOf("copy" to "mic", "paste" to "image:img_ab12cd34.png"),
+            )
+            val data = ToolbarUserData(
+                skins = mapOf(
+                    "skin-a" to ToolbarSkinState(
+                        buttons = listOf(ToolbarButtonEntry("emoji"), ToolbarButtonEntry("voice")),
+                        activeToolbarId = "toolbar:33333333",
+                        iconOverrides = mapOf("emoji" to "mood", "voice" to "mic"),
+                    ),
+                ),
+                customToolbars = mapOf(config.id to config),
+            )
+            assertTrue(ToolbarUserStore.save(file, data))
+            val loaded = ToolbarUserStore.load(file)
+            assertFalse(loaded.corrupt)
+            assertEquals(
+                mapOf("emoji" to "mood", "voice" to "mic"),
+                loaded.data.skins["skin-a"]?.iconOverrides,
+            )
+            assertEquals(config, loaded.data.customToolbars[config.id])
+            // 抉择带出的是生效栏（自定义栏）的覆盖，不是皮肤列的。
+            val resolved = ToolbarUserStore.resolve("skin-a", loaded.data)!!
+            assertEquals(
+                mapOf("copy" to "mic", "paste" to "image:img_ab12cd34.png"),
+                resolved.iconOverrides,
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun iconOverrides_resolve_skinListCarriesOverrides() {
+        val data = ToolbarUserData(
+            skins = mapOf(
+                "skin-a" to ToolbarSkinState(
+                    buttons = listOf(ToolbarButtonEntry("copy")),
+                    iconOverrides = mapOf("copy" to "mic"),
+                ),
+            ),
+        )
+        val resolved = ToolbarUserStore.resolve("skin-a", data)!!
+        assertEquals(mapOf("copy" to "mic"), resolved.iconOverrides)
+    }
+
+    @Test
+    fun iconOverrides_oldFileWithoutField_defaultsEmpty() {
+        val dir = Files.createTempDirectory("toolbar-user-icons-old").toFile()
+        try {
+            val file = File(dir, ToolbarUserStore.FILE_NAME)
+            file.writeText(
+                """{"version":1,"skins":{"skin-a":{"buttons":[{"ref":"copy","enabled":true}]}},""" +
+                    """"customButtons":{},"customToolbars":{}}""",
+            )
+            val loaded = ToolbarUserStore.load(file)
+            assertFalse(loaded.corrupt)
+            assertEquals(emptyMap<String, String>(), loaded.data.skins["skin-a"]?.iconOverrides)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun iconOverrides_staleRefAndInvalidDroppedOnLoad() {
+        val dir = Files.createTempDirectory("toolbar-user-icons-bad").toFile()
+        try {
+            val file = File(dir, ToolbarUserStore.FILE_NAME)
+            file.writeText(
+                """{"version":1,"skins":{"skin-a":{"buttons":[{"ref":"copy","enabled":true},""" +
+                    """{"ref":"voice","enabled":true},{"ref":"emoji","enabled":true},""" +
+                    """{"ref":"undo","enabled":true}],"iconOverrides":{"copy":"mic","voice":"image:../evil.png",""" +
+                    """"emoji":"","paste":"undo","undo":"image:img_12345678.png"}}},""" +
+                    """"customButtons":{},"customToolbars":{}}""",
+            )
+            val loaded = ToolbarUserStore.load(file)
+            assertFalse(loaded.corrupt)
+            // voice 的图片路径穿越、emoji 为空值、paste 不在列内：三项皆丢；
+            // copy 与 undo 的合法覆盖保留。
+            assertEquals(
+                mapOf("copy" to "mic", "undo" to "image:img_12345678.png"),
+                loaded.data.skins["skin-a"]?.iconOverrides,
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun isValidIconOverride_cases() {
+        assertFalse(ToolbarUserStore.isValidIconOverride(""))
+        assertFalse(ToolbarUserStore.isValidIconOverride("   "))
+        assertTrue(ToolbarUserStore.isValidIconOverride("copy"))
+        assertTrue(ToolbarUserStore.isValidIconOverride("mic"))
+        assertTrue(ToolbarUserStore.isValidIconOverride("image:img_ab12cd34.png"))
+        assertFalse(ToolbarUserStore.isValidIconOverride("image:../evil.png"))
+        assertFalse(ToolbarUserStore.isValidIconOverride("image:"))
+        assertFalse(ToolbarUserStore.isValidIconOverride("image:a/b.png"))
     }
 }

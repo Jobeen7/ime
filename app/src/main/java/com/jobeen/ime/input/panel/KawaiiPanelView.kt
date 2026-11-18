@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.RectF
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -225,7 +227,31 @@ class KawaiiPanelView(context: Context) : View(context) {
                 }
             }
         }
-        renderer.updateUserCenter(items)
+        // 按按钮图标覆盖：字符串值（内置资产／符号名）原样传渲染层；
+        // 上传图片值（image:<basename>）在此解码成 Drawable 传过去，
+        // 解码失败（文件丢了／坏了）时该项不传、按钮回落默认图标。
+        // 只处理列内池钮的覆盖，自定义钮图标走定义本身、悬空项忽略。
+        val stringIconOverrides = mutableMapOf<String, String>()
+        val drawableIconOverrides = mutableMapOf<String, Drawable>()
+        for (item in items) {
+            val pool = item as? ToolbarRenderer.UserCenterItem.Pool ?: continue
+            val id = ToolbarConfig.POOL.find { it.action == pool.action }?.id ?: continue
+            val iconId = resolved.iconOverrides[id] ?: continue
+            if (iconId.startsWith(ToolbarUserStore.IMAGE_ICON_PREFIX)) {
+                val name = ToolbarUserStore.sanitizeImageFile(
+                    iconId.removePrefix(ToolbarUserStore.IMAGE_ICON_PREFIX),
+                )
+                val bitmap = if (name == null) null else decodeToolbarImage(
+                    File(imageDir, name), id,
+                )
+                if (bitmap != null) {
+                    drawableIconOverrides[id] = BitmapDrawable(context.resources, bitmap)
+                }
+            } else if (iconId.isNotBlank()) {
+                stringIconOverrides[id] = iconId
+            }
+        }
+        renderer.updateUserCenter(items, stringIconOverrides, drawableIconOverrides)
         userBarBackground = resolved.background
         val bg = resolved.background
         if (bg is ToolbarBackground.Image) {
@@ -285,6 +311,8 @@ class KawaiiPanelView(context: Context) : View(context) {
                 context.getDrawable(R.drawable.ic_toolbar_paste),
                 context.getDrawable(R.drawable.ic_keyboard_search),
                 traditionalChinese = context.getDrawable(R.drawable.ic_keyboard_traditional_ch),
+                voice = context.getDrawable(R.drawable.ic_keyboard_voice),
+                voicePlugin = context.getDrawable(R.drawable.ic_keyboard_tune),
             ),
             hPad,
             centerActions = ToolbarConfig.DEFAULT_ACTIONS,

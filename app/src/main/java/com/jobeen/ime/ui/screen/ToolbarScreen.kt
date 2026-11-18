@@ -2,6 +2,8 @@
 
 package com.jobeen.ime.ui.screen
 
+import android.content.Context
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -60,6 +62,7 @@ import com.jobeen.ime.input.panel.toolbar.ToolbarCustomConfig
 import com.jobeen.ime.input.panel.toolbar.ToolbarSkinState
 import com.jobeen.ime.input.panel.toolbar.ToolbarUserData
 import com.jobeen.ime.input.panel.toolbar.ToolbarUserStore
+import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.skin.model.WhitelistAction
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
@@ -108,6 +111,19 @@ private val nullableToolbarEntryListSaver: Saver<List<ToolbarButtonEntry>?, List
     restore = { flat -> toolbarEntryListSaver.restore(flat) },
 )
 
+/**
+ * 图标覆盖草稿的保存器（与编辑草稿列同式）：map 展平成
+ * [k1, v1, k2, v2, …] 保存，按对还原。
+ */
+private val toolbarIconMapSaver: Saver<Map<String, String>, List<String>> = Saver(
+    save = { map -> map.flatMap { (k, v) -> listOf(k, v) } },
+    restore = { flat ->
+        flat.chunked(2).mapNotNull { pair ->
+            pair.getOrNull(0)?.let { it to (pair.getOrNull(1) ?: "") }
+        }.toMap()
+    },
+)
+
 @Composable
 fun ToolbarScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -135,6 +151,12 @@ fun ToolbarScreen(onBack: () -> Unit) {
     var editDraft by rememberSaveable(stateSaver = toolbarEntryListSaver) {
         mutableStateOf<List<ToolbarButtonEntry>>(emptyList())
     }
+    // 图标覆盖草稿（与编辑草稿列同步进出编辑页；写盘与列表写盘同目标）。
+    var editIconDraft by rememberSaveable(stateSaver = toolbarIconMapSaver) {
+        mutableStateOf<Map<String, String>>(emptyMap())
+    }
+    // 图标选择对话框目标：null＝关闭；ref＝正在改图标的按钮。
+    var iconPickerRef by rememberSaveable { mutableStateOf<String?>(null) }
     // 自定义按钮表单目标：null＝新建；id＝编辑既有定义。
     var customFormId by rememberSaveable { mutableStateOf<String?>(null) }
     // 自定义栏表单目标：null＝新建；id＝编辑既有栏。
@@ -160,6 +182,8 @@ fun ToolbarScreen(onBack: () -> Unit) {
         editToolbarId = null
         editSeed = null
         editDraft = emptyList()
+        editIconDraft = emptyMap()
+        iconPickerRef = null
         page = ToolbarPage.MAIN
     }
     BackHandler(enabled = page != ToolbarPage.MAIN) { backToMain() }
@@ -174,25 +198,47 @@ fun ToolbarScreen(onBack: () -> Unit) {
         editToolbarId?.let { data.customToolbars[it]?.buttons }
             ?: currentSkinState().buttons
 
-    fun setCurrentList(list: List<ToolbarButtonEntry>) {
+    /** 当前编辑目标的图标覆盖（皮肤默认列或当前自定义栏）。 */
+    fun currentIcons(): Map<String, String> =
+        editToolbarId?.let { data.customToolbars[it]?.iconOverrides }
+            ?: currentSkinState().iconOverrides
+
+    fun setCurrentList(
+        list: List<ToolbarButtonEntry>,
+        icons: Map<String, String> = currentIcons(),
+    ) {
         val next = if (editToolbarId == null) {
             data.copy(
-                skins = data.skins + (skinId to currentSkinState().copy(buttons = list)),
+                skins = data.skins + (
+                    skinId to currentSkinState().copy(buttons = list, iconOverrides = icons)
+                ),
             )
         } else {
             val config = data.customToolbars[editToolbarId] ?: return
             data.copy(
                 customToolbars = data.customToolbars +
-                    (editToolbarId!! to config.copy(buttons = list)),
+                    (editToolbarId!! to config.copy(buttons = list, iconOverrides = icons)),
             )
         }
         persist(next)
+    }
+
+    /** 图标覆盖写盘（与列表写盘同目标；图标改动本身即写盘，不受列表起步门控约束）。 */
+    fun setCurrentIcons(icons: Map<String, String>) {
+        setCurrentList(currentList(), icons)
+    }
+
+    /** 图标覆盖提交：草稿＋写盘。 */
+    fun applyEditIcons(icons: Map<String, String>) {
+        editIconDraft = icons
+        setCurrentIcons(icons)
     }
 
     /** 进入编辑页：皮肤默认列且用户列为空时以生效列起步（不写盘）；其余用当前列。 */
     fun enterEdit() {
         val targetId = currentSkinState().activeToolbarId
         editToolbarId = targetId
+        editIconDraft = currentIcons()
         if (targetId == null && currentSkinState().buttons.isEmpty()) {
             // 皮肤 v3 死壳删除后无皮肤栏按钮 id，起步列恒取默认 5 项。
             editSeed = ToolbarUserStore.seedEntries(null)
@@ -207,7 +253,11 @@ fun ToolbarScreen(onBack: () -> Unit) {
     /** 草稿提交：非起步情形、或草稿与起步列不同时才写盘。 */
     fun applyEditList(next: List<ToolbarButtonEntry>) {
         editDraft = next
-        if (ToolbarUserStore.shouldPersistEdit(editSeed, next)) setCurrentList(next)
+        // 删钮连同删其图标覆盖（悬空覆盖渲染层本就忽略，此处顺手清掉、
+        // 不让配置里攒陈旧项；与列表同一次写盘带走）。
+        val pruned = editIconDraft.filterKeys { ref -> next.any { it.ref == ref } }
+        if (pruned != editIconDraft) editIconDraft = pruned
+        if (ToolbarUserStore.shouldPersistEdit(editSeed, next)) setCurrentList(next, pruned)
     }
 
     @Composable
@@ -226,6 +276,7 @@ fun ToolbarScreen(onBack: () -> Unit) {
             if (customFormOpen) customFormOpen = false
             else if (toolbarFormOpen) toolbarFormOpen = false
             else if (addDialog) addDialog = false
+            else if (iconPickerRef != null) iconPickerRef = null
             else if (selectDialog) selectDialog = false
             else if (page != ToolbarPage.MAIN) backToMain()
             else onBack()
@@ -248,6 +299,7 @@ fun ToolbarScreen(onBack: () -> Unit) {
             ToolbarPage.EDIT -> ToolbarEditPage(
                 title = editTitle(),
                 list = editDraft,
+                icons = editIconDraft,
                 onListChange = ::applyEditList,
                 defOf = { data.customButtons[it] },
                 onAdd = { addDialog = true },
@@ -255,6 +307,7 @@ fun ToolbarScreen(onBack: () -> Unit) {
                     customFormId = id
                     customFormOpen = true
                 },
+                onIconPick = { iconPickerRef = it },
             )
             // 添加／自定义按钮表单／自定义栏表单均为对话框（见 when 后的对话框挂载），
             // 此处不再有页分支。
@@ -291,6 +344,21 @@ fun ToolbarScreen(onBack: () -> Unit) {
                     addDialog = false
                 },
                 onDismiss = { addDialog = false },
+            )
+        }
+        if (iconPickerRef != null) {
+            ToolbarIconPickerDialog(
+                ref = iconPickerRef!!,
+                current = editIconDraft[iconPickerRef],
+                imageDir = imageDir,
+                onSelect = { iconId ->
+                    val ref = iconPickerRef!!
+                    val next = if (iconId == null) editIconDraft - ref
+                    else editIconDraft + (ref to iconId)
+                    applyEditIcons(next)
+                    iconPickerRef = null
+                },
+                onDismiss = { iconPickerRef = null },
             )
         }
         if (customFormOpen) {
@@ -355,19 +423,39 @@ fun ToolbarScreen(onBack: () -> Unit) {
                 onDelete = { def ->
                     val removedLists: (List<ToolbarButtonEntry>) -> List<ToolbarButtonEntry> =
                         { list -> list.filter { it.ref != def.id } }
+                    // 删定义连同删其图标覆盖（自定义钮的覆盖本就不渲染，
+                    // 但删定义时一并清掉、不留悬空项）。
+                    val iconImageFiles = (
+                        data.skins.values.mapNotNull { it.iconOverrides[def.id] } +
+                            data.customToolbars.values.mapNotNull { it.iconOverrides[def.id] }
+                        ).filter { it.startsWith(ToolbarUserStore.IMAGE_ICON_PREFIX) }
+                        .mapNotNull {
+                            ToolbarUserStore.sanitizeImageFile(
+                                it.removePrefix(ToolbarUserStore.IMAGE_ICON_PREFIX),
+                            )
+                        }
                     var next = data.copy(
                         customButtons = data.customButtons - def.id,
                         customToolbars = data.customToolbars.mapValues { (_, config) ->
-                            config.copy(buttons = removedLists(config.buttons))
+                            config.copy(
+                                buttons = removedLists(config.buttons),
+                                iconOverrides = config.iconOverrides - def.id,
+                            )
                         },
                         skins = data.skins.mapValues { (_, state) ->
-                            state.copy(buttons = removedLists(state.buttons))
+                            state.copy(
+                                buttons = removedLists(state.buttons),
+                                iconOverrides = state.iconOverrides - def.id,
+                            )
                         },
                     )
                     if (def.kind == CustomDisplayKind.IMAGE) {
                         ToolbarUserStore.sanitizeImageFile(def.imageFile)?.let { name ->
                             runCatching { File(imageDir, name).delete() }
                         }
+                    }
+                    iconImageFiles.forEach { name ->
+                        runCatching { File(imageDir, name).delete() }
                     }
                     persist(next)
                     customFormOpen = false
@@ -538,10 +626,12 @@ private fun ToolbarMainPage(
 private fun ToolbarEditPage(
     title: String,
     list: List<ToolbarButtonEntry>,
+    icons: Map<String, String>,
     onListChange: (List<ToolbarButtonEntry>) -> Unit,
     defOf: (String) -> ToolbarCustomButton?,
     onAdd: () -> Unit,
     onEditCustom: (String) -> Unit,
+    onIconPick: (String) -> Unit,
 ) {
     var deleteIndex by remember { mutableStateOf<Int?>(null) }
     // 编辑页标题（与分组标题同式：14sp 半粗体正文色，左 4dp、上 8dp、下 6dp）。
@@ -564,16 +654,20 @@ private fun ToolbarEditPage(
             modifier = Modifier.padding(vertical = 12.dp),
         )
     }
-    // 每钮一张卡：名·id 在上、控件行（开关＋上移＋下移＋删除）在下右对齐。
+    // 每钮一张卡：名·id 在上、图标行在中、控件行（开关＋上移＋下移＋删除）在下右对齐。
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         list.forEachIndexed { index, entry ->
-            val label = if (ToolbarUserStore.isCustomRef(entry.ref)) {
-                val def = defOf(entry.ref)
+            val customDef = if (ToolbarUserStore.isCustomRef(entry.ref)) {
+                defOf(entry.ref)
+            } else null
+            val label = if (customDef != null) {
                 when {
-                    def == null -> entry.ref
-                    def.kind == CustomDisplayKind.IMAGE -> stringResource(R.string.toolbar_image_button)
-                    else -> def.display
+                    customDef.kind == CustomDisplayKind.IMAGE ->
+                        stringResource(R.string.toolbar_image_button)
+                    else -> customDef.display
                 }
+            } else if (ToolbarUserStore.isCustomRef(entry.ref)) {
+                entry.ref
             } else {
                 ToolbarConfig.item(entry.ref)?.label ?: entry.ref
             }
@@ -584,7 +678,7 @@ private fun ToolbarEditPage(
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(
-                            if (ToolbarUserStore.isCustomRef(entry.ref)) {
+                            if (customDef != null) {
                                 Modifier.clickable { onEditCustom(entry.ref) }
                             } else Modifier,
                         ),
@@ -597,6 +691,31 @@ private fun ToolbarEditPage(
                     )
                     Text(
                         text = entry.ref,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // 图标行：当前图标灰色摘要在右；池钮点开选图标，
+                // 自定义钮点开按钮表单（图标即其显示形态，在表单里改）。
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            if (customDef != null) onEditCustom(entry.ref)
+                            else onIconPick(entry.ref)
+                        }
+                        .padding(vertical = 12.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.toolbar_icon),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = iconOverrideSummary(icons[entry.ref], customDef),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -705,6 +824,173 @@ private fun ToolbarEditPage(
                 ),
             ),
         )
+    }
+}
+
+/**
+ * 图标行灰色摘要：自定义钮显示其显示形态（图片钮显文件名，
+ * 文字／表情钮显文字）；池钮无覆盖显“默认”，有覆盖显覆盖
+ * 图标名（内置图标显其中文名、符号显符号名、上传图片显文件名）。
+ */
+@Composable
+private fun iconOverrideSummary(
+    iconId: String?,
+    customDef: ToolbarCustomButton?,
+): String {
+    if (customDef != null) {
+        return when (customDef.kind) {
+            CustomDisplayKind.IMAGE -> stringResource(
+                R.string.toolbar_icon_image, customDef.imageFile.orEmpty(),
+            )
+            else -> customDef.display.ifBlank { customDef.id }
+        }
+    }
+    if (iconId == null) return stringResource(R.string.toolbar_icon_default)
+    if (iconId.startsWith(ToolbarUserStore.IMAGE_ICON_PREFIX)) {
+        return stringResource(
+            R.string.toolbar_icon_image,
+            iconId.removePrefix(ToolbarUserStore.IMAGE_ICON_PREFIX),
+        )
+    }
+    return ToolbarConfig.item(iconId)?.label ?: iconId
+}
+
+/**
+ * 图标选择对话框：默认（恢复默认图标）／内置图标（池子各钮的
+ * 默认图标，按池子实时取，命令面板／语音插件等新项自动在列）／
+ * 符号（Material Symbols 注册表）／上传图片（走自定义按钮
+ * IMAGE 同款选图／存图，5MB 上限）。选后立即回调，不另存按钮。
+ */
+@Composable
+private fun ToolbarIconPickerDialog(
+    ref: String,
+    current: String?,
+    imageDir: File,
+    onSelect: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    var imageError by remember { mutableStateOf(false) }
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        imageError = false
+        val imported = importToolbarImage(context, imageDir, uri)
+        if (imported != null) {
+            // 换掉旧上传图：旧文件一并删掉，不在图目录里攒孤儿。
+            current?.takeIf { it.startsWith(ToolbarUserStore.IMAGE_ICON_PREFIX) }?.let { old ->
+                ToolbarUserStore.sanitizeImageFile(
+                    old.removePrefix(ToolbarUserStore.IMAGE_ICON_PREFIX),
+                )?.let { name -> runCatching { File(imageDir, name).delete() } }
+            }
+            onSelect(ToolbarUserStore.IMAGE_ICON_PREFIX + imported)
+        } else {
+            imageError = true
+        }
+    }
+    SettingsDialog(
+        onDismissRequest = onDismiss,
+        title = stringResource(R.string.toolbar_icon_title),
+        body = {
+            Column {
+                Text(
+                    text = ToolbarConfig.item(ref)?.label ?: ref,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                )
+                if (current != null) {
+                    ToolbarIconPickRow(
+                        text = stringResource(R.string.toolbar_icon_default),
+                        selected = false,
+                        onClick = { onSelect(null) },
+                    )
+                }
+                ToolbarIconSectionHeader(stringResource(R.string.toolbar_icon_builtin))
+                ToolbarConfig.POOL.forEach { item ->
+                    ToolbarIconPickRow(
+                        text = "${item.label} · ${item.id}",
+                        selected = current == item.id,
+                        onClick = { onSelect(item.id) },
+                    )
+                }
+                ToolbarIconSectionHeader(stringResource(R.string.toolbar_icon_symbols))
+                MaterialSymbols.NAMES.keys.sorted().forEach { name ->
+                    ToolbarIconPickRow(
+                        text = name,
+                        selected = current == name,
+                        onClick = { onSelect(name) },
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { imagePicker.launch(arrayOf("image/*")) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(text = stringResource(R.string.toolbar_icon_upload_image))
+                }
+                if (imageError) {
+                    Text(
+                        text = stringResource(R.string.toolbar_image_error),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+                    )
+                }
+            }
+        },
+        actions = listOf(
+            SettingsDialogAction(
+                text = stringResource(R.string.cancel),
+                onClick = onDismiss,
+            ),
+        ),
+    )
+}
+
+@Composable
+private fun ToolbarIconSectionHeader(text: String) {
+    Text(
+        text = text,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 6.dp),
+    )
+}
+
+/** 图标选择行（与添加按钮对话框同式：名在左，已选灰字在右）。 */
+@Composable
+private fun ToolbarIconPickRow(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (selected) Modifier.alpha(0.5f)
+                else Modifier.clickable { onClick() },
+            )
+            .padding(vertical = 12.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            Text(
+                text = stringResource(R.string.toolbar_icon_selected),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -837,6 +1123,45 @@ internal fun newImageFileName(mime: String?, fallbackExt: String): String {
         else -> fallbackExt.lowercase().ifEmpty { "bin" }
     }
     return "img_" + UUID.randomUUID().toString().substring(0, 8) + "." + ext
+}
+
+/**
+ * 从系统选图导入一张工具栏图片（与自定义按钮同口径：5MB 上限，
+ * 按 mime 定扩展名、随机文件名存入图目录）：成功返回新文件名，
+ * 失败返回 null。
+ */
+private fun importToolbarImage(context: Context, imageDir: File, uri: Uri): String? {
+    return runCatching {
+        val input = context.contentResolver.openInputStream(uri)
+            ?: return@runCatching null
+        input.use { stream ->
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(8192)
+            var total = 0L
+            var overflow = false
+            while (true) {
+                val n = stream.read(buf)
+                if (n < 0) break
+                total += n
+                if (total > 5L * 1024 * 1024) {
+                    overflow = true
+                    break
+                }
+                out.write(buf, 0, n)
+            }
+            if (overflow) return@runCatching null
+            val mime = context.contentResolver.getType(uri)
+            val ext = uri.lastPathSegment
+                ?.substringAfterLast('.', "")
+                ?.lowercase()
+                .orEmpty()
+            val name = newImageFileName(mime, ext)
+            val file = File(imageDir, name)
+            file.parentFile?.mkdirs()
+            file.writeBytes(out.toByteArray())
+            name
+        }
+    }.getOrNull()
 }
 
 /** 预设色（与外观页预设同值，工具栏页自有副本，不改外观页）。 */
@@ -1261,37 +1586,7 @@ private fun ToolbarCustomFormDialog(
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         imageError = false
-        val imported = runCatching {
-            val input = context.contentResolver.openInputStream(uri)
-                ?: return@runCatching null
-            input.use { stream ->
-                val out = java.io.ByteArrayOutputStream()
-                val buf = ByteArray(8192)
-                var total = 0L
-                var overflow = false
-                while (true) {
-                    val n = stream.read(buf)
-                    if (n < 0) break
-                    total += n
-                    if (total > 5L * 1024 * 1024) {
-                        overflow = true
-                        break
-                    }
-                    out.write(buf, 0, n)
-                }
-                if (overflow) return@runCatching null
-                val mime = context.contentResolver.getType(uri)
-                val ext = uri.lastPathSegment
-                    ?.substringAfterLast('.', "")
-                    ?.lowercase()
-                    .orEmpty()
-                val name = newImageFileName(mime, ext)
-                val file = File(imageDir, name)
-                file.parentFile?.mkdirs()
-                file.writeBytes(out.toByteArray())
-                name
-            }
-        }.getOrNull()
+        val imported = importToolbarImage(context, imageDir, uri)
         if (imported != null) {
             val old = imageFile
             if (old != null && old != imported) {
@@ -1728,37 +2023,7 @@ private fun ToolbarToolbarFormDialog(
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         imageError = false
-        val imported = runCatching {
-            val input = context.contentResolver.openInputStream(uri)
-                ?: return@runCatching null
-            input.use { stream ->
-                val out = java.io.ByteArrayOutputStream()
-                val buf = ByteArray(8192)
-                var total = 0L
-                var overflow = false
-                while (true) {
-                    val n = stream.read(buf)
-                    if (n < 0) break
-                    total += n
-                    if (total > 5L * 1024 * 1024) {
-                        overflow = true
-                        break
-                    }
-                    out.write(buf, 0, n)
-                }
-                if (overflow) return@runCatching null
-                val mime = context.contentResolver.getType(uri)
-                val ext = uri.lastPathSegment
-                    ?.substringAfterLast('.', "")
-                    ?.lowercase()
-                    .orEmpty()
-                val fileName = newImageFileName(mime, ext)
-                val file = File(imageDir, fileName)
-                file.parentFile?.mkdirs()
-                file.writeBytes(out.toByteArray())
-                fileName
-            }
-        }.getOrNull()
+        val imported = importToolbarImage(context, imageDir, uri)
         if (imported != null) {
             val old = (background as? ToolbarBackground.Image)?.file
             if (old != null && old != imported) {
