@@ -344,18 +344,28 @@ object WebDavSync {
      * 远端文件后下一轮同步再正常上传。纯函数，可单测；抛出的
      * IllegalStateException 经 RemoteTransferRunner 原样进 FAILED
      * state 的 error 文本、由调用方展示给用户。
+     *
+     * 只拦被跳过的有效词：跳过行全是损坏行（行内含 U+FFFD，见
+     * [UserDictMergeSafety.MergeResult.corruptSkippedLineNumbers]）时
+     * 直接丢掉、照常上传；只要有一行有效词被跳过仍中止。损坏行不是词，
+     * 丢掉无损失。
      */
     internal fun checkNoSkippedRowsForUpload(
         merge: UserDictMergeSafety.MergeResult,
         dictName: String,
     ) {
-        if (merge.skippedRows <= 0) return
-        val lines = merge.skippedLineNumbers.sorted()
+        // 拦的行 = 跳过行 − 损坏行；全是损坏行时放行。skippedLineNumbers 与
+        // corruptSkippedLineNumbers 由 validateBatch 在同一处建成，损坏行是
+        // 跳过行的子集。
+        val blocking = merge.skippedLineNumbers - merge.corruptSkippedLineNumbers
+        if (blocking.isEmpty()) return
+        val lines = blocking.sorted()
         val shown = lines.take(10).joinToString("、") { "第 $it 行" }
         val lineText = if (lines.size > 10) "$shown 等共 ${lines.size} 行" else shown
-        val reasons = merge.skipped.take(3).joinToString("；") { "第 ${it.lineNumber} 行：${it.detail}" }
+        val reasons = merge.skipped.filter { it.lineNumber in blocking }.take(3)
+            .joinToString("；") { "第 ${it.lineNumber} 行：${it.detail}" }
         throw IllegalStateException(
-            "远端词典“$dictName”有 ${merge.skippedRows} 行无法解析（$lineText），" +
+            "远端词典“$dictName”有 ${blocking.size} 行无法解析（$lineText），" +
                 "本次上传已中止，未覆盖远端；请先修复远端文件再同步" +
                 if (reasons.isNotEmpty()) "（$reasons）" else "",
         )

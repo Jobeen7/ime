@@ -150,6 +150,9 @@ object UserDictMergeSafety {
             val skippedRows: Int = 0,
             /** 全部跳过行的行号（不截断，供导入文件过滤用）。 */
             val skippedLineNumbers: Set<Int> = emptySet(),
+            /** 损坏的跳过行行号（行内含 U+FFFD 替换字符，全集不截断）：
+             *  这类行不是词，丢掉无损失；守卫只拦其余有效词被跳过。 */
+            val corruptSkippedLineNumbers: Set<Int> = emptySet(),
         ) : BatchValidation
 
         /** 校验不通过：批级问题（文件非 UTF-8、词典名非法、列序可疑、
@@ -197,6 +200,8 @@ object UserDictMergeSafety {
         val skippedRows: Int = 0,
         /** 全部跳过行的行号（不截断）。 */
         val skippedLineNumbers: Set<Int> = emptySet(),
+        /** 损坏的跳过行行号（行内含 U+FFFD，全集不截断）；守卫只拦其余行。 */
+        val corruptSkippedLineNumbers: Set<Int> = emptySet(),
         /** 跳过行的原因（只列前 MAX_ISSUES 条，其余只计总数）。 */
         val skipped: List<Issue> = emptyList(),
         /** 校验／归一／导入三阶段边界的堆采样（见 [sampleHeap]），供测量与诊断用。 */
@@ -411,6 +416,7 @@ object UserDictMergeSafety {
         val skipped = ArrayList<Issue>()
         var skippedRows = 0
         val skippedLineNumbers = HashSet<Int>()
+        val corruptSkippedLineNumbers = HashSet<Int>()
         var checkedRows = 0
         var validRows = 0
         var codeFirstVotes = 0
@@ -439,6 +445,7 @@ object UserDictMergeSafety {
                         }
                         skippedRows++
                         skippedLineNumbers += lineNumber
+                        if (isCorruptLine(raw)) corruptSkippedLineNumbers += lineNumber
                         if (skipped.size < MAX_ISSUES) {
                             skipped += Issue(
                                 lineNumber,
@@ -474,6 +481,7 @@ object UserDictMergeSafety {
                         // skippedLineNumbers 把这些行排除在导入文件之外。
                         skippedRows++
                         skippedLineNumbers += lineNumber
+                        if (isCorruptLine(line)) corruptSkippedLineNumbers += lineNumber
                         if (skipped.size < MAX_ISSUES) skipped += issue
                         return@forEachBoundedLine true
                     }
@@ -540,8 +548,16 @@ object UserDictMergeSafety {
             skipped = skipped,
             skippedRows = skippedRows,
             skippedLineNumbers = skippedLineNumbers,
+            corruptSkippedLineNumbers = corruptSkippedLineNumbers,
         )
     }
+
+    /**
+     * 损坏行判定：行内含 U+FFFD（替换字符）——原始字节无法解码、早先环节已用
+     * 替换字符占位，或文件里就写着它；这种行不是词，丢掉无损失。口径收紧：
+     * 只认 U+FFFD；码含大写/声调、负权重等有效词被跳过仍要拦。
+     */
+    private fun isCorruptLine(text: String): Boolean = text.contains('\uFFFD')
 
     /** 校验单行（已排除空行与注释行）：有问题返回第一条问题，否则 null。 */
     private fun validateRow(line: String, lineNumber: Int): Issue? {
@@ -1224,6 +1240,7 @@ object UserDictMergeSafety {
                 skippedRows = valid.skippedRows,
                 skippedLineNumbers = valid.skippedLineNumbers,
                 skipped = valid.skipped,
+                corruptSkippedLineNumbers = valid.corruptSkippedLineNumbers,
                 heapSamples = heapSamples,
             )
         } finally {

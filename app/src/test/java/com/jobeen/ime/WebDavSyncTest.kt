@@ -447,6 +447,85 @@ class WebDavSyncTest {
     }
 
     @Test
+    fun checkNoSkippedRowsForUpload_onlyCorruptSkips_passes() = runBlocking {
+        // 损坏行（码含 U+FFFD 替换字符）只跳过该行：丢掉无损失，守卫放行、
+        // 上传照常。先红后绿：修前守卫见跳过行＞0 即中止。
+        val remoteBefore = "你好\tni hao\t2\n世界\tshi jie\t1\n坏行\t�\t1\n啦啦啦\tla la\t1\n"
+        val server = MockDictServer(remoteBefore)
+        val client = OkHttpClient()
+        val dir = Files.createTempDirectory("webdav-corrupt-row-test").toFile()
+        val filesDir = Files.createTempDirectory("webdav-corrupt-row-files").toFile()
+        try {
+            val downloaded = File(dir, "download.txt")
+                .apply { writeText(getRemote(client, server.url), Charsets.UTF_8) }
+            val (result, importedText) = mergeDownloaded(dir, filesDir, downloaded)
+            assertEquals(3, result.importedCount)
+            assertEquals(1, result.skippedRows)
+            assertEquals(setOf(3), result.skippedLineNumbers)
+            assertEquals(setOf(3), result.corruptSkippedLineNumbers)
+            assertEquals("你好\tni hao\t2\n世界\tshi jie\t1\n啦啦啦\tla la\t1\n", importedText)
+            // 只有损坏行被跳过，守卫放行。
+            WebDavSync.checkNoSkippedRowsForUpload(result, "wanxiang_lite")
+        } finally {
+            server.stop()
+            dir.deleteRecursively()
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun checkNoSkippedRowsForUpload_corruptPlusValidSkip_stillThrows() = runBlocking {
+        // 损坏行＋有效词被跳过混在一起：有效词（第 2 行负权重）仍要拦，
+        // 报错只点名有效词那行，不点名损坏行。
+        val remoteBefore = "你好\tni hao\t2\n世界\tshi jie\t-1\n坏行\t�\t1\n啦啦啦\tla la\t1\n"
+        val server = MockDictServer(remoteBefore)
+        val client = OkHttpClient()
+        val dir = Files.createTempDirectory("webdav-corrupt-valid-test").toFile()
+        val filesDir = Files.createTempDirectory("webdav-corrupt-valid-files").toFile()
+        try {
+            val downloaded = File(dir, "download.txt")
+                .apply { writeText(getRemote(client, server.url), Charsets.UTF_8) }
+            val (result, _) = mergeDownloaded(dir, filesDir, downloaded)
+            assertEquals(2, result.importedCount)
+            assertEquals(2, result.skippedRows)
+            assertEquals(setOf(2, 3), result.skippedLineNumbers)
+            assertEquals(setOf(3), result.corruptSkippedLineNumbers)
+            val error = assertThrows(IllegalStateException::class.java) {
+                WebDavSync.checkNoSkippedRowsForUpload(result, "wanxiang_lite")
+            }
+            val message = error.message ?: ""
+            assertTrue(message.contains("1 行"))
+            assertTrue(message.contains("第 2 行"))
+            assertFalse(message.contains("第 3 行"))
+        } finally {
+            server.stop()
+            dir.deleteRecursively()
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun checkNoSkippedRowsForUpload_allSkipsCorrupt_passes() {
+        // 守卫单测：跳过行全是损坏行即放行（真机第 858 行码“�”的情形）。
+        WebDavSync.checkNoSkippedRowsForUpload(
+            UserDictMergeSafety.MergeResult(
+                importedCount = 2,
+                skippedRows = 1,
+                skippedLineNumbers = setOf(858),
+                skipped = listOf(
+                    UserDictMergeSafety.Issue(
+                        858,
+                        "bad_code",
+                        "码“�”不是小写字母/数字/空格组成的拼音编码",
+                    ),
+                ),
+                corruptSkippedLineNumbers = setOf(858),
+            ),
+            "wanxiang_lite",
+        )
+    }
+
+    @Test
     fun cleanRemoteRows_uploadPutsMergedEntries_remoteUpdated() = runBlocking {
         // 对照：远端全是好行时守卫放行，PUT 正常发生，远端词条集合
         // 按合并结果更新（旧行保留＋本地新增词写回）。
