@@ -36,17 +36,17 @@ class ConfirmOverlay(
         /** 动作菜单与确认按钮共用的字号。 */
         internal const val TEXT_SIZE_SP = 13f
 
-        /** 动作菜单项横向内边距（原值 12dp，2026-11-18 放宽到 20dp 是错的，已改回）。 */
+        /** 动作菜单项横向内边距（12dp）。 */
         internal const val ACTION_ITEM_PADDING_H_DP = 12f
 
-        /** 动作菜单项上下内边距（原值 8dp）。 */
-        internal const val ACTION_ITEM_PADDING_V_DP = 8f
+        /** 动作菜单项上下内边距（WO36 P-中1 紧凑值 2dp）。 */
+        internal const val ACTION_ITEM_PADDING_V_DP = 2f
 
-        /** 动作菜单项间距（原值 8dp）。 */
-        internal const val ACTION_ITEM_GAP_DP = 8f
+        /** 动作菜单项间距（WO36 P-中1 紧凑值 3dp）。 */
+        internal const val ACTION_ITEM_GAP_DP = 3f
 
-        /** 卡片上下内边距（原值 10dp）。 */
-        internal const val CARD_PADDING_V_DP = 10f
+        /** 卡片上下内边距（紧凑值 8dp）。 */
+        internal const val CARD_PADDING_V_DP = 8f
 
         /** 动作列表滚动区顶边距（actionsScroll topMargin 4dp）。 */
         internal const val ACTIONS_SCROLL_TOP_MARGIN_DP = 4f
@@ -55,14 +55,15 @@ class ConfirmOverlay(
         internal const val ROBOTO_LINE_HEIGHT_WITH_PADDING = 1.32714844f
 
         /**
-         * 动作菜单卡片自然高（dp，字号倍率 1.0）：
+         * 动作菜单卡片自然高（dp，P-中1 预算口径，字号倍率 1.0）：
          * 项数×（行高＋上下内边距）＋（项数−1）×间距＋卡片上下内边距
-         * ＋滚动区顶边距。原值口径：6 项＝263.5dp、4 项＝181dp。
-         * 竖屏默认 24%（可用 199.68dp）：4 项放得下、余 18.7dp，
-         * 6 项超 63.8dp；横屏默认 44%（可用 168.96dp）：4 项超
-         * 12.0dp、6 项超 94.5dp。放不下时靠 showCard 钳制在卡内
-         * 滚动保底；放得下时 showCard 拉满可用高、各项均分
-         * （一页放满选项，见 [actions]）。
+         * ＋滚动区顶边距。6 项＝162.5dp：竖屏默认 24%（可用 199.68dp）
+         * 一页放得下、余 37.2dp；横屏默认 44%（可用 168.96dp）一页
+         * 放得下、余 6.4dp（WO36：项内边距 4→2dp 省 24dp、项间距
+         * 4→3dp 省 5dp，共省 29dp；字号 13sp、卡片边距 8dp、滚动区
+         * 顶边距 4dp 全不动。行盒 17.25dp 内已有约 4dp 内部 leading，
+         * 2dp 内边距不挤字面）。7 项以上／大字号仍超高时靠 showCard
+         * 钳制在卡内滚动保底（见 [actions]）。
          * 布局常量与本函数同源，改一处即改预算，不会漂移。
          */
         internal fun actionsMenuNaturalHeightDp(itemCount: Int): Float {
@@ -198,10 +199,11 @@ class ConfirmOverlay(
      * 纵向布局按上限截断后最后一项会被挤出卡外不可见（剪贴板
      * 菜单的「删除」就这样消失过）；去掉标题后单列放得下。
      *
-     * 高度（一页放满选项，见 [actionsMenuNaturalHeightDp]）：
-     * 原值口径 6 项自然高 263.5dp、4 项 181dp；放得下时 showCard
-     * 把卡片拉满可用高、各项均分；放不下时靠 showCard 钳制在
-     * 卡内滚动保底。
+     * 高度预算（WO36 P-中1，字号倍率 1.0，见 [actionsMenuNaturalHeightDp]）：
+     * 剪贴板 6 项菜单自然高 162.5dp，竖屏默认 24%（可用 199.68dp）
+     * 一页完整显示、不滚动，余 37.2dp；横屏默认 44%（可用 168.96dp）
+     * 一页完整显示、不滚动，余 6.4dp。7 项以上／大字号仍超高时靠
+     * showCard 钳制在卡内滚动保底。
      * [message] 参数保留仅为与 [confirm] 签名对称，本模式不展示。
      */
     /**
@@ -256,9 +258,10 @@ class ConfirmOverlay(
                 setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, this@ConfirmOverlay.textSize)
                 gravity = Gravity.CENTER
                 background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
-                // 原值：按钮纵向内边距 8dp、项间距 8dp、字号 13sp、
-                // 卡片纵向内边距 10dp；宽随内容、无最小宽。
-                // 放得下时 showCard 拉满可用高、各项均分（一页放满选项）。
+                // 紧凑排布（WO36 P-中1）：纵向内边距 2dp、项间距 3dp，
+                // 6 项自然高 162.5dp，竖屏默认 24%（199.68dp）余 37.2dp、
+                // 横屏默认 44%（168.96dp）余 6.4dp，一页完整显示、不滚动；
+                // 字号 13sp、横向内边距 12dp、卡片边距 8dp、无最小宽。
                 setPadding(dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt(), dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt())
                 setOnClickListener {
                     item.action()
@@ -339,30 +342,7 @@ class ConfirmOverlay(
                 val restH = card.height - actionsScroll.height
                 val naturalH = restH + actionsContainer.height
                 val lp = actionsScroll.layoutParams as LinearLayout.LayoutParams
-                // 一页放满选项：卡片高随可用高、各项均分。
-                // 按钮自然高（px，避免拉满时压字）与项间距。
-                val n = actionButtons.size
-                val naturalBtnHpx =
-                    dp(TEXT_SIZE_SP * ROBOTO_LINE_HEIGHT_WITH_PADDING + 2 * ACTION_ITEM_PADDING_V_DP).toInt()
-                val gapPx = dp(ACTION_ITEM_GAP_DP).toInt()
-                val targetScrollH = (availH - restH).coerceAtLeast(0)
-                val fillBtnHpx =
-                    if (n > 0) (targetScrollH - (n - 1) * gapPx) / n else 0
-                if (n > 0 && fillBtnHpx >= naturalBtnHpx) {
-                    // 拉满：滚动区定高到可用高，各项均分铺满一页、不滚动。
-                    if (lp.height != targetScrollH) {
-                        lp.height = targetScrollH
-                        actionsScroll.layoutParams = lp
-                    }
-                    actionButtons.forEach { btn ->
-                        val blp = btn.layoutParams as LinearLayout.LayoutParams
-                        if (blp.height != fillBtnHpx) {
-                            blp.height = fillBtnHpx
-                            btn.layoutParams = blp
-                        }
-                    }
-                    cardH = availH
-                } else if (naturalH > availH) {
+                if (naturalH > availH) {
                     val target = (availH - restH).coerceAtLeast(0)
                     if (lp.height != target) {
                         lp.height = target
