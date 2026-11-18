@@ -252,6 +252,34 @@ class UserDictMergeSafetyTest {
     }
 
     @Test
+    fun mixedFileTransposesPerLineAndValidatesWithZeroSkipped() {
+        // 复现诊断 jime-diag-20261118-190538：上传前下载合并远端
+        // wanxiang_lite.userdict.txt（码在前 21319 行＋词在前 20484 行），
+        // 旧转置整文件一票定列序，词在前行被错成码在前，校验跳过 20485 行
+        // → 停 PUT 守卫中止上传。按行转置后应 0 跳过、全数导入，守卫不再触发。
+        // 门控本身已认这是快照内容（码在前实打实多数），转置会跑。
+        val dir = createTempDir()
+        val mixed = "ya\t吖\tc=723 d=6.14592 t=79121\n" +
+            "shi\t是\t5\n" +
+            "a\t啊\t2\n" +
+            "chen\t陈\t3\n" +
+            "hao\t好\t1\n" +
+            "chén yào\t陈\t5\n" +
+            "吖\tya\n" +
+            "啊\ta\n" +
+            "锕\ta\n" +
+            "阿\ta\n"
+        assertTrue(WebDavSync.isSnapshotContent(mixed))
+        val transposed = WebDavSync.convertUserDbSnapshot(
+            mixed.toByteArray(Charsets.UTF_8),
+        ).toString(Charsets.UTF_8)
+        val file = writeBatch(dir, "wanxiang_lite.userdict.txt", transposed)
+        val result = valid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(10, result.entryCount)
+        assertEquals(0, result.skippedRows)
+    }
+
+    @Test
     fun emptyBatchRejects() {
         val dir = createTempDir()
         val file = writeBatch(dir, "batch.txt", "# 只有注释\n\n")

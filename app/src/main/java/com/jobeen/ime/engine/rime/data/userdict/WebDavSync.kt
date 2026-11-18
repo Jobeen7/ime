@@ -646,6 +646,8 @@ object WebDavSync {
      * Rime 原生导出的列序为「码⇥词⇥权重」（码列末尾还带一个空格，是 Rime 内部 key
      * 格式）；但也存在「词⇥码⇥权重」的文件。这里按内容特征自动检测列序
      * （码列应为纯拼音字母，词列应含 CJK 汉字），避免列错位导致导入成功却查不到词。
+     * 列序按行判定：同一文件可混合码在前行与词在前行（如远端 userdict 文件），
+     * 每行按自己的列序解析，无法判定的行沿用文件级投票结果作兜底。
      * 导入接口（UserDictManager::Import）要的是「词⇥码⇥权重」。
      * `#` 开头的注释行原样保留，读取时会被跳过。
      */
@@ -702,7 +704,7 @@ object WebDavSync {
     internal fun convertUserDbSnapshot(bytes: ByteArray): ByteArray {
         var text = bytes.toString(Charsets.UTF_8)
         if (text.startsWith("\uFEFF")) text = text.substring(1)
-        // 先采样投票判定文件列序：多数行第一列像拼音且第二列含汉字 → 「码在前」
+        // 文件级列序只作无法判定行的兜底（见下）；每行先按自己的列序解析。
         val codeFirst = decideUserDbColumnOrder(text)
         val out = StringBuilder(text.length)
         text.lineSequence().forEach { raw ->
@@ -716,9 +718,23 @@ object WebDavSync {
             val first = cols[0].trim()
             val second = cols[1].trim()
             if (first.isEmpty() || second.isEmpty()) return@forEach
-            val phrase = if (codeFirst) second else first
+            // 按行判断列序：同一文件可混合码在前行（快照格式）与词在前行
+            // （userdict 格式），整文件一票定列序会把少数派整批错转置
+            // （诊断 jime-diag-20261118-190538：20484 行词在前被错成码在前，
+            // 校验按 BAD_CODE 跳过 → 停 PUT 守卫中止上传）。第一列像拼音且
+            // 第二列含汉字 → 这行码在前，转置；第一列含汉字且第二列像拼音 →
+            // 这行词在前，原样保留；无法判定 → 沿用文件级判定（与旧行为一致）。
+            // 与列序投票同口径：判定前先去声调。
+            val firstNorm = stripPinyinTones(first)
+            val secondNorm = stripPinyinTones(second)
+            val lineCodeFirst = when {
+                isPinyinCode(firstNorm) && containsCjk(second) -> true
+                containsCjk(first) && isPinyinCode(secondNorm) -> false
+                else -> codeFirst
+            }
+            val phrase = if (lineCodeFirst) second else first
             // 编码去声调后写入，与手机端无声调的查询编码对齐（如 "chen yào" → "chen yao"）
-            val code = stripPinyinTones(if (codeFirst) first else second)
+            val code = stripPinyinTones(if (lineCodeFirst) first else second)
             out.append(phrase).append('\t').append(code)
             // 快照权重是 "c=<次数> d=<...> t=<...>"，不是整数：原样带过去
             // 会被合并校验按 BAD_WEIGHT 整行跳过（诊断里 23413 行就是

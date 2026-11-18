@@ -110,6 +110,30 @@ class UserDbColumnOrderTest {
         assertEquals("是\tshi\t5\n\n", transposed("是\tshi\t5\n"))
     }
 
+    @Test
+    fun mixedFileTransposesPerLine() {
+        // 复现诊断 jime-diag-20261118-190538：远端 wanxiang_lite.userdict.txt
+        // 混合了码在前行（快照格式）与词在前行（userdict 格式）。旧实现整文件
+        // 一票定列序（这里码在前 6 票 > 词在前 4 票），词在前的行被错转置成
+        // 码在前，校验按 BAD_CODE 整批跳过 → 停 PUT 守卫中止上传。
+        // 每行按自己的列序解析：码在前行转置，词在前行原样保留。
+        val text = "ya\t吖\tc=723 d=6.14592 t=79121\n" +
+            "shi\t是\t5\n" +
+            "a\t啊\t2\n" +
+            "chen\t陈\t3\n" +
+            "hao\t好\t1\n" +
+            "chén yào\t陈\t5\n" +
+            "吖\tya\n" +
+            "啊\ta\n" +
+            "锕\ta\n" +
+            "阿\ta\n"
+        assertEquals(
+            "吖\tya\t723\n是\tshi\t5\n啊\ta\t2\n陈\tchen\t3\n好\thao\t1\n" +
+                "陈\tchen yao\t5\n吖\tya\n啊\ta\n锕\ta\n阿\ta\n\n",
+            transposed(text),
+        )
+    }
+
     // ---- 快照内容判定：只有实打实的码在前多数才算 ----
 
     @Test
