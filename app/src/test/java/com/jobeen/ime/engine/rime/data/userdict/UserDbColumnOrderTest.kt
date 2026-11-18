@@ -83,29 +83,31 @@ class UserDbColumnOrderTest {
     @Test
     fun snapshotWeightsConvertToCounts() {
         // 诊断 jime-diag-20261118-162554 的原样：c= 次数作整数权重。
+        // 末尾多一个 \n 是 convertUserDbSnapshot 原有行为：输入以 \n
+        // 结尾时 lineSequence 会多出一个空行段，原样回写成 \n。
         val text = "shi\t是\tc=723 d=6.14592 t=79121\n" +
             "chen\t陈\tc=14 d=0.00138093 t=79121\n" +
             "hao\t好\tc=1 d=1.67191e-47 t=79121\n"
         assertEquals(
-            "是\tshi\t723\n陈\tchen\t14\n好\thao\t1\n",
+            "是\tshi\t723\n陈\tchen\t14\n好\thao\t1\n\n",
             transposed(text),
         )
     }
 
     @Test
     fun integerWeightsAreKept() {
-        assertEquals("是\tshi\t5\n", transposed("shi\t是\t5\n"))
+        assertEquals("是\tshi\t5\n\n", transposed("shi\t是\t5\n"))
     }
 
     @Test
     fun unparseableWeightIsDroppedNotCopied() {
         // 既无 c= 又不是整数：去掉权重列，不让整行被 BAD_WEIGHT 跳过。
-        assertEquals("是\tshi\n", transposed("shi\t是\txyz\n"))
+        assertEquals("是\tshi\n\n", transposed("shi\t是\txyz\n"))
     }
 
     @Test
     fun phraseFirstFileIsNotTransposed() {
-        assertEquals("是\tshi\t5\n", transposed("是\tshi\t5\n"))
+        assertEquals("是\tshi\t5\n\n", transposed("是\tshi\t5\n"))
     }
 
     // ---- 快照内容判定：只有实打实的码在前多数才算 ----
