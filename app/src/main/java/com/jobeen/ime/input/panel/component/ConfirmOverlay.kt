@@ -36,8 +36,8 @@ class ConfirmOverlay(
         /** 动作菜单与确认按钮共用的字号。 */
         internal const val TEXT_SIZE_SP = 13f
 
-        /** 动作菜单项横向内边距（12dp）。 */
-        internal const val ACTION_ITEM_PADDING_H_DP = 12f
+        /** 动作菜单项横向内边距（2026-11-18 改窄：12dp 留白太宽，改为 8dp）。 */
+        internal const val ACTION_ITEM_PADDING_H_DP = 8f
 
         /** 动作菜单项上下内边距（2026-11-18 放大：紧凑值 2dp 太小，改为 4dp）。 */
         internal const val ACTION_ITEM_PADDING_V_DP = 4f
@@ -47,6 +47,9 @@ class ConfirmOverlay(
 
         /** 卡片上下内边距（紧凑值 8dp）。 */
         internal const val CARD_PADDING_V_DP = 8f
+
+        /** 卡片横向内边距（2026-11-18 改窄：12dp 留白太宽，改为 8dp）。 */
+        internal const val CARD_PADDING_H_DP = 8f
 
         /** 动作列表滚动区顶边距（actionsScroll topMargin 4dp）。 */
         internal const val ACTIONS_SCROLL_TOP_MARGIN_DP = 4f
@@ -61,7 +64,8 @@ class ConfirmOverlay(
          * 一页放得下、余 3.2dp；横屏默认 44%（可用 168.96dp）放不下、
          * 短 27.6dp，靠 showCard 钳制滚动保底（2026-11-18 放大：项内边距
          * 2→4dp 加 24dp、项间距 3→5dp 加 10dp，共加 34dp；字号 13sp、
-         * 卡片边距 8dp、滚动区顶边距 4dp、横向内边距 12dp、无最小宽全不动。
+         * 卡片边距 8dp、滚动区顶边距 4dp、无最小宽全不动；横向内边距
+         * 12→8dp（2026-11-18 改窄，文字两边留白太宽）。
          * 5 项＝166.3dp，横屏余 2.7dp；4 项＝136.0dp，横屏余 33.0dp）。
          * 7 项以上／大字号仍超高时靠 showCard 钳制在卡内滚动保底
          * （见 [actions]）。布局常量与本函数同源，改一处即改预算，不会漂移。
@@ -141,7 +145,7 @@ class ConfirmOverlay(
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         background = PillBg(colors.panel.background, colors.keyBorderStroke, pillR)
-        setPadding(dp(12), dp(CARD_PADDING_V_DP).toInt(), dp(12), dp(CARD_PADDING_V_DP).toInt())
+        setPadding(dp(CARD_PADDING_H_DP).toInt(), dp(CARD_PADDING_V_DP).toInt(), dp(CARD_PADDING_H_DP).toInt(), dp(CARD_PADDING_V_DP).toInt())
         isClickable = true
         setOnClickListener { }
 
@@ -263,7 +267,7 @@ class ConfirmOverlay(
                 // 4dp、项间距 5dp，6 项自然高 196.5dp，竖屏默认 24%
                 // （199.68dp）余 3.2dp、一页完整显示、不滚动；横屏默认 44%
                 // （168.96dp）短 27.6dp、靠 showCard 钳制滚动保底；字号 13sp、
-                // 横向内边距 12dp、卡片边距 8dp、无最小宽。
+                // 横向内边距 8dp、卡片边距 8dp、无最小宽。
                 setPadding(dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt(), dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt())
                 setOnClickListener {
                     item.action()

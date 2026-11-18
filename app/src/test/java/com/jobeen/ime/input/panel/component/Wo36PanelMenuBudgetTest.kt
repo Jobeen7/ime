@@ -11,7 +11,7 @@ import org.junit.Test
  * 项间距 3→5dp 后，6 项菜单自然高 196.52dp，竖屏默认 24%（199.68dp）
  * 一页放得下、余 3.16dp，横屏默认 44%（168.96dp）短 27.56dp、靠
  * showCard 钳制滚动保底；字号 13sp、卡片边距 8dp、滚动区顶边距 4dp、
- * 横向内边距 12dp、无最小宽全不动。预算口径与布局同源
+ * 横向内边距 8dp（2026-11-18 由 12dp 改窄）、无最小宽。预算口径与布局同源
  * （见 ConfirmOverlay.actionsMenuNaturalHeightDp）；可用高取
  * S24 Ultra 384×832dp：竖屏 24%＝199.68dp，横屏 44%＝168.96dp。
  * 字号倍率 1.0。View 的钳制／点按链路本身需真机验收。
@@ -81,8 +81,11 @@ class Wo36PanelMenuBudgetTest {
     fun geometryConstants_matchEnlargedBudget() {
         // 预算与布局同源的锚点：改一处常量即改预算，数值漂移会被
         // sixItems_naturalHeight 抓住；此处再钉死常量本身。
+        // 横向内边距 2026-11-18 由 12dp 改窄为 8dp（文字两边留白太宽）。
         assertEquals(4f, ConfirmOverlay.ACTION_ITEM_PADDING_V_DP, 0.001f)
         assertEquals(5f, ConfirmOverlay.ACTION_ITEM_GAP_DP, 0.001f)
+        assertEquals(8f, ConfirmOverlay.ACTION_ITEM_PADDING_H_DP, 0.001f)
+        assertEquals(8f, ConfirmOverlay.CARD_PADDING_H_DP, 0.001f)
         assertEquals(8f, ConfirmOverlay.CARD_PADDING_V_DP, 0.001f)
         assertEquals(4f, ConfirmOverlay.ACTIONS_SCROLL_TOP_MARGIN_DP, 0.001f)
         assertEquals(13f, ConfirmOverlay.TEXT_SIZE_SP, 0.001f)
