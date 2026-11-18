@@ -92,7 +92,7 @@ import kotlinx.coroutines.delay
  * 本页只取内置主题卡选中态＋卡片切换＋旧主题扫码导入，不取皮肤卡、
  * 快照、扫码建皮肤、多选等自定义皮肤部分）。
  * 顶栏 ⋮ 菜单 7 项（2026-11-18 Jobeen 定，顺序固定）：扫码导入／分享／
- * 导出／跟随系统／浅色／深色／重置内置。分享与导出走 ThemeCode 二维码
+ * 导出／浅色／深色／跟随系统／重置内置。分享与导出走 ThemeCode 二维码
  * 链路（简意 shareTheme／QR 对话框原样，见下）；重置内置的确认框取原
  * 库页，动作等效于默认卡的切默认双槽（原 applier.revertToDefault 已随
  * 皮肤库删除，内置页无生效皮肤可清；颜色模式不动，与确认框文案一致）。
@@ -295,7 +295,7 @@ fun BuiltinThemeScreen(
             // 顶栏 ⋮ 菜单（原库页 :636-641 写法：Box 包 IconButton＋
             // DropdownMenu，挂在 actions 的 RowScope 内对齐右上角）。
             // 7 项固定顺序（2026-11-18 Jobeen 定，一个不多一个不少）：
-            // 扫码导入／分享／导出／跟随系统／浅色／深色／重置内置。
+            // 扫码导入／分享／导出／浅色／深色／跟随系统／重置内置。
             // 导入皮肤／创建空白皮肤／复制内置主题／批量删除／开发模式
             // 开关是已删的自定义皮肤功能，一律不加。
             Box {
@@ -345,10 +345,13 @@ fun BuiltinThemeScreen(
                             showQrDialog = true
                         },
                     )
-                    // 4-6. 颜色模式（三项直列，当前项打勾；原库页 :759-774
+                    // 4-6. 颜色模式（三项直列，当前项打勾；顺序 LIGHT／
+                    // DARK／SYSTEM，即浅色／深色／跟随系统，跟随系统紧贴
+                    // 重置内置——2026-11-18 Jobeen 定，不用 entries 的
+                    // SYSTEM／LIGHT／DARK 定义顺序；原库页 :759-774
                     // 照原样：持久化后本地置 mode、记一笔、调
                     // onColorModeChanged() 让 Activity 重建使本页主题生效）。
-                    for (mode in SkinColorMode.entries) {
+                    for (mode in listOf(SkinColorMode.LIGHT, SkinColorMode.DARK, SkinColorMode.SYSTEM)) {
                         val label = when (mode) {
                             SkinColorMode.SYSTEM -> stringResource(R.string.keyboard_theme_follow_system)
                             SkinColorMode.LIGHT -> stringResource(R.string.color_mode_light)
