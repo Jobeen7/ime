@@ -39,11 +39,11 @@ class ConfirmOverlay(
         /** 动作菜单项横向内边距（12dp）。 */
         internal const val ACTION_ITEM_PADDING_H_DP = 12f
 
-        /** 动作菜单项上下内边距（WO36 P-中1 紧凑值 2dp）。 */
-        internal const val ACTION_ITEM_PADDING_V_DP = 2f
+        /** 动作菜单项上下内边距（2026-11-18 放大：紧凑值 2dp 太小，改为 4dp）。 */
+        internal const val ACTION_ITEM_PADDING_V_DP = 4f
 
-        /** 动作菜单项间距（WO36 P-中1 紧凑值 3dp）。 */
-        internal const val ACTION_ITEM_GAP_DP = 3f
+        /** 动作菜单项间距（2026-11-18 放大：紧凑值 3dp 太小，改为 5dp）。 */
+        internal const val ACTION_ITEM_GAP_DP = 5f
 
         /** 卡片上下内边距（紧凑值 8dp）。 */
         internal const val CARD_PADDING_V_DP = 8f
@@ -57,14 +57,14 @@ class ConfirmOverlay(
         /**
          * 动作菜单卡片自然高（dp，P-中1 预算口径，字号倍率 1.0）：
          * 项数×（行高＋上下内边距）＋（项数−1）×间距＋卡片上下内边距
-         * ＋滚动区顶边距。6 项＝162.5dp：竖屏默认 24%（可用 199.68dp）
-         * 一页放得下、余 37.2dp；横屏默认 44%（可用 168.96dp）一页
-         * 放得下、余 6.4dp（WO36：项内边距 4→2dp 省 24dp、项间距
-         * 4→3dp 省 5dp，共省 29dp；字号 13sp、卡片边距 8dp、滚动区
-         * 顶边距 4dp 全不动。行盒 17.25dp 内已有约 4dp 内部 leading，
-         * 2dp 内边距不挤字面）。7 项以上／大字号仍超高时靠 showCard
-         * 钳制在卡内滚动保底（见 [actions]）。
-         * 布局常量与本函数同源，改一处即改预算，不会漂移。
+         * ＋滚动区顶边距。6 项＝196.5dp：竖屏默认 24%（可用 199.68dp）
+         * 一页放得下、余 3.2dp；横屏默认 44%（可用 168.96dp）放不下、
+         * 短 27.6dp，靠 showCard 钳制滚动保底（2026-11-18 放大：项内边距
+         * 2→4dp 加 24dp、项间距 3→5dp 加 10dp，共加 34dp；字号 13sp、
+         * 卡片边距 8dp、滚动区顶边距 4dp、横向内边距 12dp、无最小宽全不动。
+         * 5 项＝166.3dp，横屏余 2.7dp；4 项＝136.0dp，横屏余 33.0dp）。
+         * 7 项以上／大字号仍超高时靠 showCard 钳制在卡内滚动保底
+         * （见 [actions]）。布局常量与本函数同源，改一处即改预算，不会漂移。
          */
         internal fun actionsMenuNaturalHeightDp(itemCount: Int): Float {
             if (itemCount <= 0) return 2 * CARD_PADDING_V_DP + ACTIONS_SCROLL_TOP_MARGIN_DP
@@ -200,10 +200,11 @@ class ConfirmOverlay(
      * 菜单的「删除」就这样消失过）；去掉标题后单列放得下。
      *
      * 高度预算（WO36 P-中1，字号倍率 1.0，见 [actionsMenuNaturalHeightDp]）：
-     * 剪贴板 6 项菜单自然高 162.5dp，竖屏默认 24%（可用 199.68dp）
-     * 一页完整显示、不滚动，余 37.2dp；横屏默认 44%（可用 168.96dp）
-     * 一页完整显示、不滚动，余 6.4dp。7 项以上／大字号仍超高时靠
-     * showCard 钳制在卡内滚动保底。
+     * 剪贴板 6 项菜单自然高 196.5dp，竖屏默认 24%（可用 199.68dp）
+     * 一页完整显示、不滚动，余 3.2dp；横屏默认 44%（可用 168.96dp）
+     * 放不下、短 27.6dp，靠 showCard 钳制在卡内滚动保底。常用语
+     * 4 项 136.0dp，竖屏余 63.7dp、横屏余 33.0dp。7 项以上／大字号
+     * 仍超高时靠 showCard 钳制在卡内滚动保底。
      * [message] 参数保留仅为与 [confirm] 签名对称，本模式不展示。
      */
     /**
@@ -258,10 +259,11 @@ class ConfirmOverlay(
                 setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, this@ConfirmOverlay.textSize)
                 gravity = Gravity.CENTER
                 background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
-                // 紧凑排布（WO36 P-中1）：纵向内边距 2dp、项间距 3dp，
-                // 6 项自然高 162.5dp，竖屏默认 24%（199.68dp）余 37.2dp、
-                // 横屏默认 44%（168.96dp）余 6.4dp，一页完整显示、不滚动；
-                // 字号 13sp、横向内边距 12dp、卡片边距 8dp、无最小宽。
+                // 放大的排布（2026-11-18：紧凑版 2dp／3dp 太小）：纵向内边距
+                // 4dp、项间距 5dp，6 项自然高 196.5dp，竖屏默认 24%
+                // （199.68dp）余 3.2dp、一页完整显示、不滚动；横屏默认 44%
+                // （168.96dp）短 27.6dp、靠 showCard 钳制滚动保底；字号 13sp、
+                // 横向内边距 12dp、卡片边距 8dp、无最小宽。
                 setPadding(dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt(), dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt())
                 setOnClickListener {
                     item.action()
