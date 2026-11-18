@@ -36,6 +36,17 @@ class ConfirmOverlay(
         /** 动作菜单与确认按钮共用的字号。 */
         internal const val TEXT_SIZE_SP = 13f
 
+        /** 动作菜单项横向内边距（2026-11-18 放大：12→20dp，菜单加宽 16dp）。 */
+        internal const val ACTION_ITEM_PADDING_H_DP = 20f
+
+        /** 动作菜单卡片最小宽度（2026-11-18 放大：菜单自然宽只由最长项
+         * 「移至分组…」决定，约 65dp 文字＋按钮横向内边距 40dp＋卡片
+         * 横向内边距 24dp ≈ 129dp，太窄难看清／难点；钳到 180dp，
+         * 卡片 113dp→180dp（约＋59%），按钮内容宽 156dp。只在
+         * actions 模式生效，confirm 模式进 [confirm] 时清零恢复自然宽。
+         * 宽度不占高度预算，6 项自然高仍为 162.5dp。 */
+        internal const val ACTION_MENU_MIN_WIDTH_DP = 180f
+
         /** 动作菜单项上下内边距（WO36 P-中1：4→2dp，省 6 项×4dp＝24dp）。 */
         internal const val ACTION_ITEM_PADDING_V_DP = 2f
 
@@ -181,6 +192,9 @@ class ConfirmOverlay(
     ) {
         this.onConfirm = onConfirm
         this.onCancel = onCancel
+        // 动作菜单的最小宽度只用于 actions 模式：确认模式恢复自然宽，
+        // 不改动确认弹窗的尺寸。
+        card.minimumWidth = 0
         messageView.text = message
         messageView.visibility = View.VISIBLE
         btnContainer.visibility = View.VISIBLE
@@ -242,6 +256,8 @@ class ConfirmOverlay(
         messageView.visibility = View.GONE
         btnContainer.visibility = View.GONE
         actionsScroll.visibility = View.VISIBLE
+        // 放大（2026-11-18）：卡片最小宽 180dp，宽度不占高度预算。
+        card.minimumWidth = dp(ACTION_MENU_MIN_WIDTH_DP).toInt()
         actionsScroll.scrollTo(0, 0)
         actionsContainer.removeAllViews()
         actionButtons.clear()
@@ -258,8 +274,11 @@ class ConfirmOverlay(
                 // 紧凑排布（WO36 P-中1）：纵向内边距 4→2dp、项间距 4→3dp，
                 // 6 项自然高 162.5dp，竖屏默认 24%（199.68dp）余 37.2dp、
                 // 横屏默认 44%（168.96dp）余 6.4dp，一页完整显示、不滚动；
-                // 字号 13sp、卡片边距 8dp 不动。
-                setPadding(dp(12), dp(ACTION_ITEM_PADDING_V_DP).toInt(), dp(12), dp(ACTION_ITEM_PADDING_V_DP).toInt())
+                // 字号 13sp、卡片边距 8dp 不动。2026-11-18 放大只走宽度：
+                // 横向内边距 12→20dp（ACTION_ITEM_PADDING_H_DP），另有卡片
+                // 最小宽 180dp（ACTION_MENU_MIN_WIDTH_DP），纵向常量全不动，
+                // 高度预算不变。
+                setPadding(dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt(), dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt())
                 setOnClickListener {
                     item.action()
                     dismiss()

@@ -723,7 +723,22 @@
 
     <string name="appearance_title">外观</string>
     <string name="keyboard_theme">键盘皮肤</string>
-    <string name="row_sub_skin">内置皮肤、扫码导入</string>
+    <string name="keyboard_theme_follow_system">跟随系统</string>
+    <string name="color_mode_light">浅色</string>
+    <string name="color_mode_dark">深色</string>
+    <string name="skin_lib_scan_import">扫码导入</string>
+    <string name="skin_lib_share_skin">分享皮肤</string>
+    <string name="skin_lib_export_skin">导出皮肤</string>
+    <string name="skin_lib_reset_builtin">重置内置键盘</string>
+    <string name="skin_lib_reset_builtin_title">重置内置键盘？</string>
+    <string name="skin_lib_reset_builtin_message">仅将当前生效皮肤切回内置默认主题。你的皮肤、布局与各项设置（包括颜色模式选择）不受影响，不会删除任何用户皮肤与数据。</string>
+    <string name="skin_lib_reset_confirm">重置</string>
+    <string name="skin_lib_reset_done">已恢复内置默认主题</string>
+    <string name="keyboard_theme_share_title">键盘主题二维码</string>
+    <string name="keyboard_theme_share_subtitle">用另一台设备扫码即可导入该主题</string>
+    <string name="keyboard_theme_share_text">键盘主题：%1$s\n主题码：%2$s</string>
+    <string name="keyboard_theme_copy_code">复制主题码</string>
+    <string name="keyboard_theme_copied">主题码已复制</string>
     <string name="builtin_theme_default">默认</string>
     <string name="skin_lib_active">生效中</string>
     <string name="skin_lib_scan_prompt">扫描皮肤二维码</string>

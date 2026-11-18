@@ -337,7 +337,7 @@ fun MainScreen(
         MainSettingEntry(
             page.key,
             stringResource(page.titleRes),
-            stringResource(page.subtitleRes),
+            page.subtitleRes?.let { stringResource(it) },
             page.group,
         )
     }
@@ -350,7 +350,7 @@ fun MainScreen(
         ResolvedPage(
             page.key,
             stringResource(page.titleRes),
-            stringResource(page.subtitleRes),
+            page.subtitleRes?.let { stringResource(it) },
             groupTitle(page.group),
         )
     }

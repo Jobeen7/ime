@@ -18,11 +18,11 @@ enum class MainSettingGroup(val key: String) {
     ADVANCED_ABOUT("advanced_about"),
 }
 
-/** 主设置页一行：标题＋副标题＋所属组；点击动作由调用方按键映射，不进模型。 */
+/** 主设置页一行：标题＋副标题＋所属组；点击动作由调用方按键映射，不进模型。副标题可空：无副标题的行传 null，渲染时跳过副标题。 */
 data class MainSettingEntry(
     val key: String,
     val title: String,
-    val subtitle: String,
+    val subtitle: String?,
     val group: MainSettingGroup,
 )
 
@@ -62,7 +62,7 @@ fun directPageForGroup(
 data class CatalogPage(
     val key: String,
     val titleRes: Int,
-    val subtitleRes: Int,
+    val subtitleRes: Int?,
     val group: MainSettingGroup,
 )
 
@@ -86,7 +86,7 @@ fun catalogPages(): List<CatalogPage> = listOf(
     CatalogPage("scheme_update", R.string.schema_update_title, R.string.row_sub_scheme_update, MainSettingGroup.INPUT_CANDIDATE),
     CatalogPage("rime", R.string.rime_title, R.string.row_sub_rime, MainSettingGroup.INPUT_CANDIDATE),
     CatalogPage("candidates", R.string.prediction_candidates, R.string.row_sub_candidates, MainSettingGroup.INPUT_CANDIDATE),
-    CatalogPage("skin", R.string.keyboard_theme, R.string.row_sub_skin, MainSettingGroup.KEYBOARD),
+    CatalogPage("skin", R.string.keyboard_theme, null, MainSettingGroup.KEYBOARD),
     CatalogPage("keyboard", R.string.keyboard_settings, R.string.row_sub_keyboard, MainSettingGroup.KEYBOARD),
     CatalogPage("keyboardMenu", R.string.keyboard_menu_title, R.string.row_sub_keyboard_menu, MainSettingGroup.KEYBOARD),
     CatalogPage("toolbar", R.string.toolbar_title, R.string.toolbar_settings_desc, MainSettingGroup.KEYBOARD),
@@ -198,11 +198,11 @@ val FOCUS_CONSUMING_PAGE_KEYS: Set<String> = setOf(
     "toolbar", "userdict", "voice", "word_creation",
 )
 
-/** 解析后的页：搜索与渲染直接用字符串，不再碰资源。 */
+/** 解析后的页：搜索与渲染直接用字符串，不再碰资源。副标题可空（无副标题的页为 null）。 */
 data class ResolvedPage(
     val key: String,
     val title: String,
-    val subtitle: String,
+    val subtitle: String?,
     val groupTitle: String,
 )
 
@@ -286,7 +286,7 @@ fun searchCatalog(
     val folded = simplify(q).lowercase()
     fun exact(text: String): Boolean = simplify(text).lowercase().contains(folded)
     fun fuzzy(text: String): Boolean = fuzzyContains(simplify(text), folded)
-    val (exactPages, restPages) = pages.partition { exact(it.title) || exact(it.subtitle) }
+    val (exactPages, restPages) = pages.partition { exact(it.title) || (it.subtitle?.let { s -> exact(s) } == true) }
     val pageResults = exactPages.map {
         SearchResult(
             title = it.title,

@@ -27,7 +27,10 @@ class KeyboardThemeActivity : ComponentActivity() {
                     android.os.Build.VERSION.SDK_INT,
                 ),
             ) {
-                BuiltinThemeScreen(onBack = { finish() })
+                BuiltinThemeScreen(
+                    onBack = { finish() },
+                    onColorModeChanged = { recreate() },
+                )
             }
         }
     }
