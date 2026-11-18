@@ -155,6 +155,50 @@ fun voiceProviderHint(
 }
 
 /**
+ * 工具栏“语音插件”轮换：按 [voiceProviderRows] 顺序，在可用行里循环切到下一行。
+ * 可用＝本地已下载（LOCAL_READY）或插件就绪且云端已开启（PLUGIN_READY + optIn）。
+ * 未下载的本地、缺密钥的插件、云端未开启时的插件一律跳过：键盘上没有
+ * 设置页那套隐私确认框，不静默改云端 consent（见 VoiceSettingsScreen 的
+ * optInConfirmTarget），也跳过路由时仍会被门控挡下的行。
+ * 返回要写入的首选 id（本地为 null）；当前即唯一可用行时不切；
+ * 无任何可用行时不切。
+ */
+sealed interface VoiceRotateResult {
+    /** 切到目标：本地为 null，插件为 id。 */
+    data class Rotated(val targetPluginId: String?) : VoiceRotateResult
+
+    /** 当前即唯一可用行，无变化。 */
+    data object Unchanged : VoiceRotateResult
+
+    /** 无任何可用行。 */
+    data object NoUsable : VoiceRotateResult
+}
+
+fun nextVoiceProvider(
+    rows: List<VoiceProviderRow>,
+    currentPreferred: String?,
+    optIn: Boolean,
+): VoiceRotateResult {
+    fun isUsable(row: VoiceProviderRow): Boolean = when {
+        row.isLocal -> row.status == VoiceProviderStatus.LOCAL_READY
+        else -> row.status == VoiceProviderStatus.PLUGIN_READY && optIn
+    }
+    if (rows.none(::isUsable)) return VoiceRotateResult.NoUsable
+    val currentIndex = when (currentPreferred) {
+        null -> rows.indexOfFirst { it.isLocal }
+        else -> rows.indexOfFirst { it.key == currentPreferred }
+    }
+    for (step in 1..rows.size) {
+        val index = (currentIndex + step).mod(rows.size)
+        val row = rows[index]
+        if (!isUsable(row)) continue
+        if (index == currentIndex) return VoiceRotateResult.Unchanged
+        return VoiceRotateResult.Rotated(if (row.isLocal) null else row.pluginId)
+    }
+    return VoiceRotateResult.NoUsable
+}
+
+/**
  * V-低1（WO36）：语音总开关落盘失败是否给 toast。
  * 入参即 [com.jobeen.ime.base.speech.VoiceInputSwitchStore.setEnabled] 的
  * 返回值（成功／同值 true，落盘失败 false）：只有失败才 toast，成功与

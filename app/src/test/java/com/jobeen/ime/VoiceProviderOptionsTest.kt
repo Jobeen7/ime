@@ -5,6 +5,8 @@ package com.jobeen.ime
 import com.jobeen.ime.base.speech.cloud.AuthHeaderDecl
 import com.jobeen.ime.base.speech.cloud.PluginMeta
 import com.jobeen.ime.ui.screen.PreferredProviderDisplay
+import com.jobeen.ime.ui.screen.VoiceRotateResult
+import com.jobeen.ime.ui.screen.nextVoiceProvider
 import com.jobeen.ime.ui.screen.preferredProviderDisplay
 import com.jobeen.ime.ui.screen.VoiceProviderHint
 import com.jobeen.ime.ui.screen.VoiceProviderStatus
@@ -202,6 +204,134 @@ class VoiceProviderOptionsTest {
         )
         val missing = pluginSecretsMissingIds(plugins) { _, field -> field == "k1" }
         assertEquals(setOf("p.partial"), missing)
+    }
+
+    @Test
+    fun rotate_localToFirstReadyPlugin() {
+        val rows = voiceProviderRows(
+            modelReady = true,
+            plugins = listOf(plugin("builtin.doubao"), plugin("builtin.nls")),
+            preferredId = null,
+            secretsMissingIds = emptySet(),
+        )
+        assertEquals(
+            VoiceRotateResult.Rotated("builtin.doubao"),
+            nextVoiceProvider(rows, currentPreferred = null, optIn = true),
+        )
+    }
+
+    @Test
+    fun rotate_pluginToNextPlugin() {
+        val rows = voiceProviderRows(
+            modelReady = true,
+            plugins = listOf(plugin("builtin.doubao"), plugin("builtin.nls")),
+            preferredId = "builtin.doubao",
+            secretsMissingIds = emptySet(),
+        )
+        assertEquals(
+            VoiceRotateResult.Rotated("builtin.nls"),
+            nextVoiceProvider(rows, currentPreferred = "builtin.doubao", optIn = true),
+        )
+    }
+
+    @Test
+    fun rotate_lastPluginWrapsToLocal() {
+        val rows = voiceProviderRows(
+            modelReady = true,
+            plugins = listOf(plugin("builtin.doubao"), plugin("builtin.nls")),
+            preferredId = "builtin.nls",
+            secretsMissingIds = emptySet(),
+        )
+        assertEquals(
+            VoiceRotateResult.Rotated(null),
+            nextVoiceProvider(rows, currentPreferred = "builtin.nls", optIn = true),
+        )
+    }
+
+    @Test
+    fun rotate_skipsLocalNotDownloaded() {
+        val rows = voiceProviderRows(
+            modelReady = false,
+            plugins = listOf(plugin("builtin.doubao"), plugin("builtin.nls")),
+            preferredId = null,
+            secretsMissingIds = emptySet(),
+        )
+        assertEquals(
+            VoiceRotateResult.Rotated("builtin.doubao"),
+            nextVoiceProvider(rows, currentPreferred = null, optIn = true),
+        )
+    }
+
+    @Test
+    fun rotate_skipsSecretsMissingPlugin() {
+        val rows = voiceProviderRows(
+            modelReady = true,
+            plugins = listOf(plugin("builtin.doubao"), plugin("builtin.nls")),
+            preferredId = null,
+            secretsMissingIds = setOf("builtin.doubao"),
+        )
+        assertEquals(
+            VoiceRotateResult.Rotated("builtin.nls"),
+            nextVoiceProvider(rows, currentPreferred = null, optIn = true),
+        )
+    }
+
+    @Test
+    fun rotate_optInOff_skipsAllPlugins() {
+        // 云端未开启：插件不可轮换（键盘上无隐私确认框，不静默改 consent），
+        // 本地是唯一可用行，停在原地。
+        val rows = voiceProviderRows(
+            modelReady = true,
+            plugins = listOf(plugin("builtin.doubao"), plugin("builtin.nls")),
+            preferredId = null,
+            secretsMissingIds = emptySet(),
+        )
+        assertEquals(
+            VoiceRotateResult.Unchanged,
+            nextVoiceProvider(rows, currentPreferred = null, optIn = false),
+        )
+    }
+
+    @Test
+    fun rotate_stalePreferred_goesToFirstUsable() {
+        val rows = voiceProviderRows(
+            modelReady = true,
+            plugins = listOf(plugin("builtin.nls")),
+            preferredId = "builtin.gone",
+            secretsMissingIds = emptySet(),
+        )
+        assertEquals(
+            VoiceRotateResult.Rotated(null),
+            nextVoiceProvider(rows, currentPreferred = "builtin.gone", optIn = true),
+        )
+    }
+
+    @Test
+    fun rotate_singleUsable_staysUnchanged() {
+        val rows = voiceProviderRows(
+            modelReady = true,
+            plugins = emptyList(),
+            preferredId = null,
+            secretsMissingIds = emptySet(),
+        )
+        assertEquals(
+            VoiceRotateResult.Unchanged,
+            nextVoiceProvider(rows, currentPreferred = null, optIn = true),
+        )
+    }
+
+    @Test
+    fun rotate_noUsable_whenNothingReady() {
+        val rows = voiceProviderRows(
+            modelReady = false,
+            plugins = emptyList(),
+            preferredId = null,
+            secretsMissingIds = emptySet(),
+        )
+        assertEquals(
+            VoiceRotateResult.NoUsable,
+            nextVoiceProvider(rows, currentPreferred = null, optIn = true),
+        )
     }
 
     @Test
