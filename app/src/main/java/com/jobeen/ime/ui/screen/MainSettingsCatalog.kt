@@ -86,7 +86,7 @@ fun catalogPages(): List<CatalogPage> = listOf(
     CatalogPage("scheme_update", R.string.schema_update_title, R.string.row_sub_scheme_update, MainSettingGroup.INPUT_CANDIDATE),
     CatalogPage("rime", R.string.rime_title, R.string.row_sub_rime, MainSettingGroup.INPUT_CANDIDATE),
     CatalogPage("candidates", R.string.prediction_candidates, R.string.row_sub_candidates, MainSettingGroup.INPUT_CANDIDATE),
-    CatalogPage("skin", R.string.keyboard_theme, null, MainSettingGroup.KEYBOARD),
+    CatalogPage("skin", R.string.keyboard_theme, R.string.row_sub_skin, MainSettingGroup.KEYBOARD),
     CatalogPage("keyboard", R.string.keyboard_settings, R.string.row_sub_keyboard, MainSettingGroup.KEYBOARD),
     CatalogPage("keyboardMenu", R.string.keyboard_menu_title, R.string.row_sub_keyboard_menu, MainSettingGroup.KEYBOARD),
     CatalogPage("toolbar", R.string.toolbar_title, R.string.toolbar_settings_desc, MainSettingGroup.KEYBOARD),
