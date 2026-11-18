@@ -620,20 +620,9 @@ class UserDictActivity : ImeActivity() {
             val result = WebDavSync.testConnection()
             setIdle()
             result
-                .onSuccess { entries ->
+                .onSuccess {
                     val dir = UserDictPrefs.syncDirUrl()
-                    val msg = buildString {
-                        appendLine(getString(R.string.user_dict_test_dir, dir))
-                        if (entries.isEmpty()) {
-                            append(getString(R.string.user_dict_test_dir_empty))
-                        } else {
-                            appendLine(getString(R.string.user_dict_test_dir_count, entries.size))
-                            entries.forEach {
-                                appendLine("• ${it.name}${if (it.isDirectory) "/" else ""}")
-                            }
-                        }
-                    }.trimEnd()
-                    showNotice(getString(R.string.user_dict_test_ok), msg)
+                    showNotice(getString(R.string.user_dict_test_ok), getString(R.string.user_dict_test_dir, dir))
                 }
                 .onFailure {
                     // 取消不是失败（S-M1）：不报失败提示。

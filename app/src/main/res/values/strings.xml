@@ -1132,8 +1132,6 @@
     <string name="user_dict_downloaded_schemes">已下载 %1$d 个方案文件%2$s</string>
     <string name="user_dict_testing_connection">正在测试连接…</string>
     <string name="user_dict_test_dir">同步目录：%1$s</string>
-    <string name="user_dict_test_dir_empty">目录是空的，没有任何文件</string>
-    <string name="user_dict_test_dir_count">共 %1$d 项：</string>
     <string name="user_dict_test_ok">连接正常</string>
     <string name="user_dict_downloaded_imported">已下载并导入 %1$d 个词</string>
     <string name="user_dict_never">从未</string>
