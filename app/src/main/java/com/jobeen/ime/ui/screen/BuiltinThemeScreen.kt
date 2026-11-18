@@ -8,6 +8,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,6 +60,12 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.DecodeHintType
+import com.google.zxing.MultiFormatReader
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.HybridBinarizer
 import com.jobeen.ime.R
 import com.jobeen.ime.data.ThemeStore
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
@@ -107,6 +115,8 @@ fun BuiltinThemeScreen(
     var colorMode by remember { mutableStateOf(SkinLibraryPrefs.getColorMode(context)) }
     // 顶栏 ⋮ 菜单展开态（原库页 :296）。
     var showTopMenu by remember { mutableStateOf(false) }
+    // 扫码来源选择框展开态（简意 showScanSourceDialog）。
+    var showScanSourceDialog by remember { mutableStateOf(false) }
     var themeId by remember {
         mutableStateOf(KeyboardManager.Keyboard.getThemeId(context))
     }
@@ -179,17 +189,19 @@ fun BuiltinThemeScreen(
             setBeepEnabled(false)
         }
     }
-    val qrScanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        val contents = result.contents
-        if (contents.isNullOrBlank()) return@rememberLauncherForActivityResult
+    // 扫码文本的导入处理（相机扫码与相册解码共用；原 qrScanLauncher
+    // 回调本体，原样抽出）：空＝用户取消不提示；前缀不对或解码失败＝
+    // 无效码对话框；否则按 ThemeImport 结果走应用或满槽选槽。
+    fun handleScannedQrText(contents: String?) {
+        if (contents.isNullOrBlank()) return
         if (!contents.trim().startsWith(ThemeCode.PREFIX)) {
             dialogText = legacyQrInvalidTitleText to legacyQrInvalidBodyText
-            return@rememberLauncherForActivityResult
+            return
         }
         val importedTheme = ThemeCode.decode(contents.trim())
         if (importedTheme == null) {
             dialogText = legacyQrInvalidTitleText to legacyQrInvalidBodyText
-            return@rememberLauncherForActivityResult
+            return
         }
         when (ThemeImport.import(importedTheme)) {
             is ThemeImport.Outcome.Applied -> {
@@ -203,6 +215,23 @@ fun BuiltinThemeScreen(
                 showLegacyOverwriteDialog = true
             }
         }
+    }
+    val qrScanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        handleScannedQrText(result.contents)
+    }
+    // 相册扫码（简意 galleryLauncher 原样：GetContent 选图→解码图中
+    // 二维码→与相机扫码同一导入处理；uri 空＝取消不提示，图中无码＝
+    // 无效码对话框）。
+    val galleryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val contents = decodeQrFromImage(context, uri)
+        if (contents.isNullOrBlank()) {
+            dialogText = legacyQrInvalidTitleText to legacyQrInvalidBodyText
+            return@rememberLauncherForActivityResult
+        }
+        handleScannedQrText(contents)
     }
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -279,11 +308,13 @@ fun BuiltinThemeScreen(
                 ) {
                     // 1. 扫码导入（原库页 :699-704 原样；字串用
                     // skin_lib_scan_import“扫码导入”，不用 theme_scan）。
+                    // 点按先弹来源选择（相机／相册，简意 :525-549），
+                    // 不直接进相机——菜单里仍只有 7 项，不加入口。
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.skin_lib_scan_import)) },
                         onClick = {
                             showTopMenu = false
-                            launchQrScan()
+                            showScanSourceDialog = true
                         },
                     )
                     // 2. 分享（原库页顶栏版 :709-724 的作用对象是生效中
@@ -291,8 +322,11 @@ fun BuiltinThemeScreen(
                     // 即简意 shareTheme() :203-223：当前主题编成二维码
                     // PNG 调系统分享；无生效皮肤分支在本页无触发条件，
                     // 当前主题恒可解析，见 currentTheme 注释）。
+                    // 菜单文案用短词“分享”（R.string.share）；字串
+                    // skin_lib_share_skin 仍是“分享皮肤”，留给下方
+                    // 系统分享面板标题（shareChooserTitleText）用。
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.skin_lib_share_skin)) },
+                        text = { Text(stringResource(R.string.share)) },
                         onClick = {
                             showTopMenu = false
                             val code = ThemeCode.encode(currentTheme())
@@ -443,6 +477,48 @@ fun BuiltinThemeScreen(
                 SettingsDialogAction(
                     text = stringResource(R.string.cancel),
                     onClick = { dialogText = null },
+                ),
+            ),
+        )
+    }
+    // 扫码来源选择（简意 :525-549 原样：相机／相册两项＋取消；
+    // 相机走现有 launchQrScan()，相册走图库选图＋解码）。
+    if (showScanSourceDialog) {
+        SettingsDialog(
+            onDismissRequest = { showScanSourceDialog = false },
+            title = stringResource(R.string.keyboard_theme_scan_source),
+            body = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = {
+                            showScanSourceDialog = false
+                            launchQrScan()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.keyboard_theme_scan_camera),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            showScanSourceDialog = false
+                            galleryLauncher.launch("image/*")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.keyboard_theme_scan_gallery),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            },
+            actions = listOf(
+                SettingsDialogAction(
+                    text = stringResource(R.string.cancel),
+                    onClick = { showScanSourceDialog = false },
                 ),
             ),
         )
@@ -643,4 +719,24 @@ private fun BuiltinThemeCard(
             )
         }
     }
+}
+
+// 从图库图片解码二维码文本（简意 decodeQrFromImage 原样）。
+private fun decodeQrFromImage(context: Context, uri: Uri): String? {
+    val bitmap = runCatching {
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+    }.getOrNull() ?: return null
+    val width = bitmap.width
+    val height = bitmap.height
+    if (width <= 0 || height <= 0) return null
+    val pixels = IntArray(width * height)
+    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+    val binaryBitmap = BinaryBitmap(HybridBinarizer(RGBLuminanceSource(width, height, pixels)))
+    val hints = mapOf(
+        DecodeHintType.TRY_HARDER to true,
+        DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+    )
+    return runCatching {
+        MultiFormatReader().apply { setHints(hints) }.decode(binaryBitmap).text
+    }.getOrNull()
 }
