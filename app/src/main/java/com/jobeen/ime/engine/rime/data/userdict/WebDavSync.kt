@@ -656,7 +656,11 @@ object WebDavSync {
      * 按错误列序转置导入；现全量采样、多数为准。平票或无特征行时
      * 默认 Rime 原生「码在前」——此时文件本身无法判定列序，沿用旧默认口径。
      */
-    internal fun decideUserDbColumnOrder(text: String): Boolean {
+    /**
+     * 列序投票（全量采样）：返回（码在前票数，词在前票数）。
+     * 供 [decideUserDbColumnOrder] 与快照内容判定共用。
+     */
+    internal fun countColumnOrderVotes(text: String): Pair<Int, Int> {
         var codeFirstVotes = 0
         var phraseFirstVotes = 0
         text.lineSequence().forEach { raw ->
@@ -673,6 +677,11 @@ object WebDavSync {
             if (isPinyinCode(aNorm) && containsCjk(b)) codeFirstVotes++
             else if (containsCjk(a) && isPinyinCode(bNorm)) phraseFirstVotes++
         }
+        return codeFirstVotes to phraseFirstVotes
+    }
+
+    internal fun decideUserDbColumnOrder(text: String): Boolean {
+        val (codeFirstVotes, phraseFirstVotes) = countColumnOrderVotes(text)
         // 平票或无特征行时默认 Rime 原生「码在前」，与之前行为一致
         val codeFirst = codeFirstVotes >= phraseFirstVotes
         Timber.i("userdb snapshot column order: codeFirst=$codeFirst " +
@@ -680,7 +689,17 @@ object WebDavSync {
         return codeFirst
     }
 
-    private fun convertUserDbSnapshot(bytes: ByteArray): ByteArray {
+    /**
+     * 按内容判定是否快照：只有码在前票数实打实多于词在前票数才算。
+     * 平票或无特征行不算（不能把无法判定的词在前文件误转置），与
+     * [decideUserDbColumnOrder] 的平票默认「码在前」不同。
+     */
+    internal fun isSnapshotContent(text: String): Boolean {
+        val (codeFirstVotes, phraseFirstVotes) = countColumnOrderVotes(text)
+        return codeFirstVotes > phraseFirstVotes && codeFirstVotes > 0
+    }
+
+    internal fun convertUserDbSnapshot(bytes: ByteArray): ByteArray {
         var text = bytes.toString(Charsets.UTF_8)
         if (text.startsWith("\uFEFF")) text = text.substring(1)
         // 先采样投票判定文件列序：多数行第一列像拼音且第二列含汉字 → 「码在前」
@@ -701,11 +720,27 @@ object WebDavSync {
             // 编码去声调后写入，与手机端无声调的查询编码对齐（如 "chen yào" → "chen yao"）
             val code = stripPinyinTones(if (codeFirst) first else second)
             out.append(phrase).append('\t').append(code)
-            val weight = cols.getOrNull(2)?.trim()
-            if (!weight.isNullOrEmpty()) out.append('\t').append(weight)
+            // 快照权重是 "c=<次数> d=<...> t=<...>"，不是整数：原样带过去
+            // 会被合并校验按 BAD_WEIGHT 整行跳过（诊断里 23413 行就是
+            // 这么丢的）。取 c= 的次数作整数权重（使用次数即排序权重）；
+            // 整数权重原样保留；既无 c= 又不是整数时去掉权重列（导入用
+            // 默认权重），不让整行被跳过。
+            val weight = cols.getOrNull(2)?.trim().orEmpty()
+            val intWeight = weight.toIntOrNull() ?: snapshotCount(weight)
+            if (weight.isNotEmpty() && intWeight != null) out.append('\t').append(intWeight)
             out.append('\n')
         }
         return out.toString().toByteArray(Charsets.UTF_8)
+    }
+
+    /** 快照权重 "c=<次数> d=<...> t=<...>" 里的次数；没有可解析的 c= 返回 null。 */
+    private fun snapshotCount(weight: String): Int? {
+        for (token in weight.split(' ', '\t')) {
+            if (token.startsWith("c=")) {
+                token.substring(2).toIntOrNull()?.let { return it }
+            }
+        }
+        return null
     }
 
     /** 是否像拼音编码：仅含小写字母和空格（如 "chen yao"）。 */
@@ -824,10 +859,18 @@ object WebDavSync {
                 val snapshotHash = tempFile.inputStream().use {
                     sha256Stream(it, UserDictManager.MAX_DICT_FILE_BYTES)
                 }
-                // Rime 原生同步快照（*.userdb.txt）列序为「码⇥词⇥权重」，
-                // 先转置为「词⇥码⇥权重」再走合并导入
-                if (remoteFile.endsWith(".userdb.txt", ignoreCase = true)) {
-                    tempFile.writeBytes(convertUserDbSnapshot(tempFile.readBytes()))
+                // Rime 原生同步快照列序为「码⇥词⇥权重」，先转置为
+                // 「词⇥码⇥权重」再走合并导入。快照按内容认，不只看
+                // 文件名：.userdict.txt 也可能是快照内容（如
+                // wanxiang_lite.userdict.txt），只看 .userdb.txt 后缀
+                // 会漏转，之后整批校验按列序整批拒绝（上传失败）或
+                // 行级全跳过（下载 0 条）。 .userdb.txt 保持原有行为
+                // （恒转置，列序由转置内投票定）。
+                val rawBytes = tempFile.readBytes()
+                if (remoteFile.endsWith(".userdb.txt", ignoreCase = true) ||
+                    isSnapshotContent(rawBytes.toString(Charsets.UTF_8))
+                ) {
+                    tempFile.writeBytes(convertUserDbSnapshot(rawBytes))
                 }
                 // 合并安全流程（UserDictMergeSafety）：批级问题（格式/
                 // 词典归属/列序）不合格整批不写；行级问题只跳过该行、

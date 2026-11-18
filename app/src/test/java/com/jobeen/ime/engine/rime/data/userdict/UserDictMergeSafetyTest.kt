@@ -233,6 +233,25 @@ class UserDictMergeSafetyTest {
     }
 
     @Test
+    fun transposedSnapshotBatchValidatesWithZeroSkipped() {
+        // 同步下载的断点证明：诊断 jime-diag-20261118-162554 里 23413 行
+        // 快照没转置权重就直接校验，整批被跳过、0 条导入；先经
+        // convertUserDbSnapshot 转置（列序＋c= 权重转整数）再校验，
+        // 应全数通过、0 行跳过。手动导入的校验本身不动（见上两测）。
+        val dir = createTempDir()
+        val snapshot = "shi\t是\tc=723 d=6.14592 t=79121\n" +
+            "chen\t陈\tc=14 d=0.00138093 t=79121\n" +
+            "hao\t好\tc=1 d=1.67191e-47 t=79121\n"
+        val transposed = WebDavSync.convertUserDbSnapshot(
+            snapshot.toByteArray(Charsets.UTF_8),
+        ).toString(Charsets.UTF_8)
+        val file = writeBatch(dir, "wanxiang.userdb.txt", transposed)
+        val result = valid(UserDictMergeSafety.validateBatch(file, file.name, "wanxiang_lite"))
+        assertEquals(3, result.entryCount)
+        assertEquals(0, result.skippedRows)
+    }
+
+    @Test
     fun emptyBatchRejects() {
         val dir = createTempDir()
         val file = writeBatch(dir, "batch.txt", "# 只有注释\n\n")
