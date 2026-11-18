@@ -8,7 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.remember
-import com.jobeen.ime.ui.screen.KeyboardThemeScreen
+import com.jobeen.ime.ui.screen.BuiltinThemeScreen
 import com.jobeen.ime.ui.theme.AppAppearance
 import com.jobeen.ime.ui.theme.ImeTheme
 
@@ -27,7 +27,7 @@ class KeyboardThemeActivity : ComponentActivity() {
                     android.os.Build.VERSION.SDK_INT,
                 ),
             ) {
-                KeyboardThemeScreen(onBack = { finish() })
+                BuiltinThemeScreen(onBack = { finish() })
             }
         }
     }

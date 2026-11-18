@@ -725,6 +725,17 @@
     <string name="keyboard_theme">键盘皮肤</string>
     <string name="row_sub_skin">内置皮肤、扫码导入</string>
     <string name="builtin_theme_default">默认</string>
+    <string name="skin_lib_active">生效中</string>
+    <string name="skin_lib_scan_prompt">扫描皮肤二维码</string>
+    <string name="skin_lib_legacy_qr_invalid_title">旧主题二维码无效</string>
+    <string name="skin_lib_legacy_qr_invalid_body">该二维码不是有效的旧主题配色码。</string>
+    <string name="skin_lib_legacy_imported_title">已导入旧主题</string>
+    <string name="skin_lib_legacy_imported">已导入“%1$s”，并设为当前主题。</string>
+    <string name="skin_lib_camera_permission_needed">需要相机权限才能扫码导入</string>
+    <string name="skin_lib_legacy_overwritten">已覆盖“%1$s”，并设“%2$s”为当前主题。</string>
+    <string name="skin_lib_custom_theme_full">自定义主题已满</string>
+    <string name="skin_lib_no_theme_to_overwrite">没有可覆盖的自定义主题。</string>
+    <string name="skin_lib_choose_theme_to_overwrite">请选择一个要覆盖的自定义主题：</string>
     <string name="theme_in_use">使用中</string>
     <string name="theme_default_desc">跟随系统，深浅自动切换</string>
     <string name="keyboard_theme_custom">自定义主题</string>
