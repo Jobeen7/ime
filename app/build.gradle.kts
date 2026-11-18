@@ -18,8 +18,8 @@ import java.util.zip.ZipFile
  * BUILTIN_SCHEMA_VERSION == "v18.1.13" 时 zip 缺失也照过；
  * 哨兵使测试在 zip 缺失时失败，显式告警）。
  * 盖戳验证：unzip -p app/src/main/assets/resource.zip
- * shared/version.txt 应为 18.1.13，且 WanxiangUpdateManagerTest
- * 钉住 BUILTIN_SCHEMA_VERSION == "v18.1.13"（该测试只在盖戳值
+ * shared/version.txt 应为 18.1.14，且 WanxiangUpdateManagerTest
+ * 钉住 BUILTIN_SCHEMA_VERSION == "v18.1.14"（该测试只在盖戳值
  * 正确时通过）。
  * 注意：构建脚本里 `java` 会解析到 Java 插件扩展，不能写
  * `java.util.zip.ZipFile` 全限定名，故用上面 import；`try` 不作
