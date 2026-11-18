@@ -67,6 +67,7 @@ class ConfirmOverlay(
          * 卡片边距 8dp、滚动区顶边距 4dp、无最小宽全不动；横向内边距
          * 12→8dp（2026-11-18 改窄，文字两边留白太宽）。
          * 5 项＝166.3dp，横屏余 2.7dp；4 项＝136.0dp，横屏余 33.0dp）。
+         * 放得下时 showCard 把卡片拉满可用高、各项均分（竖列放满一页）；
          * 7 项以上／大字号仍超高时靠 showCard 钳制在卡内滚动保底
          * （见 [actions]）。布局常量与本函数同源，改一处即改预算，不会漂移。
          */
@@ -203,12 +204,13 @@ class ConfirmOverlay(
      * 纵向布局按上限截断后最后一项会被挤出卡外不可见（剪贴板
      * 菜单的「删除」就这样消失过）；去掉标题后单列放得下。
      *
-     * 高度预算（WO36 P-中1，字号倍率 1.0，见 [actionsMenuNaturalHeightDp]）：
+     * 高度（一页放满选项：竖列放满，见 [actionsMenuNaturalHeightDp]）：
      * 剪贴板 6 项菜单自然高 196.5dp，竖屏默认 24%（可用 199.68dp）
-     * 一页完整显示、不滚动，余 3.2dp；横屏默认 44%（可用 168.96dp）
-     * 放不下、短 27.6dp，靠 showCard 钳制在卡内滚动保底。常用语
-     * 4 项 136.0dp，竖屏余 63.7dp、横屏余 33.0dp。7 项以上／大字号
-     * 仍超高时靠 showCard 钳制在卡内滚动保底。
+     * 拉满一页（只加 3.2dp）、各项均分、不滚动；横屏默认 44%
+     * （可用 168.96dp）放不下、短 27.6dp，靠 showCard 钳制在卡内
+     * 滚动保底。常用语 4 项 136.0dp，竖屏拉满到 199.68dp、横屏拉满
+     * 到 168.96dp。7 项以上／大字号仍超高时靠 showCard 钳制在卡内
+     * 滚动保底。
      * [message] 参数保留仅为与 [confirm] 签名对称，本模式不展示。
      */
     /**
@@ -265,9 +267,9 @@ class ConfirmOverlay(
                 background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
                 // 放大的排布（2026-11-18：紧凑版 2dp／3dp 太小）：纵向内边距
                 // 4dp、项间距 5dp，6 项自然高 196.5dp，竖屏默认 24%
-                // （199.68dp）余 3.2dp、一页完整显示、不滚动；横屏默认 44%
-                // （168.96dp）短 27.6dp、靠 showCard 钳制滚动保底；字号 13sp、
-                // 横向内边距 8dp、卡片边距 8dp、无最小宽。
+                // （199.68dp）拉满一页（只加 3.2dp）、各项均分、不滚动；
+                // 横屏默认 44%（168.96dp）短 27.6dp、靠 showCard 钳制滚动
+                // 保底；字号 13sp、横向内边距 8dp、卡片边距 8dp、无最小宽。
                 setPadding(dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt(), dp(ACTION_ITEM_PADDING_H_DP).toInt(), dp(ACTION_ITEM_PADDING_V_DP).toInt())
                 setOnClickListener {
                     item.action()
@@ -337,18 +339,44 @@ class ConfirmOverlay(
             val maxWidth = (measuredWidth - marginH * 2).coerceAtLeast(dp(200))
             messageView.maxWidth = maxWidth
 
-            // 动作菜单高度钳制：卡片自然总高超过浮层可用高时，把
-            // 滚动区布局高度定为「可用高 − 卡片其余部分」，菜单
-            // 内部可滚、末项可达；高度足够则恢复 wrapContent
-            // （上次的定高不能残留）。cardH 是钳制后的预期卡高，
-            // 定位钳制直接用它，不等改高引发的第二轮布局
+            // 动作菜单高度：一页放满选项（竖列放满，不是横向放满）。
+            // 放得下时（均分钮高 ≥ 自然钮高）滚动区定高到「可用高 − 卡片
+            // 其余部分」，各项均分铺满一页、不滚动，卡片高＝可用高；
+            // 放不下时把滚动区定为「可用高 − 卡片其余部分」，菜单内部
+            // 可滚、末项可达；高度足够则恢复 wrapContent（上次的定高
+            // 不能残留）。钮高有自然高下限、永不压字。cardH 是钳制后
+            // 的预期卡高，定位钳制直接用它，不等改高引发的第二轮布局。
+            // 宽不拉伸、随内容走。
             var cardH = card.height
             if (actionsScroll.isVisible) {
                 val availH = measuredHeight - marginV * 2
                 val restH = card.height - actionsScroll.height
                 val naturalH = restH + actionsContainer.height
                 val lp = actionsScroll.layoutParams as LinearLayout.LayoutParams
-                if (naturalH > availH) {
+                // 一页放满选项：卡片高随可用高、各项均分。
+                // 按钮自然高（px，避免拉满时压字）与项间距。
+                val n = actionButtons.size
+                val naturalBtnHpx =
+                    dp(TEXT_SIZE_SP * ROBOTO_LINE_HEIGHT_WITH_PADDING + 2 * ACTION_ITEM_PADDING_V_DP).toInt()
+                val gapPx = dp(ACTION_ITEM_GAP_DP).toInt()
+                val targetScrollH = (availH - restH).coerceAtLeast(0)
+                val fillBtnHpx =
+                    if (n > 0) (targetScrollH - (n - 1) * gapPx) / n else 0
+                if (n > 0 && fillBtnHpx >= naturalBtnHpx) {
+                    // 拉满：滚动区定高到可用高，各项均分铺满一页、不滚动。
+                    if (lp.height != targetScrollH) {
+                        lp.height = targetScrollH
+                        actionsScroll.layoutParams = lp
+                    }
+                    actionButtons.forEach { btn ->
+                        val blp = btn.layoutParams as LinearLayout.LayoutParams
+                        if (blp.height != fillBtnHpx) {
+                            blp.height = fillBtnHpx
+                            btn.layoutParams = blp
+                        }
+                    }
+                    cardH = availH
+                } else if (naturalH > availH) {
                     val target = (availH - restH).coerceAtLeast(0)
                     if (lp.height != target) {
                         lp.height = target
