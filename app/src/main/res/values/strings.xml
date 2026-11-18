@@ -411,6 +411,7 @@
 
     <!-- Clipboard groups -->
     <string name="clipboard_move_to_group">移至分组…</string>
+    <string name="clipboard_move_to_group_menu">移至分组</string>
     <string name="clipboard_group_all">全部</string>
     <string name="clipboard_group_ungrouped">未分组</string>
     <string name="clipboard_group_new">新建分组…</string>
@@ -723,6 +724,7 @@
 
     <string name="appearance_title">外观</string>
     <string name="keyboard_theme">键盘皮肤</string>
+    <string name="row_sub_skin">内置皮肤</string>
     <string name="keyboard_theme_follow_system">跟随系统</string>
     <string name="color_mode_light">浅色</string>
     <string name="color_mode_dark">深色</string>

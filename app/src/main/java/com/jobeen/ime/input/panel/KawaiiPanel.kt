@@ -461,7 +461,7 @@ class KawaiiPanel(
                         )
                     ) { handleClipboardPinToggle(entry) },
                     ConfirmOverlay.ActionItem(
-                        context.getString(R.string.clipboard_move_to_group)
+                        context.getString(R.string.clipboard_move_to_group_menu)
                     ) { showMoveToGroupMenu(entry) },
                     ConfirmOverlay.ActionItem(
                         context.getString(R.string.clipboard_edit)
