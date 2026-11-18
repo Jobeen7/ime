@@ -15,6 +15,11 @@ class KeyboardMenuEntriesTest {
     // 页数 3→2、工具栏池覆盖排除已删 6 项、已删 6 项断言由存在改为不存在。
     private val removedIds = setOf("select_all", "copy", "paste", "undo", "redo", "deploy_sync")
 
+    // 仅工具栏入口、不进菜单的池项：命令面板（两页已满 8/8，无空位；
+    // 不为一项新增第 3 页，也不顶掉现有入口；菜单入口以后他要再加）、
+    // 语音插件（同理：只放工具栏，不占菜单位）。
+    private val toolbarOnlyIds = setOf("command_panel", "voice_plugin")
+
     @Test
     fun idsUniqueAndPagesBounded() {
         val ids = KeyboardMenuEntries.ALL.map { it.id }
@@ -34,6 +39,8 @@ class KeyboardMenuEntriesTest {
         for (poolItem in ToolbarConfig.POOL) {
             if (poolItem.id in removedIds) {
                 assertTrue("removed ${poolItem.id} must not be in menu", poolItem.id !in ids)
+            } else if (poolItem.id in toolbarOnlyIds) {
+                assertTrue("toolbar-only ${poolItem.id} must not be in menu", poolItem.id !in ids)
             } else {
                 assertTrue(
                     "pool ${poolItem.id} missing from menu",

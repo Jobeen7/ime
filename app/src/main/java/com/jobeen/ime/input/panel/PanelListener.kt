@@ -25,6 +25,13 @@ interface PanelListener {
 
     fun onCopyTextCommit(text: String) {}
 
+    /**
+     * 命令面板跑完的结果回填：经字面上屏通道（LiteralCommitAction，
+     * 不经标点转换）替换输入框选中文字；剪贴板来源时在光标处上屏。
+     * 缺省空实现。
+     */
+    fun onCommandResultCommit(text: String) {}
+
     fun onCandidateGridDragComplete(candidates: List<EngineMessage.Candidate>) {}
 
     /** 候选网格滚动到底且引擎侧还有更多候选时，请求分页补取下一页 */

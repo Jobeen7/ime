@@ -6,6 +6,11 @@ import android.content.ClipboardManager as SystemClipboardManager
 import android.content.Context
 import com.jobeen.ime.R
 import com.jobeen.ime.base.feedback.InputFeedbacks
+import com.jobeen.ime.data.ai.AiInstructionContext
+import com.jobeen.ime.data.ai.AiInstructionRunner
+import com.jobeen.ime.data.ai.AiRepository
+import com.jobeen.ime.data.ai.AiStreamEvent
+import com.jobeen.ime.data.database.AIInstruction
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.database.ClipboardGroup
 import com.jobeen.ime.data.manager.ClipboardManager
@@ -20,6 +25,7 @@ import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.input.panel.component.CandidateGridView
 import com.jobeen.ime.input.panel.component.ClipboardView
 import com.jobeen.ime.input.panel.component.ClipboardTab
+import com.jobeen.ime.input.panel.component.CommandPanelView
 import com.jobeen.ime.input.panel.component.ConfirmOverlay
 import com.jobeen.ime.input.panel.component.PerformancePanelView
 import com.jobeen.ime.input.panel.component.TextEditView
@@ -27,6 +33,7 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.panel.component.MenuGridView
 import com.jobeen.ime.input.panel.ComposingRenderer
 import com.jobeen.ime.input.panel.state.ComposingStateRender
+import com.jobeen.ime.input.panel.state.CommandPanelStateRender
 import com.jobeen.ime.input.panel.state.CopyStateRender
 import com.jobeen.ime.input.panel.state.IdleStateRender
 import com.jobeen.ime.input.panel.toolbar.ToolbarRenderer
@@ -39,7 +46,11 @@ import com.jobeen.ime.input.panel.state.PredictionStateRender
 import com.jobeen.ime.input.panel.state.StateRenderContext
 import com.jobeen.ime.input.panel.state.TextEditingStateRender
 import com.jobeen.ime.base.util.appScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 class KawaiiPanel(
@@ -128,6 +139,8 @@ class KawaiiPanel(
         data object Copy : State()
         /** 性能面板（P2-10）：读 PerfMonitor.aggregates() 显示本进程累计。 */
         data object Performance : State()
+        /** 命令面板：工具栏入口打开的 AI 指令列表。 */
+        data object CommandPanel : State()
     }
 
     private var state: State = State.Idle
@@ -184,6 +197,8 @@ class KawaiiPanel(
                 clipboardTab = ClipboardTab.CLIPBOARD
                 clipboardView.clipTab = ClipboardTab.CLIPBOARD
             }
+            // 离开命令面板态：取消在途的指令运行（不提交）、复位运行态。
+            if (value != State.CommandPanel) cancelCommandRun()
             applyStateRender(value)
             if (value is State.Menu) {
                 view.setExpanded(false)
@@ -231,6 +246,7 @@ class KawaiiPanel(
         State.TextEditing -> TextEditingStateRender(renderContext)
         is State.Copy -> CopyStateRender(renderContext, copyText)
         State.Performance -> PerformanceStateRender(renderContext)
+        State.CommandPanel -> CommandPanelStateRender(renderContext)
     }
 
     private fun applyStateRender(state: State) {
@@ -333,6 +349,11 @@ class KawaiiPanel(
         colors = resolvedColors,
     )
 
+    val commandPanelView = CommandPanelView(
+        context = context,
+        colors = resolvedColors,
+    )
+
     val menuGridView = MenuGridView(context, resolvedColors)
 
     @SuppressLint("UseCompatLoadingForDrawables")
@@ -350,6 +371,9 @@ class KawaiiPanel(
             context.getDrawable(R.drawable.ic_toolbar_paste),
             context.getDrawable(R.drawable.ic_keyboard_search),
             traditionalChinese = context.getDrawable(R.drawable.ic_keyboard_traditional_ch),
+            commandPanel = context.getDrawable(R.drawable.ic_toolbar_command_panel),
+            voice = context.getDrawable(R.drawable.ic_keyboard_voice),
+            voicePlugin = context.getDrawable(R.drawable.ic_keyboard_tune),
         ),
         expandDrawable = context.getDrawable(R.drawable.ic_keyboard_expand_more),
         cancelDrawable = context.getDrawable(R.drawable.ic_keyboard_close),
@@ -357,6 +381,7 @@ class KawaiiPanel(
         textEditingView = textEditingView,
         clipboardView = clipboardView,
         performanceView = performanceView,
+        commandPanelView = commandPanelView,
         menuGridView = menuGridView,
         recording = recording,
     )
@@ -434,6 +459,8 @@ class KawaiiPanel(
             returnToKeyboard()
         }
         performanceView.onClose = { returnToKeyboard() }
+        commandPanelView.onInstructionClick = { onCommandInstructionClick(it) }
+        commandPanelView.onClose = { returnToKeyboard() }
         clipboardView.onSelectionChanged = { if (clipMultiActive) syncMultiRenderer() }
         clipboardView.onEditCursorMoved = { idx ->
             if (clipEditActive) {
@@ -1227,6 +1254,7 @@ class KawaiiPanel(
                                 clipboardTab = ClipboardTab.CLIPBOARD
                                 state = State.Clipboard
                             }
+                            PanelAction.CommandPanel -> showCommandPanel()
                             is PanelAction.ClipTab -> {
                                 confirmOverlay.dismiss()
                                 // 切分页时编辑（不保存）与多选一并收口
@@ -1279,7 +1307,7 @@ class KawaiiPanel(
 
                             PanelAction.SwitchKeyboard -> {
                                 when (state) {
-                                    State.Menu, State.Clipboard, State.TextEditing, State.Copy, State.Performance -> state = State.Idle
+                                    State.Menu, State.Clipboard, State.TextEditing, State.Copy, State.Performance, State.CommandPanel -> state = State.Idle
 
                                     else -> listener?.onToolbarAction(result.action)
                                 }
@@ -1289,7 +1317,7 @@ class KawaiiPanel(
                             // 浮层态先收浮层（再点一次才开面板），其余直发监听开面板。
                             PanelAction.ShortcutPanel -> {
                                 when (state) {
-                                    State.Menu, State.Clipboard, State.TextEditing, State.Copy, State.Performance -> state = State.Idle
+                                    State.Menu, State.Clipboard, State.TextEditing, State.Copy, State.Performance, State.CommandPanel -> state = State.Idle
 
                                     else -> listener?.onToolbarAction(result.action)
                                 }
@@ -1395,11 +1423,152 @@ class KawaiiPanel(
     }
 
     /**
+     * 打开命令面板（工具栏“命令面板”／#toggleCommandView）：
+     * 进态后异步拉 AiRepository 的全部指令填表——设置页新加的
+     * 自定义指令下次打开自动出现，不写死四条。
+     */
+    fun showCommandPanel() {
+        state = State.CommandPanel
+        appScope.launch {
+            val instructions = withContext(Dispatchers.IO) {
+                aiRepository.ensureSeeded()
+                aiRepository.getInstructions()
+            }
+            commandPanelView.setInstructions(instructions)
+        }
+    }
+
+    /** AI 指令执行器与仓库（与设置页同一份数据、同一 Runner）。 */
+    private val aiRepository: AiRepository by lazy { AiRepository.get(context) }
+    private val aiRunner: AiInstructionRunner by lazy { AiInstructionRunner(aiRepository) }
+
+    /** 在途的指令运行（流式）；离态取消，不提交。 */
+    private var commandRunJob: Job? = null
+
+    /** 离开命令面板态的收口：在途运行取消、运行态复位。 */
+    private fun cancelCommandRun() {
+        commandRunJob?.cancel()
+        commandRunJob = null
+        commandPanelView.setRunning(false)
+    }
+
+    /** 输入框选中文字快照（读不到为空串；与语音撤销／引擎同款取法）。 */
+    private fun selectedTextSnapshot(): String = runCatching {
+        (context as? ImeInputMethodService)?.activeInputConnection()
+            ?.getSelectedText(0)?.toString().orEmpty()
+    }.getOrDefault("")
+
+    /** 系统剪贴板文本快照（与设置页 clipboardText() 同款）。 */
+    private fun clipboardTextSnapshot(): String {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? SystemClipboardManager
+        return runCatching { cm?.primaryClip?.getItemAt(0)?.text?.toString().orEmpty() }
+            .getOrDefault("")
+    }
+
+    /**
+     * 点某条指令：快照输入（选中优先、没选中取剪贴板），空输入
+     * 只提示不跑；否则按设置页 C-L-17 同款确认（服务商名＋将
+     * 发送的文字前 200 字），确认才跑。
+     */
+    private fun onCommandInstructionClick(instruction: AIInstruction) {
+        if (commandRunJob?.isActive == true) return
+        val selected = selectedTextSnapshot()
+        val clipboard = clipboardTextSnapshot()
+        val input = CommandPanelView.resolveInput(selected, clipboard)
+        if (input.isBlank()) {
+            showGroupToast(context.getString(R.string.ai_no_input))
+            return
+        }
+        appScope.launch {
+            val providerName = withContext(Dispatchers.IO) {
+                val provider = instruction.providerID?.let { aiRepository.getProviderById(it) }
+                    ?: aiRepository.getDefaultProvider()
+                provider?.name.orEmpty()
+            }
+            // 查服务商期间用户已离开面板：确认框不再弹出。
+            if (state != State.CommandPanel) return@launch
+            confirmOverlay.confirm(
+                message = context.getString(R.string.ai_run_confirm, providerName, input.take(200)),
+                onConfirm = { runCommandInstruction(instruction, input, selected, clipboard) },
+            )
+        }
+    }
+
+    /**
+     * 跑指令：AiInstructionRunner 流式执行，跑完把结果经字面通道
+     * 回填（替换选中的文字；剪贴板来源时在光标处上屏），回键盘；
+     * 出错只提示、留在面板；空白结果不回填。
+     */
+    private fun runCommandInstruction(
+        instruction: AIInstruction,
+        input: String,
+        selectedText: String,
+        clipboardText: String,
+    ) {
+        if (commandRunJob?.isActive == true) return
+        commandPanelView.setRunning(true)
+        commandRunJob = appScope.launch {
+            val acc = StringBuilder()
+            var error: AiStreamEvent.Error? = null
+            try {
+                val run = withContext(Dispatchers.IO) {
+                    aiRunner.run(
+                        instructionId = instruction.id,
+                        input = input,
+                        context = AiInstructionContext(
+                            pasteboardContent = clipboardText,
+                            selectedText = selectedText,
+                        ),
+                    )
+                }
+                if (run == null) {
+                    error = AiStreamEvent.Error(
+                        message = context.getString(R.string.ai_run_failed),
+                    )
+                } else {
+                    withContext(Dispatchers.IO) {
+                        run.events.collect { event ->
+                            when (event) {
+                                is AiStreamEvent.Delta -> acc.append(event.text)
+                                is AiStreamEvent.Error -> error = event
+                                else -> Unit
+                            }
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                // 离态取消：不提交、不提示，运行态由离态收口复位。
+                return@launch
+            } catch (e: Exception) {
+                error = AiStreamEvent.Error(message = e.message.orEmpty())
+            }
+            commandPanelView.setRunning(false)
+            val runError = error
+            if (runError != null) {
+                showGroupToast(
+                    CommandPanelView.resolveErrorText(
+                        runError,
+                        context.getString(R.string.ai_missing_token),
+                    ) { res -> context.getString(res) },
+                )
+                return@launch
+            }
+            val result = acc.toString()
+            if (!CommandPanelView.shouldCommit(result)) {
+                showGroupToast(context.getString(R.string.ai_empty_result))
+                return@launch
+            }
+            listener?.onCommandResultCommit(result)
+            returnToKeyboard()
+        }
+    }
+
+    /**
      * 粘贴后返回键盘（2026-10-29 批量第 4 项）：与工具栏切键盘键在
      * 剪贴板态的回落同口径（剪贴板态 → Idle），其余态不动。
      */
     override fun returnToKeyboard() {
-        if (state == State.Clipboard || state == State.Performance) state = State.Idle
+        if (state == State.Clipboard || state == State.Performance || state == State.CommandPanel) state = State.Idle
     }
 
     private var addPhraseActive = false

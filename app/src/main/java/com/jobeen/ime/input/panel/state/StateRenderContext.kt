@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.drawable.Drawable
 import com.jobeen.ime.input.panel.component.CandidateGridView
 import com.jobeen.ime.input.panel.component.ClipboardView
+import com.jobeen.ime.input.panel.component.CommandPanelView
 import com.jobeen.ime.input.panel.component.MenuGridView
 import com.jobeen.ime.input.panel.component.PerformancePanelView
 import com.jobeen.ime.input.panel.component.TextEditView
@@ -20,6 +21,7 @@ class StateRenderContext(
     val textEditingView: TextEditView,
     val clipboardView: ClipboardView,
     val performanceView: PerformancePanelView,
+    val commandPanelView: CommandPanelView,
     val menuGridView: MenuGridView,
     var recording: Boolean = false,
     /** 预测态边缘取消钮图标（×，H2-2）；null = 回落展开图。 */

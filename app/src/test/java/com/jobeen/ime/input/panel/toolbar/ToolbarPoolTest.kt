@@ -20,6 +20,14 @@ class ToolbarPoolTest {
     }
 
     @Test
+    fun commandPanelIsInPool() {
+        val item = ToolbarConfig.item("command_panel")
+        assertTrue(item != null)
+        assertEquals(PanelAction.CommandPanel, item?.action)
+        assertEquals("命令面板", item?.label)
+    }
+
+    @Test
     fun defaultColumnsAreFiveWithoutTraditionalChinese() {
         assertEquals(5, ToolbarConfig.DEFAULT_IDS.size)
         assertEquals("clipboard", ToolbarConfig.DEFAULT_IDS.last())

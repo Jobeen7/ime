@@ -28,6 +28,11 @@ sealed class PanelAction {
     data object Redo : PanelAction()
     data object Palette : PanelAction()
     data object CursorMove : PanelAction()
+    /** 命令面板（AI 指令列表）：工具栏池子入口，点开列指令再选着跑。 */
+    data object CommandPanel : PanelAction()
+
+    /** 语音插件：工具栏池子入口，点按轮换首选语音服务商（本地／已装云插件）。 */
+    data object VoicePlugin : PanelAction()
     data object CloseKeyboard : PanelAction()
     data object ClearClipboard : PanelAction()
     data object ClearPhrases : PanelAction()

@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.text.TextPaint
 import android.text.TextUtils
@@ -269,18 +270,44 @@ class ToolbarRenderer(
 
     private var userCenter: List<UserCenterItem>? = null
 
+    /**
+     * 用户中央区图标覆盖（与 userCenter 同步更新）：
+     * 键＝池钮 id；字符串覆盖走 iconFor（内置资产／符号名），
+     * 上传图片覆盖是调用方解好的 Drawable（位图随旧值一并回收）。
+     */
+    private var userCenterIconOverrides: Map<String, String> = emptyMap()
+    private var userCenterIconDrawables: Map<String, Drawable> = emptyMap()
+
     /** 热更新用户覆盖中央区（null＝清除，回落皮肤／默认；旧自定义位图随之回收）。 */
-    fun updateUserCenter(items: List<UserCenterItem>?) {
+    fun updateUserCenter(
+        items: List<UserCenterItem>?,
+        iconOverrides: Map<String, String> = emptyMap(),
+        iconDrawables: Map<String, Drawable> = emptyMap(),
+    ) {
         userCenter?.forEach { item ->
             (item as? UserCenterItem.Custom)?.bitmap?.let { bitmap ->
                 if (!bitmap.isRecycled) bitmap.recycle()
             }
         }
+        recycleIconDrawables()
         userCenter = items
+        userCenterIconOverrides = iconOverrides
+        userCenterIconDrawables = iconDrawables
     }
 
     fun clearUserCenter() {
         userCenter = null
+        userCenterIconOverrides = emptyMap()
+        recycleIconDrawables()
+        userCenterIconDrawables = emptyMap()
+    }
+
+    private fun recycleIconDrawables() {
+        userCenterIconDrawables.values.forEach { drawable ->
+            (drawable as? BitmapDrawable)?.bitmap?.let { bitmap ->
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+        }
     }
 
     /** 中央区几何（与 draw／hitTest 同口径，含样式内边距与槽位排列）。 */
@@ -359,7 +386,7 @@ class ToolbarRenderer(
                         paints.toolbarIconColor = (savedColor and 0x00FFFFFF) or 0x62000000.toInt()
                     }
                     ImageButton(
-                        iconFor(item.action, emptyMap()), item.action, iconScale = iconScale,
+                        userCenterIcon(item.action), item.action, iconScale = iconScale,
                     ).draw(canvas, cx, cy, paints, density)
                     if (disabled) {
                         paints.toolbarIconColor = savedColor
@@ -479,6 +506,17 @@ class ToolbarRenderer(
 
 
     /**
+     * 用户中央区池钮图标：上传图片覆盖优先，其次字符串覆盖
+     * （内置资产／符号名），都没有回落该动作默认图标；覆盖值
+     * 解析不到按既有行为画空白＋记日志（见 iconFor）。
+     */
+    private fun userCenterIcon(action: PanelAction): Drawable? {
+        val actionId = ToolbarConfig.POOL.find { it.action == action }?.id ?: return null
+        userCenterIconDrawables[actionId]?.let { return it }
+        return iconFor(action, userCenterIconOverrides)
+    }
+
+    /**
      * 按钮图标：先查该动作的图标覆盖（换图标），无覆盖则用动作
      * 自身图标。图标 id 与动作 id 共用命名空间，结构图标
      * （菜单/返回/收起/删除/搜索）同理。
@@ -513,6 +551,8 @@ class ToolbarRenderer(
         "redo" -> resources.redo
         "palette" -> resources.palette
         "traditional_chinese" -> resources.traditionalChinese
+        "command_panel" -> resources.commandPanel
+        "voice_plugin" -> resources.voicePlugin
         "menu" -> resources.menu
         "arrow" -> resources.arrow
         "expand" -> resources.expand

@@ -28,4 +28,6 @@ data class ToolbarRendererResources(
     val redo: Drawable? = null,
     val palette: Drawable? = null,
     val traditionalChinese: Drawable? = null,
+    val commandPanel: Drawable? = null,
+    val voicePlugin: Drawable? = null,
 )

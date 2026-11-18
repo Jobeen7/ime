@@ -493,6 +493,9 @@
     <string name="ai_missing_token">请先在服务商设置里填写 API Token</string>
     <string name="ai_no_provider">未配置 AI 服务商</string>
     <string name="ai_no_model">服务商未配置模型</string>
+    <string name="ai_no_input">没有可发送的文字</string>
+    <string name="ai_no_instructions">暂无指令</string>
+    <string name="ai_empty_result">没有生成结果</string>
     <string name="ai_reset_instructions">重置指令模板</string>
     <string name="ai_reset_instructions_confirm">4 条指令将改回初始定义，你改过的指令会被覆盖。确定要重置吗？</string>
     <string name="ai_system_prompts">系统提示词</string>
@@ -548,6 +551,7 @@
     <string name="voice_input_enable">启用语音输入（长按空格说话）</string>
     <string name="voice_provider">识别服务商</string>
     <string name="voice_provider_local">本地离线模型</string>
+    <string name="voice_provider_rotated">语音模型：%1$s</string>
     <string name="voice_provider_plugin_ready">已安装</string>
     <string name="voice_provider_hint_no_engine">暂无可用识别服务：请下载本地模型或选择云端插件</string>
     <string name="voice_provider_hint_unavailable">已选插件不可用：请重新选择服务商</string>
@@ -843,6 +847,14 @@
     <string name="toolbar_border_width">边框粗细</string>
     <string name="toolbar_pressed_color">按下颜色</string>
     <string name="toolbar_pressed_default">默认</string>
+    <string name="toolbar_icon">图标</string>
+    <string name="toolbar_icon_title">选择图标</string>
+    <string name="toolbar_icon_default">默认</string>
+    <string name="toolbar_icon_builtin">内置图标</string>
+    <string name="toolbar_icon_symbols">符号</string>
+    <string name="toolbar_icon_upload_image">上传图片…</string>
+    <string name="toolbar_icon_image">图片：%1$s</string>
+    <string name="toolbar_icon_selected">已选</string>
     <string name="toolbar_more_gestures_size">更多手势与尺寸</string>
     <string name="toolbar_sp_value">%1$d sp</string>
     <string name="toolbar_done">完成</string>

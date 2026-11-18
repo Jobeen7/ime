@@ -251,6 +251,22 @@ class PerformanceStateRender(
     }
 }
 
+/** 命令面板态：工具栏显示返回箭头（与剪贴板／性能面板同口径），展开栏展示指令列表。 */
+class CommandPanelStateRender(
+    private val ctx: StateRenderContext,
+) : IStateRender {
+    override fun createToolbarRenderer(): ToolbarRenderer =
+        ctx.buildToolbarRenderer(showArrow = true)
+
+    override fun showExpand(isExpanded: Boolean) {
+        ctx.commandPanelView.show()
+    }
+
+    override fun hideExpand() {
+        ctx.commandPanelView.hide()
+    }
+}
+
 /** 复制提示态：菜单栏显示复制内容药丸，无展开功能栏。 */
 class CopyStateRender(
     private val ctx: StateRenderContext,

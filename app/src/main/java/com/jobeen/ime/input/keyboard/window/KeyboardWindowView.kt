@@ -528,10 +528,9 @@ class KeyboardWindowView(
                 null
             }
 
-            // 命令面板开关：目标 UI 不在本轮（命令面板已排除），
-            // 分发到此即记日志的空操作，不伪造界面、不下发引擎。
+            // 命令面板开关：打开键盘命令面板（指令列表态）。
             is KeyboardAction.ToggleCommandViewAction -> {
-                DiagLog.w("keymap", "toggle_command_view_unimplemented", emptyMap())
+                panel.showCommandPanel()
                 null
             }
 

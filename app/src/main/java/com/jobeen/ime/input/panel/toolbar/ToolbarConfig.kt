@@ -41,6 +41,8 @@ object ToolbarConfig {
         Item("redo", PanelAction.Redo, "重做"),
         Item("palette", PanelAction.Palette, "主题"),
         Item("traditional_chinese", PanelAction.ToggleTraditionalChinese, "简繁"),
+        Item("command_panel", PanelAction.CommandPanel, "命令面板"),
+        Item("voice_plugin", PanelAction.VoicePlugin, "语音插件"),
     )
 
     private val BY_ID: Map<String, Item> = POOL.associateBy { it.id }
